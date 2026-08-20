@@ -1272,16 +1272,33 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         val rawOptionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQuestion.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
                                         val legacyOptions = gson.fromJson<List<String>>(currentQuestion.options, object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
 
-                                        val optionsToUse = if (rawOptionsList.isNotEmpty()) rawOptionsList.map { it.text } else legacyOptions
+                                        val currentDisplayOptions = optionsCache[currentQuestion.id] ?: emptyList()
+                                        
                                         val correctIndices = if (correctIds.isNotEmpty() && rawOptionsList.isNotEmpty()) {
                                             correctIds.mapNotNull { id -> rawOptionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
                                         } else {
                                             setOf(currentQuestion.correctIndex)
                                         }
-
-                                        val correctTexts = correctIndices.mapNotNull { i -> optionsToUse.getOrNull(i)?.let { "Option ${(65 + i).toChar()}: $it" } }
+                                        
+                                        val displayedCorrectIndices = currentDisplayOptions.mapIndexedNotNull { displayIdx, pair ->
+                                            if (correctIndices.contains(pair.first)) displayIdx else null
+                                        }
+                                        
+                                        val correctTexts = displayedCorrectIndices.map { i -> 
+                                            val opt = currentDisplayOptions[i].second
+                                            "Option ${(65 + i).toChar()}: $opt" 
+                                        }
+                                        
                                         val userSelectedSet = selectedAnswers[currentIndex] ?: emptySet()
-                                        val userSelectedTexts = userSelectedSet.mapNotNull { i -> optionsToUse.getOrNull(i)?.let { "Option ${(65 + i).toChar()}: $it" } }
+                                        
+                                        val displayedUserSelectedIndices = currentDisplayOptions.mapIndexedNotNull { displayIdx, pair ->
+                                            if (userSelectedSet.contains(pair.first)) displayIdx else null
+                                        }
+                                        
+                                        val userSelectedTexts = displayedUserSelectedIndices.map { i -> 
+                                            val opt = currentDisplayOptions[i].second
+                                            "Option ${(65 + i).toChar()}: $opt" 
+                                        }
 
                                         val tableDataString = if (currentQuestion.format == "table" && currentQuestion.tableData != null) {
                                             "\nTable Data (2D Array JSON): ${currentQuestion.tableData}"
@@ -1290,7 +1307,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
 You are an expert tutor. Please explain the following question and its answer.
 Question: ${currentQuestion.question}$tableDataString
 Options:
-${optionsToUse.mapIndexed { i, opt -> "${(65 + i).toChar()}: $opt" }.joinToString("\n")}
+${currentDisplayOptions.mapIndexed { i, opt -> "${(65 + i).toChar()}: ${opt.second}" }.joinToString("\n")}
 
 Correct Answer(s): ${correctTexts.joinToString(", ")}
 
@@ -1298,7 +1315,7 @@ User selected: ${if (userSelectedTexts.isNotEmpty()) userSelectedTexts.joinToStr
 
 Please provide a detailed, easy-to-understand explanation for the question.
 If the user's selected answer is incorrect, explicitly explain WHY it is incorrect based on their selection.
-When referring to options, ALWAYS use their letter designations (e.g. Option A, Option B).
+When referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) that exactly match the options provided above. Do not reference options that do not exist above.
 Format the explanation nicely in Markdown. You can generate Markdown tables if needed. Use an image ONLY if illustrating a spatial, structural, or complex visual concept would significantly help understanding. If you choose to use an image, use a markdown image tag like ![illustration](https://image.pollinations.ai/prompt/describe-the-concept-here) (prompt must be URL encoded, no spaces). Do NOT use images for abstract concepts or simple factual questions. Keep it professional and visually pleasing.
                                         """.trimIndent()
 
