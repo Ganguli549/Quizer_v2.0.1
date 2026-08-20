@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <attribution android:tag="haptic_feedback" android:label="@string/app_name" />
+    <application
+        android:name=".QuizApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@drawable/ocean"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ocean"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
+        <activity
+            android:name=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication" />
+
+        <activity-alias
+            android:name=".OceanIcon"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@drawable/ocean"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/ocean"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".ForestIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/forest"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/forest"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".SunsetIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/sunset"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/sunset"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".LavenderIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/lavender"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/lavender"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".DarkIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/dark"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/dark"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        
+        <activity-alias
+            android:name=".GoldIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/gold"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/gold"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        
+        <activity-alias
+            android:name=".TitaniumIcon"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@drawable/titanium"
+            android:label="@string/app_name"
+            android:roundIcon="@drawable/titanium"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity android:name="com.canhub.cropper.CropImageActivity" android:theme="@style/Theme.AppCompat.Light.DarkActionBar"/>
+    </application>
+
+</manifest>

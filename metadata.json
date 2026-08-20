@@ -1,0 +1,6 @@
+{
+  "name": "Quizer",
+  "description": "An offline-first Android app for practising exams, offering multi-book support, quizzes, learning roadmaps, statistics, and history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
