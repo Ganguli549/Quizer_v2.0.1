@@ -34,14 +34,14 @@ fun MathSplitterRichText(
         for (match in matches) {
             val before = text.substring(lastIndex, match.range.first)
             if (before.isNotBlank()) {
-                RichText(before, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+                RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
             }
             
             val mathStr = match.value.trim()
             val scrollState = rememberScrollState()
             RichText(
                 text = mathStr, 
-                modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState), 
+                modifier = Modifier.horizontalScroll(scrollState), 
                 color = color, 
                 fontSize = fontSize, 
                 searchQuery = searchQuery, 
@@ -54,7 +54,7 @@ fun MathSplitterRichText(
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
-            RichText(after, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+            RichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
         }
     }
 }
@@ -83,7 +83,7 @@ fun SmartRichText(
         for (match in matches) {
             val before = text.substring(lastIndex, match.range.first)
             if (before.isNotBlank()) {
-                MathSplitterRichText(before, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+                MathSplitterRichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
             }
             
             // Parse table
@@ -113,7 +113,7 @@ fun SmartRichText(
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
-            MathSplitterRichText(after, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+            MathSplitterRichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
         }
     }
 }
