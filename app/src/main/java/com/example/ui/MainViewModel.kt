@@ -342,8 +342,8 @@ class MainViewModel(
                 
                 // Parse JSON array
                 val updates = mutableListOf<com.example.ui.components.PendingQuestionUpdate>()
-                
-                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(com.example.data.sanitizeAiJson(result)).jsonArray
+                val cleanedResult = result.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
+                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanedResult).jsonArray
                 
                 val gson = com.example.data.SharedGson.normal
                 val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.substringBefore("_")
@@ -1495,26 +1495,6 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
                     val timestamp = dateFormat.format(java.util.Date())
                     
                     try {
-                        // Scan all files in quizerDir and qbooksDir
-                        try {
-                            val dirsToScan = listOf(quizerDir, qbooksDir)
-                            for (dir in dirsToScan) {
-                                val allFiles = dir.listFiles()?.filter { it.isFile && (it.name.endsWith(".js") || it.name.endsWith(".qbook") || it.name.endsWith(".json")) } ?: emptyList()
-                                for (f in allFiles) {
-                                    if (f.name == "$bookId.js" || f.name == "$bookId.qbook" || f.name == "$bookId.json") {
-                                        f.copyTo(java.io.File(trashDir, "${f.nameWithoutExtension}_$timestamp.${f.extension}"), overwrite = true)
-                                        f.delete()
-                                    } else {
-                                        val identity = com.example.data.DataParser.peekIdentity(context, android.net.Uri.fromFile(f))
-                                        if (identity?.id == bookId) {
-                                            f.copyTo(java.io.File(trashDir, "${f.nameWithoutExtension}_$timestamp.${f.extension}"), overwrite = true)
-                                            f.delete()
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) { e.printStackTrace() }
-                        
                         // Delete the specific book directory (which contains images, backups, cached state) permanently
                         if (bookDir.exists()) {
                             bookDir.deleteRecursively()

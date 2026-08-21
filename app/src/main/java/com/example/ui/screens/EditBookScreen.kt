@@ -1145,11 +1145,7 @@ fun RestorePointsDialog(
                                 restoreDir.deleteRecursively()
                             }
                             
-                            val originalDir = File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/Original")
-                            if (!originalDir.exists()) {
-                                originalDir.mkdirs()
-                            }
-                            val targetFile = File(originalDir, "$bookId.qbook")
+                            val targetFile = originalFile ?: File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/$bookId.qbook")
                             exportQBook(context, viewModel.repository, bookId, targetFile)
                             
                             launch(Dispatchers.Main) {
