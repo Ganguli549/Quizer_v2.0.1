@@ -1058,25 +1058,30 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
             val actualTabIndex = if (hasDetailed) explanationSheetTab else 1
             
             val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            val draggableState = androidx.compose.foundation.gestures.rememberDraggableState { }
-            val nestedScrollConnection = remember {
-                object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-                    override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                        return available.copy(x = 0f)
-                    }
-                    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
-                        return available.copy(x = 0f)
-                    }
-                }
+            val isolateScrollConnection = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
+                return available
             }
+            override suspend fun onPostFling(
+                consumed: androidx.compose.ui.unit.Velocity,
+                available: androidx.compose.ui.unit.Velocity
+            ): androidx.compose.ui.unit.Velocity {
+                return available
+            }
+        }
+    }
             ModalBottomSheet(
                 onDismissRequest = { showExplanationSheet = false },
                 sheetState = sheetState,
                 containerColor = MaterialTheme.colorScheme.surface
             ) {
                 Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)
-                    .nestedScroll(nestedScrollConnection)
-                    .draggable(draggableState, orientation = Orientation.Vertical)
+                    .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
                 ) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {

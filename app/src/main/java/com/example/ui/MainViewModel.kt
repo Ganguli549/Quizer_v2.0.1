@@ -342,7 +342,8 @@ class MainViewModel(
                 
                 // Parse JSON array
                 val updates = mutableListOf<com.example.ui.components.PendingQuestionUpdate>()
-                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(result).jsonArray
+                val cleanedResult = result.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
+                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanedResult).jsonArray
                 
                 val gson = com.example.data.SharedGson.normal
                 val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.substringBefore("_")

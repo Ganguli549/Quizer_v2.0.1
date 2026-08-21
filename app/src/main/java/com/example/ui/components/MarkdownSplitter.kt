@@ -38,10 +38,9 @@ fun MathSplitterRichText(
             }
             
             val mathStr = match.value.trim()
-            val scrollState = rememberScrollState()
             RichText(
                 text = mathStr, 
-                modifier = Modifier.horizontalScroll(scrollState), 
+                modifier = Modifier, 
                 color = color, 
                 fontSize = fontSize, 
                 searchQuery = searchQuery, 

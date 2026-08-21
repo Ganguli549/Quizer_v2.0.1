@@ -43,9 +43,6 @@ import kotlinx.serialization.json.*
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Velocity
 
@@ -124,64 +121,45 @@ fun AiAssistantBottomSheet(
         }
     }
 
+    val logExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.openOutputStream(it)?.use { out ->
+                    out.write(devLogs.joinToString("\n\n").toByteArray())
+                }
+                android.widget.Toast.makeText(context, "Logs saved successfully", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                android.widget.Toast.makeText(context, "Failed to save logs", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true
     )
 
     
-    val blockParentScroll = remember {
+    val isolateScrollConnection = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPreScroll(
-                available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
-            ): androidx.compose.ui.geometry.Offset {
-                // If the user drags DOWN on the chat (available.y > 0), the ModalBottomSheet 
-                // intercepts it by default in onPreScroll, dragging the sheet down instead of 
-                // scrolling the content.
-                // We consume it here to force the drag to stay within the content.
-                // If they are dragging UP (available.y < 0), we don't consume it so it scrolls down normally.
-                // We want to intercept drag events that would normally drag the bottom sheet down.
-                // However, consuming it entirely here prevents LazyColumn from receiving it.
-                // ModalBottomSheet uses nested scroll to drag. It intercepts onPreScroll.
-                // By returning Offset.Zero, we let LazyColumn try to consume it.
-                // The REAL issue is the ModalBottomSheet intercepting BEFORE this NestedScrollConnection gets it.
-                // By returning Offset.Zero, we let LazyColumn try to consume it.
-                // BUT if we don't consume it here, ModalBottomSheet (the parent) WILL consume it.
-                // However, we passed dispatcher=null to nestedScroll modifier, so ModalBottomSheet 
-                // won't receive it!
-                // PreScroll: child (LazyColumn) calls parent (us). 
-                // We should only consume what LazyColumn didn't, if we don't want ModalBottomSheet to get it.
-                // Wait, onPreScroll is called BEFORE the child consumes.
-                // If we consume it here, LazyColumn won't get it.
-                return androidx.compose.ui.geometry.Offset.Zero
-            }
-
-            // We also need to consume any leftover unconsumed scroll or fling on the Y axis
-            // so that it doesn't propagate up and close the bottom sheet when reaching the edges.
-            
-                        override fun onPostScroll(
+            override fun onPostScroll(
                 consumed: androidx.compose.ui.geometry.Offset,
                 available: androidx.compose.ui.geometry.Offset,
                 source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
             ): androidx.compose.ui.geometry.Offset {
-                // To completely isolate the scroll, we also return the available offset.
-                return available // Consume ALL leftover scroll
+                return available
             }
-            
             override suspend fun onPostFling(
                 consumed: androidx.compose.ui.unit.Velocity,
                 available: androidx.compose.ui.unit.Velocity
             ): androidx.compose.ui.unit.Velocity {
-                return available // Consume ALL leftover fling
+                return available
             }
         }
     }
 
-    // To prevent the bottom sheet from being dragged down by the scrollable content, 
-    // we use a workaround with nestedScroll that isolates it from the parent ModalBottomSheet.
-    // However, since ModalBottomSheet passes its nestedScroll dispatcher down the tree, 
-    // the only bulletproof way is to wrap the content in a custom NestedScrollConnection 
-    // that intercepts but DOES NOT propagate.
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -193,16 +171,7 @@ fun AiAssistantBottomSheet(
                 .imePadding()
                 .padding(bottom = 16.dp)
                 .fillMaxHeight(0.9f)
-                // We isolate the nested scroll from the parent ModalBottomSheet completely.
-                // This prevents the ModalBottomSheet from aggressively intercepting onPreScroll.
-                .nestedScroll(connection = blockParentScroll, dispatcher = null)
-                // We also add a dummy draggable to catch raw touch events that bubble up
-                // (e.g., when the LazyColumn is at the top and doesn't consume the swipe down).
-                // This prevents the ModalBottomSheet's AnchoredDraggable from getting them.
-                .draggable(
-                    state = androidx.compose.foundation.gestures.rememberDraggableState { },
-                    orientation = androidx.compose.foundation.gestures.Orientation.Vertical
-                )
+                .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -301,8 +270,13 @@ fun AiAssistantBottomSheet(
                 Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Developer Logs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        TextButton(onClick = { viewModel.clearDevLogs() }) {
-                            Text("Clear")
+                        Row {
+                            TextButton(onClick = { logExportLauncher.launch("sparkle_logs.txt") }) {
+                                Text("Download")
+                            }
+                            TextButton(onClick = { viewModel.clearDevLogs() }) {
+                                Text("Clear")
+                            }
                         }
                     }
                     val devListState = rememberLazyListState()
@@ -846,7 +820,7 @@ suspend fun processAiChatCommand(
             4. **Table Format**: If the question or data involves a table (grid lines or simple listing), extract the table data and set 'format' to "table". Construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). DO NOT put the table data in the 'question' text; keep the 'question' text clean.
             5. **Images from Source**: If the user provides a ZIP file with images, or explicitly references extracting existing images, map the image filenames provided in the System Note to the appropriate fields (e.g. 'img', 'explanationImageOptions'). Follow the user's exact instructions for how to map them.
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
-            7. **Math & Style**: Please preserve mathematical symbols, text formatting, and styling. Wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations must use double dollar signs `${"$$"}`. Use HTML for bold/italics if necessary, but prioritize Markdown math wrapping for math expressions.
+            7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math. Use HTML for bold/italics if necessary.
             8. Extract ALL questions from the document. Take as much space as you need.
             9. Format the output strictly as a JSON array containing objects matching this schema:
             [
@@ -888,7 +862,8 @@ suspend fun processAiChatCommand(
             
             onStatusUpdate("Parsing AI response...", 0.8f)
             val updates = mutableListOf<PendingQuestionUpdate>()
-            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(result).jsonArray
+            val cleanedResult = result.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
+            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanedResult).jsonArray
             val gson = com.example.data.SharedGson.normal
             val baseBookId = allQuestions.firstOrNull()?.bookId ?: "ExtractedBook"
             val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
@@ -1099,6 +1074,7 @@ suspend fun processAiChatCommand(
             if (jsonStart != -1 && jsonEnd != -1 && jsonEnd >= jsonStart) {
                 cleanResult = cleanResult.substring(jsonStart, jsonEnd + 1)
             }
+            cleanResult = cleanResult.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
             val element = Json.parseToJsonElement(cleanResult)
             val resultArray = when (element) {
                 is kotlinx.serialization.json.JsonArray -> element

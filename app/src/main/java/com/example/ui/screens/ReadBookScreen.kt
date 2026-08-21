@@ -1044,21 +1044,26 @@ fun ReadBookScreen(
 
         if (showChapterIndex) {
             val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            val draggableState = androidx.compose.foundation.gestures.rememberDraggableState { }
-            val nestedScrollConnection = remember {
-                object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-                    override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                        return available.copy(x = 0f)
-                    }
-                    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
-                        return available.copy(x = 0f)
-                    }
-                }
+            val isolateScrollConnection = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
+                return available
             }
+            override suspend fun onPostFling(
+                consumed: androidx.compose.ui.unit.Velocity,
+                available: androidx.compose.ui.unit.Velocity
+            ): androidx.compose.ui.unit.Velocity {
+                return available
+            }
+        }
+    }
             ModalBottomSheet(onDismissRequest = { showChapterIndex = false }, sheetState = sheetState) {
                 Column(modifier = Modifier.padding(16.dp).fillMaxWidth().fillMaxHeight(0.8f)
-                    .nestedScroll(nestedScrollConnection)
-                    .draggable(draggableState, orientation = Orientation.Vertical)
+                    .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
                 ) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = rememberLazyListState()
