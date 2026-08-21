@@ -266,3 +266,38 @@ object GeminiHelper {
         "Error: All API keys failed or limit reached. Last Error: ${lastError}"
     }
 }
+
+
+fun sanitizeAiJson(rawJson: String): String {
+    var safe = rawJson
+    
+    // 1. Explicitly double-escape common math/formatting commands if AI forgot.
+    safe = safe.replace(Regex("(?<!\\\\)\\\\frac"), "\\\\\\\\frac")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\text"), "\\\\\\\\text")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\nu"), "\\\\\\\\nu")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\beta"), "\\\\\\\\beta")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\begin"), "\\\\\\\\begin")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\rightarrow"), "\\\\\\\\rightarrow")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\right"), "\\\\\\\\right")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\rho"), "\\\\\\\\rho")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\tau"), "\\\\\\\\tau")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\theta"), "\\\\\\\\theta")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\times"), "\\\\\\\\times")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\nabla"), "\\\\\\\\nabla")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\alpha"), "\\\\\\\\alpha")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\mu"), "\\\\\\\\mu")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\pi"), "\\\\\\\\pi")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\sigma"), "\\\\\\\\sigma")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\infty"), "\\\\\\\\infty")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\pm"), "\\\\\\\\pm")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\neq"), "\\\\\\\\neq")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\approx"), "\\\\\\\\approx")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\leq"), "\\\\\\\\leq")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\geq"), "\\\\\\\\geq")
+    safe = safe.replace(Regex("(?<!\\\\)\\\\%"), "\\\\\\\\%")
+
+    // 2. Catch-all for any other unescaped backslashes that are NOT valid JSON escapes.
+    // Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \u
+    safe = safe.replace(Regex("(?<!\\\\)\\\\(?![\"\\\\/bfnrtu])")) { "\\\\\\\\" }
+    return safe
+}

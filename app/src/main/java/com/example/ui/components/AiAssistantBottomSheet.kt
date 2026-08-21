@@ -739,7 +739,7 @@ suspend fun processAiChatCommand(
         if (jsonStart != -1 && jsonEnd != -1 && jsonEnd >= jsonStart) {
             cleanJson = cleanJson.substring(jsonStart, jsonEnd + 1)
         }
-        val parsed = Json.parseToJsonElement(cleanJson).jsonObject
+        val parsed = Json.parseToJsonElement(com.example.data.sanitizeAiJson(cleanJson)).jsonObject
         intent = parsed["intent"]?.jsonPrimitive?.content ?: "chat"
         requiresQuestions = parsed["requiresQuestions"]?.jsonPrimitive?.booleanOrNull ?: true
         
@@ -866,7 +866,7 @@ suspend fun processAiChatCommand(
             onStatusUpdate("Parsing AI response...", 0.8f)
             val updates = mutableListOf<PendingQuestionUpdate>()
             
-            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(result).jsonArray
+            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(com.example.data.sanitizeAiJson(result)).jsonArray
             val gson = com.example.data.SharedGson.normal
             val baseBookId = allQuestions.firstOrNull()?.bookId ?: "ExtractedBook"
             val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
@@ -1079,7 +1079,7 @@ suspend fun processAiChatCommand(
                 cleanResult = cleanResult.substring(jsonStart, jsonEnd + 1)
             }
             
-            val element = Json.parseToJsonElement(cleanResult)
+            val element = Json.parseToJsonElement(com.example.data.sanitizeAiJson(cleanResult))
             val resultArray = when (element) {
                 is kotlinx.serialization.json.JsonArray -> element
                 is kotlinx.serialization.json.JsonObject -> kotlinx.serialization.json.JsonArray(listOf(element))
