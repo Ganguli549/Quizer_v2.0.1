@@ -1064,6 +1064,7 @@ fun ReadBookScreen(
             ModalBottomSheet(onDismissRequest = { showChapterIndex = false }, sheetState = sheetState) {
                 Column(modifier = Modifier.padding(16.dp).fillMaxWidth().fillMaxHeight(0.8f)
                     .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
+                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
                 ) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = rememberLazyListState()

@@ -1082,6 +1082,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
             ) {
                 Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)
                     .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
+                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
                 ) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {

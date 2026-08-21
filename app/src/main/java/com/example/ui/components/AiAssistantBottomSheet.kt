@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.*
+import androidx.compose.foundation.gestures.draggable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -172,6 +173,7 @@ fun AiAssistantBottomSheet(
                 .padding(bottom = 16.dp)
                 .fillMaxHeight(0.9f)
                 .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
+                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -820,7 +822,8 @@ suspend fun processAiChatCommand(
             4. **Table Format**: If the question or data involves a table (grid lines or simple listing), extract the table data and set 'format' to "table". Construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). DO NOT put the table data in the 'question' text; keep the 'question' text clean.
             5. **Images from Source**: If the user provides a ZIP file with images, or explicitly references extracting existing images, map the image filenames provided in the System Note to the appropriate fields (e.g. 'img', 'explanationImageOptions'). Follow the user's exact instructions for how to map them.
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
-            7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math. Use HTML for bold/italics if necessary.
+            7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math.  Use HTML for bold/italics if necessary.
+            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`, and `\\\\alpha` instead of `\\alpha`.
             8. Extract ALL questions from the document. Take as much space as you need.
             9. Format the output strictly as a JSON array containing objects matching this schema:
             [
@@ -862,8 +865,8 @@ suspend fun processAiChatCommand(
             
             onStatusUpdate("Parsing AI response...", 0.8f)
             val updates = mutableListOf<PendingQuestionUpdate>()
-            val cleanedResult = result.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
-            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanedResult).jsonArray
+            
+            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(result).jsonArray
             val gson = com.example.data.SharedGson.normal
             val baseBookId = allQuestions.firstOrNull()?.bookId ?: "ExtractedBook"
             val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
@@ -1046,7 +1049,8 @@ suspend fun processAiChatCommand(
             
             Guidelines:
             1. **Distractors (extraOptions)**: If asked for distractors or extraOptions, generate highly plausible but incorrect options (at least 3-4). Format them as a JSON string array like '["Distractor 1", "Distractor 2"]'.
-            2. **Explanations & MATH**: If asked for detailed explanations, use HTML or Markdown. When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1. Wrap mathematical expressions, formula, and variable in single dollar signs `${"$"}`. Examples: `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`. Block equations must use double dollar signs `${"$$"}`. NEVER write math in plain text like `\int` or `x=1` or `a^2+b^2=c^2` without the `${"$"}` wrapper! Do NOT use `\(` or `\[`. NEVER wrap math expressions in backticks (e.g. NEVER use backticks around the dollar signs). Use ONLY dollar signs.
+            2. **Explanations & MATH**: If asked for detailed explanations, use HTML or Markdown. When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1. Wrap mathematical expressions, formula, and variable in single dollar signs `${"$"}`. Examples: `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`. Block equations must use double dollar signs `${"$$"}`. NEVER write math in plain text like `\int` or `x=1` or `a^2+b^2=c^2` without the `${"$"}` wrapper! Do NOT use `\(` or `\[`. NEVER wrap math expressions in backticks (e.g. NEVER use backticks around the dollar signs).  Use ONLY dollar signs.
+            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`.
             3. **Images**: If asked for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             4. **Expansion (Single to Multiple)**: If asked to expand a question into multiple questions, you should return the original question PLUS the newly generated questions. For new questions, assign them "id": -1.
             5. **Table Format**: If asked to convert tabular data to 'table' format, set 'format' to "table", and construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). Clean up the 'question' text to remove the table data.
@@ -1074,7 +1078,7 @@ suspend fun processAiChatCommand(
             if (jsonStart != -1 && jsonEnd != -1 && jsonEnd >= jsonStart) {
                 cleanResult = cleanResult.substring(jsonStart, jsonEnd + 1)
             }
-            cleanResult = cleanResult.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
+            
             val element = Json.parseToJsonElement(cleanResult)
             val resultArray = when (element) {
                 is kotlinx.serialization.json.JsonArray -> element
