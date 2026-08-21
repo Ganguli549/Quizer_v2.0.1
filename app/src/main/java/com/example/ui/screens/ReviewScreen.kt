@@ -222,7 +222,7 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                         }
                                         Row {
                                             Text("${index + 1}. ", fontWeight = FontWeight.Bold)
-                                            com.example.ui.components.RichText(text = question.question, color = MaterialTheme.colorScheme.onSurface)
+                                            com.example.ui.components.SmartRichText(text = question.question, color = MaterialTheme.colorScheme.onSurface)
                                         }
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(start = 8.dp)) {
@@ -261,7 +261,7 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                 
                                 if (!question.bottomText.isNullOrBlank()) {
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    com.example.ui.components.RichText(text = question.bottomText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    com.example.ui.components.SmartRichText(text = question.bottomText, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 
                                 if (!question.img.isNullOrBlank()) {
@@ -367,7 +367,7 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                         }
                                         
                                         Text("${(65 + optIndex).toChar()}. ", fontWeight = if (isThisCorrectAnswer || isThisUserAnswer) FontWeight.Bold else FontWeight.Normal, color = tint)
-                                        com.example.ui.components.RichText(text = opt, color = tint)
+                                        com.example.ui.components.SmartRichText(text = opt, color = tint)
                                     }
                                 }
                                 
@@ -380,14 +380,14 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                     
                                     if (hasBrief && hasDetailed) {
                                         Text("Brief:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                                        com.example.ui.components.RichText(text = question.explanation, color = MaterialTheme.colorScheme.onSurface)
+                                        com.example.ui.components.SmartRichText(text = question.explanation, color = MaterialTheme.colorScheme.onSurface)
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text("Detailed:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                                        com.example.ui.components.RichText(text = question.detailedExplanation!!, color = MaterialTheme.colorScheme.onSurface)
+                                        com.example.ui.components.SmartRichText(text = question.detailedExplanation!!, color = MaterialTheme.colorScheme.onSurface)
                                     } else if (hasBrief) {
-                                        com.example.ui.components.RichText(text = question.explanation, color = MaterialTheme.colorScheme.onSurface)
+                                        com.example.ui.components.SmartRichText(text = question.explanation, color = MaterialTheme.colorScheme.onSurface)
                                     } else if (hasDetailed) {
-                                        com.example.ui.components.RichText(text = question.detailedExplanation!!, color = MaterialTheme.colorScheme.onSurface)
+                                        com.example.ui.components.SmartRichText(text = question.detailedExplanation!!, color = MaterialTheme.colorScheme.onSurface)
                                     }
                                     if (!question.explanationTable.isNullOrBlank()) {
                                         val expTableData = androidx.compose.runtime.remember(question.id) {

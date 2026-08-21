@@ -1256,7 +1256,7 @@ fun ReadBookQuestionItem(
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().animateContentSize()) {
         
         
-        RichText(
+        com.example.ui.components.SmartRichText(
             text = "<b>Q.$localNumber</b> ${question.question}",
             fontSize = 20.sp,
             color = themeColors.text,
@@ -1282,7 +1282,7 @@ fun ReadBookQuestionItem(
         
         if (!question.bottomText.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(17.dp))
-            RichText(
+            com.example.ui.components.SmartRichText(
                 text = question.bottomText!!,
                 fontSize = 18.sp,
                 color = themeColors.text,
@@ -1361,7 +1361,7 @@ fun ReadBookQuestionItem(
                     fontSize = 18.sp,
                     modifier = Modifier.padding(end = 8.dp)
                 )
-                RichText(
+                com.example.ui.components.SmartRichText(
                     text = optionText,
                     fontSize = 18.sp,
                     color = textColor,
@@ -1400,7 +1400,7 @@ fun ReadBookQuestionItem(
                 
                 if (hasBrief && hasDetailed) {
                     Text("Brief:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = themeColors.text)
-                    RichText(
+                    com.example.ui.components.SmartRichText(
                         text = question.explanation,
                         fontSize = 16.sp,
                         color = themeColors.text,
@@ -1411,7 +1411,7 @@ fun ReadBookQuestionItem(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Detailed:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = themeColors.text)
-                    RichText(
+                    com.example.ui.components.SmartRichText(
                         text = question.detailedExplanation!!,
                         fontSize = 16.sp,
                         color = themeColors.text,
@@ -1421,7 +1421,7 @@ fun ReadBookQuestionItem(
                         onClick = onTextClick
                     )
                 } else if (hasBrief) {
-                    RichText(
+                    com.example.ui.components.SmartRichText(
                         text = question.explanation,
                         fontSize = 16.sp,
                         color = themeColors.text,
@@ -1431,7 +1431,7 @@ fun ReadBookQuestionItem(
                         onClick = onTextClick
                     )
                 } else if (hasDetailed) {
-                    RichText(
+                    com.example.ui.components.SmartRichText(
                         text = question.detailedExplanation!!,
                         fontSize = 16.sp,
                         color = themeColors.text,

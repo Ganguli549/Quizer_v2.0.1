@@ -163,11 +163,13 @@ fun RichText(
                 val start = spannable.getSpanStart(span)
                 val end = spannable.getSpanEnd(span)
                 val url = span.drawable.destination
-                spannable.setSpan(object : android.text.style.ClickableSpan() {
-                    override fun onClick(widget: android.view.View) {
-                        zoomableImageUrl = url
-                    }
-                }, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (url.startsWith("http") || url.startsWith("data:") || url.startsWith("file:")) {
+                    spannable.setSpan(object : android.text.style.ClickableSpan() {
+                        override fun onClick(widget: android.view.View) {
+                            zoomableImageUrl = url
+                        }
+                    }, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()

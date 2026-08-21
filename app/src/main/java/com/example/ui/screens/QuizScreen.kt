@@ -629,7 +629,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                     }
                 }
 
-                RichText(
+                com.example.ui.components.SmartRichText(
                     text = "<b>Q${animatedIndex + 1}</b> ${animatedQuestion.question}",
                     fontSize = 20.sp,
                     color = MaterialTheme.colorScheme.onSurface
@@ -650,7 +650,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 
                 if (!animatedQuestion.bottomText.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(16.dp))
-                    RichText(
+                    com.example.ui.components.SmartRichText(
                         text = animatedQuestion.bottomText!!,
                         fontSize = 18.sp,
                         color = MaterialTheme.colorScheme.onSurface
@@ -823,7 +823,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     modifier = Modifier.padding(end = 12.dp)
                                 )
                             }
-                            RichText(
+                            com.example.ui.components.SmartRichText(
                                 text = option,
                                 fontSize = 16.sp,
                                 color = textColor,
@@ -853,7 +853,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     if (hasBasic) {
                                         Text("Explanation:", fontWeight = FontWeight.Bold)
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        RichText(animatedQuestion.explanation)
+                                        com.example.ui.components.SmartRichText(animatedQuestion.explanation)
                                         Spacer(modifier = Modifier.height(8.dp))
                                     }
                                     
@@ -1192,7 +1192,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     }
                                 }
                                 if (!questions[currentIndex].detailedExplanation.isNullOrEmpty()) {
-                                    RichText(questions[currentIndex].detailedExplanation!!)
+                                    com.example.ui.components.SmartRichText(questions[currentIndex].detailedExplanation!!)
                                 }
                                 if (!questions[currentIndex].explanationTable.isNullOrEmpty()) {
                                     val expTableData = androidx.compose.runtime.remember(questions[currentIndex].id) {

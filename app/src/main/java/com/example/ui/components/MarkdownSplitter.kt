@@ -11,20 +11,21 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun SmartRichText(
+fun MathSplitterRichText(
     text: String,
     modifier: Modifier = Modifier,
     color: Color = androidx.compose.material3.LocalContentColor.current,
     fontSize: TextUnit = 16.sp,
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
-    isSelectable: Boolean = true
+    isSelectable: Boolean = true,
+    onClick: (() -> Unit)? = null
 ) {
-    val tableRegex = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
-    val matches = tableRegex.findAll(text).toList()
-    
+    val mathRegex = Regex("(?s)(?:^|\\n)[ \\t]*(?:\\$\\$|\\\\\\[|\\$)(.*?)(?:\\$\\$|\\\\\\]|\\$)[ \\t]*(?=\\n|$)")
+    val matches = mathRegex.findAll(text).toList()
+
     if (matches.isEmpty()) {
-        RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable)
+        RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
         return
     }
 
@@ -33,7 +34,56 @@ fun SmartRichText(
         for (match in matches) {
             val before = text.substring(lastIndex, match.range.first)
             if (before.isNotBlank()) {
-                RichText(before, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable)
+                RichText(before, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+            }
+            
+            val mathStr = match.value.trim()
+            val scrollState = rememberScrollState()
+            RichText(
+                text = mathStr, 
+                modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState), 
+                color = color, 
+                fontSize = fontSize, 
+                searchQuery = searchQuery, 
+                highlightColor = highlightColor, 
+                isSelectable = isSelectable, 
+                onClick = onClick
+            )
+            
+            lastIndex = match.range.last + 1
+        }
+        val after = text.substring(lastIndex)
+        if (after.isNotBlank()) {
+            RichText(after, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+        }
+    }
+}
+
+@Composable
+fun SmartRichText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = androidx.compose.material3.LocalContentColor.current,
+    fontSize: TextUnit = 16.sp,
+    searchQuery: String = "",
+    highlightColor: Color = Color.Yellow,
+    isSelectable: Boolean = true,
+    onClick: (() -> Unit)? = null
+) {
+    val tableRegex = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
+    val matches = tableRegex.findAll(text).toList()
+    
+    if (matches.isEmpty()) {
+        MathSplitterRichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+        return
+    }
+    
+    var lastIndex = 0
+    Column(modifier = modifier) {
+        for (match in matches) {
+            val before = text.substring(lastIndex, match.range.first)
+            if (before.isNotBlank()) {
+                MathSplitterRichText(before, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
             }
             
             // Parse table
@@ -63,7 +113,7 @@ fun SmartRichText(
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
-            RichText(after, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable)
+            MathSplitterRichText(after, Modifier.fillMaxWidth(), color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
         }
     }
 }

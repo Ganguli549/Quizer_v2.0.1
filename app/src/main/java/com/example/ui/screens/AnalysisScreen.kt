@@ -254,7 +254,7 @@ fun AnalysisScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: ()
                                         Text("Failed ${stat.wrong} times", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    com.example.ui.components.RichText(text = questionText, color = MaterialTheme.colorScheme.onSurface)
+                                    com.example.ui.components.SmartRichText(text = questionText, color = MaterialTheme.colorScheme.onSurface)
                                 }
                             }
                         }

@@ -241,7 +241,7 @@ fun SearchQuestionContent(q: com.example.data.QuestionEntity, query: String, isS
     Column(modifier = Modifier.fillMaxWidth().clickable { toggle() }) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
-                com.example.ui.components.RichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
+                com.example.ui.components.SmartRichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
                 
                 if (q.format == "table" && q.tableData != null) {
                     val tableData = androidx.compose.runtime.remember(q.id) {
@@ -260,7 +260,7 @@ fun SearchQuestionContent(q: com.example.data.QuestionEntity, query: String, isS
                 
                 if (!q.bottomText.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    com.example.ui.components.RichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
                 }
                 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -293,19 +293,19 @@ fun SearchQuestionContent(q: com.example.data.QuestionEntity, query: String, isS
                 val isCorrect = idx == q.correctIndex
                 Row(modifier = Modifier.padding(vertical = 4.dp)) {
                     Text("${idx + 1}. ", fontWeight = if (isCorrect) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal, color = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface)
-                    com.example.ui.components.RichText(text = opt, color = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = opt, color = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
                 }
             }
             if (q.explanation.isNotBlank() || !q.detailedExplanation.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 if (q.explanation.isNotBlank()) {
                     Text("Explanation:", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                    com.example.ui.components.RichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
                 }
                 if (!q.detailedExplanation.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Detailed:", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                    com.example.ui.components.RichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
                 }
                 if (!q.explanationTable.isNullOrBlank()) {
                     val expTableData = androidx.compose.runtime.remember(q.id) {

@@ -126,7 +126,7 @@ fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.exam
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        com.example.ui.components.RichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
+                        com.example.ui.components.SmartRichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
                         
                         if (q.format == "table" && q.tableData != null) {
                             val tableData = androidx.compose.runtime.remember(q.id) {
@@ -145,7 +145,7 @@ fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.exam
                         
                         if (!q.bottomText.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            com.example.ui.components.RichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
+                            com.example.ui.components.SmartRichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
                         }
                         
                         Spacer(modifier = Modifier.height(4.dp))
@@ -247,19 +247,19 @@ fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.exam
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            com.example.ui.components.RichText(text = opt, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
+                            com.example.ui.components.SmartRichText(text = opt, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     if (q.explanation.isNotBlank() || !q.detailedExplanation.isNullOrBlank() || !q.explanationTable.isNullOrBlank()) {
                         if (q.explanation.isNotBlank()) {
                             Text("Explanation:", style = MaterialTheme.typography.labelMedium)
-                            com.example.ui.components.RichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
+                            com.example.ui.components.SmartRichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
                         }
                         if (!q.detailedExplanation.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text("Detailed:", style = MaterialTheme.typography.labelMedium)
-                            com.example.ui.components.RichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
+                            com.example.ui.components.SmartRichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = { expanded = !expanded })
                         }
                         if (!q.explanationTable.isNullOrBlank()) {
                             val expTableData = androidx.compose.runtime.remember(q.id) {
@@ -340,7 +340,7 @@ fun BookmarkQuestionContent(q: com.example.data.QuestionEntity, viewModel: com.e
     Column(modifier = Modifier.fillMaxWidth().clickable { toggle() }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                com.example.ui.components.RichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
+                com.example.ui.components.SmartRichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
                     
                 if (q.format == "table" && q.tableData != null) {
                     val tableData = androidx.compose.runtime.remember(q.id) {
@@ -359,7 +359,7 @@ fun BookmarkQuestionContent(q: com.example.data.QuestionEntity, viewModel: com.e
                     
                 if (!q.bottomText.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    com.example.ui.components.RichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.bottomText, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
                 }
                     
                 Spacer(modifier = Modifier.height(4.dp))
@@ -461,19 +461,19 @@ fun BookmarkQuestionContent(q: com.example.data.QuestionEntity, viewModel: com.e
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    com.example.ui.components.RichText(text = opt, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = opt, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             if (q.explanation.isNotBlank() || !q.detailedExplanation.isNullOrBlank() || !q.explanationTable.isNullOrBlank()) {
                 if (q.explanation.isNotBlank()) {
                     Text("Explanation:", style = MaterialTheme.typography.labelMedium)
-                    com.example.ui.components.RichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.explanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
                 }
                 if (!q.detailedExplanation.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Detailed:", style = MaterialTheme.typography.labelMedium)
-                    com.example.ui.components.RichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
+                    com.example.ui.components.SmartRichText(text = q.detailedExplanation, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
                 }
                 if (!q.explanationTable.isNullOrBlank()) {
                     val expTableData = androidx.compose.runtime.remember(q.id) {

@@ -128,19 +128,46 @@ fun AiAssistantBottomSheet(
         skipPartiallyExpanded = true
     )
 
-    val draggableState = rememberDraggableState { }
-
-
-    val dummyDraggableState = rememberDraggableState { }
+    
     val blockParentScroll = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(
+            override fun onPreScroll(
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
+                // If the user drags DOWN on the chat (available.y > 0), the ModalBottomSheet 
+                // intercepts it by default in onPreScroll, dragging the sheet down instead of 
+                // scrolling the content.
+                // We consume it here to force the drag to stay within the content.
+                // If they are dragging UP (available.y < 0), we don't consume it so it scrolls down normally.
+                // We want to intercept drag events that would normally drag the bottom sheet down.
+                // However, consuming it entirely here prevents LazyColumn from receiving it.
+                // ModalBottomSheet uses nested scroll to drag. It intercepts onPreScroll.
+                // By returning Offset.Zero, we let LazyColumn try to consume it.
+                // The REAL issue is the ModalBottomSheet intercepting BEFORE this NestedScrollConnection gets it.
+                // By returning Offset.Zero, we let LazyColumn try to consume it.
+                // BUT if we don't consume it here, ModalBottomSheet (the parent) WILL consume it.
+                // However, we passed dispatcher=null to nestedScroll modifier, so ModalBottomSheet 
+                // won't receive it!
+                // PreScroll: child (LazyColumn) calls parent (us). 
+                // We should only consume what LazyColumn didn't, if we don't want ModalBottomSheet to get it.
+                // Wait, onPreScroll is called BEFORE the child consumes.
+                // If we consume it here, LazyColumn won't get it.
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            // We also need to consume any leftover unconsumed scroll or fling on the Y axis
+            // so that it doesn't propagate up and close the bottom sheet when reaching the edges.
+            
+                        override fun onPostScroll(
                 consumed: androidx.compose.ui.geometry.Offset,
                 available: androidx.compose.ui.geometry.Offset,
                 source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
             ): androidx.compose.ui.geometry.Offset {
+                // To completely isolate the scroll, we also return the available offset.
                 return available // Consume ALL leftover scroll
             }
+            
             override suspend fun onPostFling(
                 consumed: androidx.compose.ui.unit.Velocity,
                 available: androidx.compose.ui.unit.Velocity
@@ -150,6 +177,11 @@ fun AiAssistantBottomSheet(
         }
     }
 
+    // To prevent the bottom sheet from being dragged down by the scrollable content, 
+    // we use a workaround with nestedScroll that isolates it from the parent ModalBottomSheet.
+    // However, since ModalBottomSheet passes its nestedScroll dispatcher down the tree, 
+    // the only bulletproof way is to wrap the content in a custom NestedScrollConnection 
+    // that intercepts but DOES NOT propagate.
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -161,8 +193,16 @@ fun AiAssistantBottomSheet(
                 .imePadding()
                 .padding(bottom = 16.dp)
                 .fillMaxHeight(0.9f)
-                .nestedScroll(blockParentScroll)
-                .draggable(dummyDraggableState, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
+                // We isolate the nested scroll from the parent ModalBottomSheet completely.
+                // This prevents the ModalBottomSheet from aggressively intercepting onPreScroll.
+                .nestedScroll(connection = blockParentScroll, dispatcher = null)
+                // We also add a dummy draggable to catch raw touch events that bubble up
+                // (e.g., when the LazyColumn is at the top and doesn't consume the swipe down).
+                // This prevents the ModalBottomSheet's AnchoredDraggable from getting them.
+                .draggable(
+                    state = androidx.compose.foundation.gestures.rememberDraggableState { },
+                    orientation = androidx.compose.foundation.gestures.Orientation.Vertical
+                )
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),

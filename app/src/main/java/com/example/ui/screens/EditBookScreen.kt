@@ -210,14 +210,16 @@ fun EditBookScreen(
                                 }
                             )
                                                         DropdownMenuItem(
-                                text = { Text("Export to Downloads") },
+                                text = { Text("Export") },
                                 onClick = {
                                     showMenu = false
                                     coroutineScope.launch(Dispatchers.IO) {
-                                        val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                        val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                                        val booksDir = java.io.File(basePath, "Quizer/qbooks")
+                                        if (!booksDir.exists()) booksDir.mkdirs()
                                         val book = viewModel.repository.getBookSync(currentBookId)
                                         val safeName = (book?.name ?: "ExportedBook").replace(Regex("[^a-zA-Z0-9.-]"), "_")
-                                        val targetFile = java.io.File(downloadsDir, "${safeName}.qbook")
+                                        val targetFile = java.io.File(booksDir, "${safeName}.qbook")
                                         val res = exportQBook(context, viewModel.repository, currentBookId, targetFile)
                                         snackbarHostState.showSnackbar(res ?: "Exported successfully")
                                     }
@@ -1133,15 +1135,28 @@ fun RestorePointsDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         },
         dismissButton = {
-            if (files.isNotEmpty()) {
+            if (files.isNotEmpty() || originalFile != null) {
                 TextButton(
                     onClick = {
-                        val restoreDir = File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/RestorePoints/$bookId")
-                        if (restoreDir.exists()) {
-                            restoreDir.deleteRecursively()
+                        isLoading = true
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val restoreDir = File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/RestorePoints/$bookId")
+                            if (restoreDir.exists()) {
+                                restoreDir.deleteRecursively()
+                            }
+                            
+                            val originalDir = File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/Original")
+                            if (!originalDir.exists()) {
+                                originalDir.mkdirs()
+                            }
+                            val targetFile = File(originalDir, "$bookId.qbook")
+                            exportQBook(context, viewModel.repository, bookId, targetFile)
+                            
+                            launch(Dispatchers.Main) {
+                                files = emptyList()
+                                onDismiss()
+                            }
                         }
-                        files = emptyList()
-                        onDismiss()
                     }
                 ) {
                     Text("Permanent Apply Changes", color = MaterialTheme.colorScheme.error)
@@ -1178,7 +1193,7 @@ fun EditQuestionItem(question: QuestionEntity, onClick: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
             Row {
                 Text("Q${question.id}. ", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                com.example.ui.components.RichText(text = question.question, color = MaterialTheme.colorScheme.onSurface)
+                com.example.ui.components.SmartRichText(text = question.question, color = MaterialTheme.colorScheme.onSurface)
             }
             
             if (question.format == "table" && question.tableData != null) {
@@ -1197,7 +1212,7 @@ fun EditQuestionItem(question: QuestionEntity, onClick: () -> Unit) {
             }
             if (!question.bottomText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                com.example.ui.components.RichText(text = question.bottomText!!, color = MaterialTheme.colorScheme.onSurface)
+                com.example.ui.components.SmartRichText(text = question.bottomText!!, color = MaterialTheme.colorScheme.onSurface)
             }
             if (!question.img.isNullOrEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1248,7 +1263,7 @@ fun EditQuestionItem(question: QuestionEntity, onClick: () -> Unit) {
                     optionsList.forEachIndexed { idx, opt ->
                         Row(modifier = Modifier.padding(vertical = 2.dp)) {
                             Text("${(65 + idx).toChar()}. ", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                            com.example.ui.components.RichText(text = opt, color = MaterialTheme.colorScheme.onSurface)
+                            com.example.ui.components.SmartRichText(text = opt, color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 }
