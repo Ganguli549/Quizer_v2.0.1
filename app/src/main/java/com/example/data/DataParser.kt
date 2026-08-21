@@ -65,6 +65,8 @@ class DataParser {
             var fixed = jsonStr
             // Remove trailing commas in objects and arrays
             fixed = fixed.replace(Regex(""",(\s*[}\]])"""), "$1")
+            // Fix invalid escaped characters from AI like \$ and \%
+            fixed = fixed.replace("\\$", "$").replace("\\%", "%")
             // Attempt to fix unescaped quotes inside strings (rough heuristic, may not be perfect but helps)
             // It's a bit tricky to safely escape quotes within JSON values without a proper parser.
             // For now, trailing commas are the most common issue.

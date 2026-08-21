@@ -230,7 +230,7 @@ object GeminiHelper {
             contents = listOf(Content(parts = partsList)),
             generationConfig = genConfig,
             systemInstruction = Content(
-                parts = listOf(Part(text = "You are a helpful AI assistant built into the Quizer app. If JSON is requested, output ONLY valid JSON without markdown formatting blocks like ```json. Do NOT escape characters like '%' or '$' in JSON strings. Use standard unescaped text (e.g. '$30' not '\\$30', '50%' not '50\\%')."))
+                parts = listOf(Part(text = "You are a helpful AI assistant built into the Quizer app. If JSON is requested, output ONLY valid JSON without markdown formatting blocks like ```json."))
             )
         )
 

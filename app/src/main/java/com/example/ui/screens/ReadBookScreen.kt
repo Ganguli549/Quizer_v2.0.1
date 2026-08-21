@@ -1,8 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 
 import com.example.data.resolveHeaders
 import androidx.compose.ui.graphics.ShaderBrush
@@ -1064,7 +1064,21 @@ fun ReadBookScreen(
             ModalBottomSheet(onDismissRequest = { showChapterIndex = false }, sheetState = sheetState) {
                 Column(modifier = Modifier.padding(16.dp).fillMaxWidth().fillMaxHeight(0.8f)
                     .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                if (event.changes.size > 1) {
+                                    event.changes.drop(1).forEach { it.consume() }
+                                }
+                            }
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { change, _ ->
+                            change.consume()
+                        }
+                    }
                 ) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = rememberLazyListState()

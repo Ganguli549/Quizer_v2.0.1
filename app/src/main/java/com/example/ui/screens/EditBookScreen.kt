@@ -1148,6 +1148,22 @@ fun RestorePointsDialog(
                             val targetFile = originalFile ?: File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/$bookId.qbook")
                             exportQBook(context, viewModel.repository, bookId, targetFile)
                             
+                            try {
+                                java.util.zip.ZipFile(targetFile).use { zip ->
+                                    val qEntry = zip.getEntry("questions.json")
+                                    if (qEntry != null) {
+                                        val bookDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$bookId")
+                                        if (!bookDir.exists()) bookDir.mkdirs()
+                                        val backupFile = File(bookDir, "backup_questions.json")
+                                        zip.getInputStream(qEntry).use { input ->
+                                            java.io.FileOutputStream(backupFile).use { output ->
+                                                input.copyTo(output)
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) { e.printStackTrace() }
+
                             launch(Dispatchers.Main) {
                                 files = emptyList()
                                 onDismiss()

@@ -1,8 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 
 
 import kotlinx.coroutines.launch
@@ -1082,7 +1082,21 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
             ) {
                 Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)
                     .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                if (event.changes.size > 1) {
+                                    event.changes.drop(1).forEach { it.consume() }
+                                }
+                            }
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { change, _ ->
+                            change.consume()
+                        }
+                    }
                 ) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {

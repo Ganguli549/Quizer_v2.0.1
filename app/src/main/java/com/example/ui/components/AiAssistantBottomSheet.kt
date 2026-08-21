@@ -25,7 +25,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.*
-import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,7 +173,21 @@ fun AiAssistantBottomSheet(
                 .padding(bottom = 16.dp)
                 .fillMaxHeight(0.9f)
                 .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                .draggable(androidx.compose.foundation.gestures.rememberDraggableState { }, orientation = androidx.compose.foundation.gestures.Orientation.Vertical)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                            if (event.changes.size > 1) {
+                                event.changes.drop(1).forEach { it.consume() }
+                            }
+                        }
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { change, _ ->
+                        change.consume()
+                    }
+                }
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -866,7 +880,8 @@ suspend fun processAiChatCommand(
             onStatusUpdate("Parsing AI response...", 0.8f)
             val updates = mutableListOf<PendingQuestionUpdate>()
             
-            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(result).jsonArray
+            val cleanResult = com.example.data.DataParser.autoFixJson(result)
+            val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanResult).jsonArray
             val gson = com.example.data.SharedGson.normal
             val baseBookId = allQuestions.firstOrNull()?.bookId ?: "ExtractedBook"
             val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
@@ -1079,7 +1094,7 @@ suspend fun processAiChatCommand(
                 cleanResult = cleanResult.substring(jsonStart, jsonEnd + 1)
             }
             
-            val element = Json.parseToJsonElement(cleanResult)
+            val element = Json.parseToJsonElement(com.example.data.DataParser.autoFixJson(cleanResult))
             val resultArray = when (element) {
                 is kotlinx.serialization.json.JsonArray -> element
                 is kotlinx.serialization.json.JsonObject -> kotlinx.serialization.json.JsonArray(listOf(element))
