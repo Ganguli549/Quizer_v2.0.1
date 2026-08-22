@@ -640,14 +640,19 @@ fun ReadBookScreen(
                 enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
             ) {
-                BottomAppBar(
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = themeColors.background.copy(alpha = 0.95f),
-                    contentColor = themeColors.text,
-                    tonalElevation = 8.dp,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                Surface(
+                    color = themeColors.background.copy(alpha = 0.95f),
+                    tonalElevation = 8.dp
                 ) {
-                    Row(
+                    BottomAppBar(
+                        modifier = Modifier.fillMaxWidth().navigationBarsPadding(),
+                        containerColor = Color.Transparent,
+                        contentColor = themeColors.text,
+                        tonalElevation = 0.dp,
+                        windowInsets = WindowInsets(0, 0, 0, 0),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -673,6 +678,7 @@ fun ReadBookScreen(
                             )
                         }
                     }
+                }
                 }
             }
         },

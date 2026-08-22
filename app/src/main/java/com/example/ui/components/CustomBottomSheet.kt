@@ -70,8 +70,7 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
         
         Box(
             modifier = Modifier
-                .width(screenWidth)
-                .height(screenHeight)
+                .fillMaxSize()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
