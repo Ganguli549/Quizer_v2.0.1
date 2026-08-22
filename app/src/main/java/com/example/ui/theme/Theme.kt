@@ -142,6 +142,29 @@ val ColorfulDarkColorScheme = darkColorScheme(
     secondaryContainer = ColorfulSecondaryContainerDark, onSecondaryContainer = ColorfulOnSecondaryContainerDark
 )
 @Composable
+fun getAppColorScheme(darkTheme: Boolean, dynamicColor: Boolean, appTheme: String): androidx.compose.material3.ColorScheme {
+    return when (appTheme) {
+        "ocean" -> if (darkTheme) OceanDarkColorScheme else OceanLightColorScheme
+        "forest" -> if (darkTheme) ForestDarkColorScheme else ForestLightColorScheme
+        "sunset" -> if (darkTheme) SunsetDarkColorScheme else SunsetLightColorScheme
+        "lavender" -> if (darkTheme) LavenderDarkColorScheme else LavenderLightColorScheme
+        "gold" -> if (darkTheme) GoldDarkColorScheme else GoldLightColorScheme
+        "colorful" -> if (darkTheme) ColorfulDarkColorScheme else ColorfulLightColorScheme
+        "amoled" -> AmoledColorScheme
+        else -> {
+            when {
+                dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                    val context = LocalContext.current
+                    if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+                }
+                darkTheme -> DarkColorScheme
+                else -> LightColorScheme
+            }
+        }
+    }
+}
+
+@Composable
 fun MyApplicationTheme(
   themeMode: String = "system",
   // Dynamic color is available on Android 12+
@@ -155,25 +178,7 @@ fun MyApplicationTheme(
       else -> isSystemInDarkTheme()
   }
 
-  val colorScheme = when (appTheme) {
-      "ocean" -> if (darkTheme) OceanDarkColorScheme else OceanLightColorScheme
-      "forest" -> if (darkTheme) ForestDarkColorScheme else ForestLightColorScheme
-      "sunset" -> if (darkTheme) SunsetDarkColorScheme else SunsetLightColorScheme
-      "lavender" -> if (darkTheme) LavenderDarkColorScheme else LavenderLightColorScheme
-      "gold" -> if (darkTheme) GoldDarkColorScheme else GoldLightColorScheme
-      "colorful" -> if (darkTheme) ColorfulDarkColorScheme else ColorfulLightColorScheme
-      "amoled" -> AmoledColorScheme
-      else -> {
-        when {
-            dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                val context = LocalContext.current
-                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-            }
-            darkTheme -> DarkColorScheme
-            else -> LightColorScheme
-        }
-      }
-  }
+  val colorScheme = getAppColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor, appTheme = appTheme)
 
   val view = androidx.compose.ui.platform.LocalView.current
   if (!view.isInEditMode) {

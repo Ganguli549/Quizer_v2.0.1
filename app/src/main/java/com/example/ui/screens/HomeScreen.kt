@@ -476,13 +476,12 @@ fun HomeScreen(
 
     Scaffold(
         topBar = {
-            val themeMode by viewModel.themeModeState.collectAsState()
-            val isDark = when (themeMode) {
-                "light" -> false
-                "dark" -> true
-                else -> androidx.compose.foundation.isSystemInDarkTheme()
-            }
-
+            val appTheme by viewModel.themeState.collectAsState()
+            val topBarTheme = com.example.ui.theme.getAppColorScheme(
+                darkTheme = true, 
+                dynamicColor = true, 
+                appTheme = appTheme
+            )
             TopAppBar(
                 title = { 
                     Column {
@@ -496,9 +495,9 @@ fun HomeScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = if (isDark) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.primary,
-                    titleContentColor = if (isDark) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = if (isDark) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary
+                    containerColor = topBarTheme.primaryContainer,
+                    titleContentColor = topBarTheme.onPrimaryContainer,
+                    actionIconContentColor = topBarTheme.onPrimaryContainer
                 )
             )
         }
