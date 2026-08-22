@@ -54,8 +54,8 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
     var isVisible by remember { mutableStateOf(false) }
     
     // Popup receives the Activity WindowInsets properly.
-    // safeDrawing includes the keyboard and navigation bar.
-    val bottomPadding = WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    // ime includes only the keyboard, avoiding double-padding the navigation bar on physical devices.
+    val bottomPadding = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
     LaunchedEffect(sheetHeight) {
         if (sheetHeight > 0f && !isVisible) {
