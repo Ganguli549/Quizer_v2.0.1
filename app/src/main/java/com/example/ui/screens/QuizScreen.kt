@@ -1057,47 +1057,11 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
             val hasDetailed = !currentQuestion.detailedExplanation.isNullOrEmpty() || !currentQuestion.explanationImage.isNullOrEmpty() || !currentQuestion.explanationTable.isNullOrEmpty()
             val actualTabIndex = if (hasDetailed) explanationSheetTab else 1
             
-            val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            val isolateScrollConnection = remember {
-        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: androidx.compose.ui.geometry.Offset,
-                available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
-            ): androidx.compose.ui.geometry.Offset {
-                return available
-            }
-            override suspend fun onPostFling(
-                consumed: androidx.compose.ui.unit.Velocity,
-                available: androidx.compose.ui.unit.Velocity
-            ): androidx.compose.ui.unit.Velocity {
-                return available
-            }
-        }
-    }
-            ModalBottomSheet(
-                onDismissRequest = { showExplanationSheet = false },
-                sheetState = sheetState,
-                containerColor = MaterialTheme.colorScheme.surface
+            com.example.ui.components.CustomModalBottomSheet(
+                maxHeightFraction = 0.80f,
+                onDismissRequest = { showExplanationSheet = false }
             ) {
-                Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)
-                    .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                if (event.changes.size > 1) {
-                                    event.changes.drop(1).forEach { it.consume() }
-                                }
-                            }
-                        }
-                    }
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { change, _ ->
-                            change.consume()
-                        }
-                    }
-                ) {
+                Column(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {
                             Tab(

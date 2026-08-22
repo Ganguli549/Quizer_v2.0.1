@@ -76,7 +76,7 @@ fun EditBookScreen(
     var showBulkCategoryDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     var showMenu by remember { mutableStateOf(false) }
-    var showAiAssistant by remember { mutableStateOf(false) }
+    var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showRestorePointsDialog by remember { mutableStateOf(false) }
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showHierarchyDialog by remember { mutableStateOf(false) }
@@ -86,6 +86,7 @@ fun EditBookScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    var autoSaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun loadQuestions() {
         if (currentBookId != "") {
@@ -96,7 +97,9 @@ fun EditBookScreen(
     }
     
     fun autoSaveBook(changeName: String) {
-        coroutineScope.launch(Dispatchers.IO) {
+        autoSaveJob?.cancel()
+        autoSaveJob = coroutineScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(1000)
             // 1. Create restore point
             createRestorePoint(context, viewModel.repository, currentBookId, changeName)
             // 2. Export and save back to original file if possible
@@ -626,7 +629,7 @@ fun EditQuestionDialog(
     var qCorrectIndex by remember { mutableStateOf(question.correctIndex.toString()) }
     var qImg by remember { mutableStateOf(question.img ?: "") }
     var qExplanationImage by remember { mutableStateOf(question.explanationImage ?: "") }
-    var showAiAssistant by remember { mutableStateOf(false) }
+    var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     
     // Simple way to handle image picking and copying
     fun copyUriToImages(uri: Uri): String? {

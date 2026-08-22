@@ -85,14 +85,22 @@ fun AppNavigation(viewModel: MainViewModel) {
             )
         }
         composable<QuizRoute> {
-            QuizScreen(viewModel = viewModel, onFinish = { navController.navigate(ResultsRoute) }, onCancel = { navController.popBackStack() })
+            QuizScreen(viewModel = viewModel, onFinish = { 
+                navController.navigate(ResultsRoute) {
+                    popUpTo(QuizRoute) { inclusive = true }
+                } 
+            }, onCancel = { navController.popBackStack() })
         }
         composable<ResultsRoute> {
             ResultScreen(
                 viewModel = viewModel, 
                 onHome = { navController.popBackStack(HomeRoute, false) }, 
                 onReview = { navController.navigate(ReviewRoute) },
-                onPracticeWrong = { navController.navigate(QuizRoute) }
+                onPracticeWrong = { 
+                    navController.navigate(QuizRoute) {
+                        popUpTo(ResultsRoute) { inclusive = true }
+                    }
+                }
             )
         }
         composable<HistoryRoute> {

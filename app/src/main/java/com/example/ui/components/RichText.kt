@@ -119,7 +119,7 @@ fun RichText(
 ) {
     val context = LocalContext.current
     val fontSizePx = fontSize.value * context.resources.displayMetrics.density
-    val markwon = remember(fontSizePx, color) {
+    val markwon = remember(fontSizePx) {
         MarkwonCache.get(context, fontSizePx, color)
     }
 

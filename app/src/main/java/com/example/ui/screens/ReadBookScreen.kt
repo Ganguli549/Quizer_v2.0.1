@@ -377,7 +377,7 @@ fun ReadBookScreen(
         viewModel.settingsManager.readBookQuizMode = inBookQuizMode
     }
     var showChapterIndex by remember { mutableStateOf(false) }
-    var showAiAssistant by remember { mutableStateOf(false) }
+    var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showBriefExplanation by remember { mutableStateOf(false) }
     
     var isSearchActive by remember { mutableStateOf(false) }
@@ -1043,43 +1043,11 @@ fun ReadBookScreen(
         }
 
         if (showChapterIndex) {
-            val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-            val isolateScrollConnection = remember {
-        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: androidx.compose.ui.geometry.Offset,
-                available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
-            ): androidx.compose.ui.geometry.Offset {
-                return available
-            }
-            override suspend fun onPostFling(
-                consumed: androidx.compose.ui.unit.Velocity,
-                available: androidx.compose.ui.unit.Velocity
-            ): androidx.compose.ui.unit.Velocity {
-                return available
-            }
-        }
-    }
-            ModalBottomSheet(onDismissRequest = { showChapterIndex = false }, sheetState = sheetState) {
-                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().fillMaxHeight(0.8f)
-                    .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                if (event.changes.size > 1) {
-                                    event.changes.drop(1).forEach { it.consume() }
-                                }
-                            }
-                        }
-                    }
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { change, _ ->
-                            change.consume()
-                        }
-                    }
-                ) {
+            com.example.ui.components.CustomModalBottomSheet(
+                maxHeightFraction = 0.75f,
+                onDismissRequest = { showChapterIndex = false }
+            ) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = false)) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = rememberLazyListState()
                     

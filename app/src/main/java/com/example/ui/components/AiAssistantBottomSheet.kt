@@ -138,56 +138,31 @@ fun AiAssistantBottomSheet(
         }
     }
 
-    val sheetState = rememberModalBottomSheetState(
-        skipPartiallyExpanded = true
-    )
-
-    
-    val isolateScrollConnection = remember {
-        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-            override fun onPostScroll(
-                consumed: androidx.compose.ui.geometry.Offset,
-                available: androidx.compose.ui.geometry.Offset,
-                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
-            ): androidx.compose.ui.geometry.Offset {
-                return available
-            }
-            override suspend fun onPostFling(
-                consumed: androidx.compose.ui.unit.Velocity,
-                available: androidx.compose.ui.unit.Velocity
-            ): androidx.compose.ui.unit.Velocity {
-                return available
+    var attachedFileName by remember(attachedPdfUri) { mutableStateOf("Document Attached") }
+    LaunchedEffect(attachedPdfUri) {
+        if (attachedPdfUri != null) {
+            val cursor = context.contentResolver.query(attachedPdfUri!!, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val index = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (index != -1) {
+                        attachedFileName = it.getString(index)
+                    }
+                }
             }
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
+    CustomModalBottomSheet(
+        maxHeightFraction = 0.90f,
+        onDismissRequest = onDismiss
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .imePadding()
                 .padding(bottom = 16.dp)
-                .fillMaxHeight(0.9f)
-                .nestedScroll(connection = isolateScrollConnection, dispatcher = null)
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                            if (event.changes.size > 1) {
-                                event.changes.drop(1).forEach { it.consume() }
-                            }
-                        }
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { change, _ ->
-                        change.consume()
-                    }
-                }
+                .weight(1f, fill = false)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -227,7 +202,6 @@ fun AiAssistantBottomSheet(
                         IconButton(
                             onClick = { 
                                 coroutineScope.launch {
-                                    sheetState.hide()
                                     onDismiss()
                                 }
                             }, 
@@ -580,10 +554,13 @@ fun AiAssistantBottomSheet(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Document Attached", 
+                            attachedFileName, 
                             style = MaterialTheme.typography.labelMedium, 
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                         Box(
