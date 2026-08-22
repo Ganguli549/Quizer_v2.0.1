@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
             val themeMode by viewModel.themeModeState.collectAsState()
             val isAppReady by viewModel.isAppReady.collectAsState()
             val appIcon by viewModel.appIconState.collectAsState()
+            val showBackupDialog by viewModel.showBackupRestoreDialog.collectAsState()
             
             MyApplicationTheme(appTheme = appTheme, themeMode = themeMode) {
                 Surface(
@@ -150,6 +151,13 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 com.example.ui.screens.SplashScreen(appIcon)
                             }
+                        }
+                        
+                        if (showBackupDialog) {
+                            com.example.ui.screens.RestoreBackupDialog(
+                                onRestore = { viewModel.onRestoreBackupDecision(appContext, true) },
+                                onDiscard = { viewModel.onRestoreBackupDecision(appContext, false) }
+                            )
                         }
                     }
                 }

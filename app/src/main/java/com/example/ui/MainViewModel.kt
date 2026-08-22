@@ -24,18 +24,54 @@ class MainViewModel(
 ) : ViewModel() {
     private val _isAppReady = MutableStateFlow(false)
     val isAppReady = _isAppReady.asStateFlow()
+    
+    private val _showBackupRestoreDialog = MutableStateFlow(false)
+    val showBackupRestoreDialog = _showBackupRestoreDialog.asStateFlow()
 
     fun initializeApp(context: android.content.Context) {
         if (_isAppReady.value) return
         viewModelScope.launch {
-            val startTime = System.currentTimeMillis()
-            com.example.data.DataParser.loadInitialData(context, repository)
-            val elapsedTime = System.currentTimeMillis() - startTime
-            val remainingTime = 3000L - elapsedTime
-            if (remainingTime > 0) {
-                kotlinx.coroutines.delay(remainingTime)
+            val prefs = com.example.data.SecurePrefs.get(context)
+            val isFirstLaunch = prefs.getBoolean("is_first_launch", true)
+            
+            if (isFirstLaunch && com.example.data.BackupManager.hasBackup()) {
+                _showBackupRestoreDialog.value = true
+                return@launch
             }
-            _isAppReady.value = true
+            
+            finishInitialization(context)
+        }
+    }
+
+    private suspend fun finishInitialization(context: android.content.Context) {
+        val startTime = System.currentTimeMillis()
+        com.example.data.DataParser.loadInitialData(context, repository)
+        val elapsedTime = System.currentTimeMillis() - startTime
+        val remainingTime = 3000L - elapsedTime
+        if (remainingTime > 0) {
+            kotlinx.coroutines.delay(remainingTime)
+        }
+        val prefs = com.example.data.SecurePrefs.get(context)
+        prefs.edit().putBoolean("is_first_launch", false).apply()
+        _isAppReady.value = true
+    }
+    
+    fun onRestoreBackupDecision(context: android.content.Context, restore: Boolean) {
+        _showBackupRestoreDialog.value = false
+        viewModelScope.launch {
+            if (restore) {
+                val success = com.example.data.BackupManager.restoreBackup(context)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    if (success) {
+                        android.widget.Toast.makeText(context, "Backup restored successfully", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "Failed to restore backup", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            } else {
+                com.example.data.BackupManager.clearBackup()
+            }
+            finishInitialization(context)
         }
     }
     private var quizGenJob: kotlinx.coroutines.Job? = null

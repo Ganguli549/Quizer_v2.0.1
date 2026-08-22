@@ -27,6 +27,22 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+
+class WindowTopLeftPositionProvider : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        return IntOffset(0, 0)
+    }
+}
+
 @Composable
 fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f, 
     onDismissRequest: () -> Unit,
@@ -49,7 +65,12 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
         }
     }
 
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+
     fun dismiss() {
+        keyboardController?.hide()
+        focusManager.clearFocus()
         coroutineScope.launch {
             offsetY.animateTo(sheetHeight)
             onDismissRequest()
@@ -61,16 +82,44 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
     }
 
     Popup(
+        popupPositionProvider = WindowTopLeftPositionProvider(),
         onDismissRequest = { dismiss() },
         properties = PopupProperties(focusable = true, excludeFromSystemGesture = true, clippingEnabled = false)
     ) {
-        // Force the Popup content to fill the screen explicitly.
-        val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+        // Force the Popup content to fill the current window dynamically.
+        val view = androidx.compose.ui.platform.LocalView.current
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        var screenWidth by remember { mutableStateOf(configuration.screenWidthDp.dp) }
+        var screenHeight by remember { mutableStateOf(configuration.screenHeightDp.dp) }
+        
+        DisposableEffect(view, density, configuration) {
+            val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                val w = view.rootView.width
+                val h = view.rootView.height
+                if (w > 0 && h > 0) {
+                    screenWidth = with(density) { w.toDp() }
+                    screenHeight = with(density) { h.toDp() }
+                }
+            }
+            view.rootView.viewTreeObserver.addOnGlobalLayoutListener(listener)
+            
+            val initialW = view.rootView.width
+            val initialH = view.rootView.height
+            if (initialW > 0 && initialH > 0) {
+                screenWidth = with(density) { initialW.toDp() }
+                screenHeight = with(density) { initialH.toDp() }
+            }
+            
+            onDispose {
+                view.rootView.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+            }
+        }
         
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .width(screenWidth)
+                .height(screenHeight)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -88,6 +137,7 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = screenHeight * maxHeightFraction)
                     .onSizeChanged { sheetHeight = it.height.toFloat() }
                     .offset {
                         IntOffset(x = 0, y = max(0f, offsetY.value).roundToInt())
@@ -104,7 +154,6 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = screenHeight * maxHeightFraction)
                         .padding(bottom = bottomPadding)
                 ) {
                     val decay = rememberSplineBasedDecay<Float>()
@@ -142,7 +191,13 @@ fun CustomModalBottomSheet(maxHeightFraction: Float = 0.8f,
                                 )
                         )
                     }
-                    content()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                    ) {
+                        content()
+                    }
                 }
             }
         }
