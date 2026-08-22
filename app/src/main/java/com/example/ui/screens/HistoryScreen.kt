@@ -77,13 +77,16 @@ fun HistoryScreen(viewModel: MainViewModel, onHome: () -> Unit, onReview: () -> 
                     }
                 }
             }
-            if (history.isEmpty()) {
+            
+            val displayHistory = history.filter { !it.status.startsWith("practice_mistakes") }
+            
+            if (displayHistory.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                     Text("No quiz history yet.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(history, key = { it.historyId }) { entry ->
+                    items(displayHistory, key = { it.historyId }) { entry ->
                         val bName = allBooks.find { it.id == entry.bookId }?.name ?: "Unknown Book"
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).animateItem(),

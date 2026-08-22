@@ -41,6 +41,7 @@ class MainViewModel(
     private var quizGenJob: kotlinx.coroutines.Job? = null
     var pendingQuizGenerationTrigger = true
     var isLearnMode = false
+    var isActiveQuizStandardSequence = true
 
     var currentExamSettings: ExamSettings? = null
     var currentLearnSettings: ExamSettings? = null
@@ -468,6 +469,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
 
     fun setQuizQuestionsForBookmarks() {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         val bookmarkedIds = bookmarks.value.map { it.questionId }
         val allQs = _allBookQuestionSummaries.value
@@ -672,6 +674,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     private val _selectedTopic = MutableStateFlow<TopicNode?>(null)
 
     fun setQuizQuestionsByTopic(topic: TopicNode) {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         _selectedTopic.value = topic
         _onlyBookmarks.value = false
@@ -681,6 +684,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
 
     fun setQuizQuestionsForDailyRevision() {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         _selectedTopic.value = null
         _onlyBookmarks.value = false
@@ -695,6 +699,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
 
     fun setQuizQuestionsForWeakTopics() {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         _selectedTopic.value = null
         _onlyBookmarks.value = false
@@ -708,6 +713,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
 
     fun setQuizQuestionsForCritical() {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         _selectedTopic.value = null
         _onlyBookmarks.value = false
@@ -839,6 +845,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
     
     fun generateQuizQuestions() {
+        isActiveQuizStandardSequence = true
         quizGenJob?.cancel()
         quizGenJob = viewModelScope.launch(Dispatchers.Default) {
             _selectedTopic.value = null // clear strict topic filter
@@ -899,6 +906,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
     
     fun setQuizQuestionsByIds(bookId: String, ids: List<Long>) {
+        isActiveQuizStandardSequence = false
         currentExamSettings = null
         _selectedTopic.value = null
         _onlyBookmarks.value = false
@@ -914,6 +922,7 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
     }
 
     fun practiceWrongQuiz(historyId: Long?) {
+        isActiveQuizStandardSequence = false
         currentPracticeMistakesParentId = historyId
         currentExamSettings = null
         val entry = history.value.find { it.historyId == historyId } ?: return
@@ -1382,55 +1391,59 @@ fun setPendingUpdates(chatContextId: String, updates: List<com.example.ui.compon
             val now = System.currentTimeMillis()
             val fullQuestions = repository.getQuestionsByBookAndIds(bookId, questionIds).resolveHeaders().associateBy { it.id }
             val gson = com.example.data.SharedGson.normal
-            questionIds.forEachIndexed { index, qId ->
-                val ans = userAnswers[index]
-                if (ans != null) {
-                    val key = "${bookId}_${qId}"
-                    var existing = allStats.value.find { it.questionKey == key }
-                    if (existing == null) {
-                        existing = QuestionStatEntity(questionKey = key, bookId = bookId, questionId = qId)
-                    }
-                    val currentQ = fullQuestions[qId]
-                    val isCorrect = if (currentQ != null) {
-                        val correctIds = gson.fromJson<List<String>>(currentQ.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                        val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQ.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                        val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                            correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                        } else {
-                            setOf(currentQ.correctIndex)
+            
+            // Only update stats if it's a real quiz, not practice mistakes
+            if (parentId == null) {
+                questionIds.forEachIndexed { index, qId ->
+                    val ans = userAnswers[index]
+                    if (ans != null) {
+                        val key = "${bookId}_${qId}"
+                        var existing = allStats.value.find { it.questionKey == key }
+                        if (existing == null) {
+                            existing = QuestionStatEntity(questionKey = key, bookId = bookId, questionId = qId)
                         }
-                        ans == correctIndices
-                    } else false
-                    
-                    val q = if (isCorrect == true) 4 else 1
-                    var newEase = existing.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f))
-                    if (newEase < 1.3f) newEase = 1.3f
-                    
-                    val newStreak = if (q < 3) 0 else existing.streak + 1
-                    val newInterval = when (newStreak) {
-                        0 -> 1
-                        1 -> 1
-                        2 -> 6
-                        else -> kotlin.math.round(existing.interval * newEase).toInt()
-                    }
-                    val newNextReview = now + newInterval * 24L * 60L * 60L * 1000L
+                        val currentQ = fullQuestions[qId]
+                        val isCorrect = if (currentQ != null) {
+                            val correctIds = gson.fromJson<List<String>>(currentQ.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
+                            val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQ.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
+                            val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
+                                correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
+                            } else {
+                                setOf(currentQ.correctIndex)
+                            }
+                            ans == correctIndices
+                        } else false
+                        
+                        val q = if (isCorrect == true) 4 else 1
+                        var newEase = existing.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f))
+                        if (newEase < 1.3f) newEase = 1.3f
+                        
+                        val newStreak = if (q < 3) 0 else existing.streak + 1
+                        val newInterval = when (newStreak) {
+                            0 -> 1
+                            1 -> 1
+                            2 -> 6
+                            else -> kotlin.math.round(existing.interval * newEase).toInt()
+                        }
+                        val newNextReview = now + newInterval * 24L * 60L * 60L * 1000L
 
-                    val updated = existing.copy(
-                        attempts = existing.attempts + 1,
-                        correct = if (isCorrect == true) existing.correct + 1 else existing.correct,
-                        wrong = if (isCorrect == false) existing.wrong + 1 else existing.wrong,
-                        lastSeen = now,
-                        easeFactor = newEase,
-                        streak = newStreak,
-                        interval = newInterval,
-                        nextReview = newNextReview
-                    )
-                    repository.insertStat(updated)
+                        val updated = existing.copy(
+                            attempts = existing.attempts + 1,
+                            correct = if (isCorrect == true) existing.correct + 1 else existing.correct,
+                            wrong = if (isCorrect == false) existing.wrong + 1 else existing.wrong,
+                            lastSeen = now,
+                            easeFactor = newEase,
+                            streak = newStreak,
+                            interval = newInterval,
+                            nextReview = newNextReview
+                        )
+                        repository.insertStat(updated)
+                    }
                 }
             }
             
-            // Advance sequence if autoSequence is on
-            if (settingsManager.autoSequence && settingsManager.quizFlowMode == "sequence") {
+            // Advance sequence if autoSequence is on, but ONLY if not practice mistakes
+            if (isActiveQuizStandardSequence && parentId == null && settingsManager.autoSequence && settingsManager.quizFlowMode == "sequence") {
                 val limit = _questionLimit.value
                 val offset = _sequenceOffset.value
                 if (limit != null) {

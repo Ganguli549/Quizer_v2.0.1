@@ -74,6 +74,20 @@ class MainActivity : ComponentActivity() {
                     viewModel.initializeApp(appContext)
                 }
             }
+            override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
+                if (com.example.data.SecurePrefs.get(appContext).getBoolean("auto_save_enabled", true)) {
+                    val hasPerms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        Environment.isExternalStorageManager()
+                    } else {
+                        androidx.core.content.ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    }
+                    if (hasPerms) {
+                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            com.example.data.BackupManager.createBackup(appContext)
+                        }
+                    }
+                }
+            }
         })
 
         setContent {

@@ -78,9 +78,15 @@ fun SplashScreen(appIcon: String = "ocean") {
             
             Text(
                 text = "Quizer",
-                style = MaterialTheme.typography.displayMedium,
+                style = MaterialTheme.typography.displayMedium.copy(
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = iconColor.copy(alpha = 0.2f),
+                        offset = androidx.compose.ui.geometry.Offset(2f, 2f),
+                        blurRadius = 4f
+                    )
+                ),
                 color = iconColor,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.Bold
             )
             
         }
