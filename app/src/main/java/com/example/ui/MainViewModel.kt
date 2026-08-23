@@ -53,9 +53,9 @@ class MainViewModel(
             
             if (isFirstLaunch && com.example.data.BackupManager.hasBackup()) {
                 _showBackupRestoreDialog.value = true
+            } else {
+                finishInitialization(context)
             }
-            
-            finishInitialization(context)
         }
     }
 
@@ -63,7 +63,7 @@ class MainViewModel(
         val startTime = System.currentTimeMillis()
         com.example.data.DataParser.loadInitialData(context, repository)
         val elapsedTime = System.currentTimeMillis() - startTime
-        val remainingTime = 500L - elapsedTime // Reduced delay for smoother transition
+        val remainingTime = 3000L - elapsedTime
         if (remainingTime > 0) {
             kotlinx.coroutines.delay(remainingTime)
         }
@@ -91,6 +91,7 @@ class MainViewModel(
                 }
             } else {
                 com.example.data.BackupManager.clearBackup()
+                finishInitialization(context)
             }
         }
     }

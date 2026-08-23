@@ -159,9 +159,16 @@ class MainActivity : ComponentActivity() {
                                 com.example.ui.screens.SplashScreen(appIcon)
                             }
                         }
+                        
+                        val showBackupDialog by viewModel.showBackupRestoreDialog.collectAsState()
+                        if (showBackupDialog) {
+                            com.example.ui.screens.RestoreBackupDialog(
+                                onRestore = { viewModel.onRestoreBackupDecision(this@MainActivity, true) },
+                                onDiscard = { viewModel.onRestoreBackupDecision(this@MainActivity, false) }
+                            )
+                        }
                     }
                 }
             }
         }
     }}
-// Triggering reinstallation Sun Aug 23 03:09:51 PM UTC 2026
