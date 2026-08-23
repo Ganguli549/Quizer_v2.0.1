@@ -1300,6 +1300,7 @@ User selected: ${if (userSelectedTexts.isNotEmpty()) userSelectedTexts.joinToStr
 Please provide a detailed, easy-to-understand explanation for the question.
 If the user's selected answer is incorrect, explicitly explain WHY it is incorrect based on their selection.
 When referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) that exactly match the options provided above. Do not reference options that do not exist above.
+Correctness Verification: You MUST independently verify if the 'Correct Answer(s)' listed above are actually correct. If the book's stated correct answer is WRONG, and you are 100% sure it is wrong, clearly point out the error to the user and explain what the actual correct answer should be.
 Format the explanation nicely in Markdown. You can generate Markdown tables if needed. Use an image ONLY if illustrating a spatial, structural, or complex visual concept would significantly help understanding. If you choose to use an image, use a markdown image tag like ![illustration](https://image.pollinations.ai/prompt/describe-the-concept-here) (prompt must be URL encoded, no spaces). Do NOT use images for abstract concepts or simple factual questions. Keep it professional and visually pleasing.
                                         """.trimIndent()
 

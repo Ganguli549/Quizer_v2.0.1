@@ -227,6 +227,20 @@ fun AiAssistantBottomSheet(
                     ) {
                         Icon(Icons.Default.MoreVert, "More Options", modifier = Modifier.size(20.dp))
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        IconButton(
+                            onClick = closeSheetAnim,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(Icons.Default.Close, "Close", modifier = Modifier.size(16.dp))
+                        }
+                    }
                     DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
@@ -983,6 +997,7 @@ suspend fun processAiChatCommand(
             Note: The user might ask to explain a question by its local number in their current topic. Use the 'Current User Context' and 'All Book Questions' to find the exact question they mean.
             FORMATTING RULES:
             - Options: When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B, Option C, Option D) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1.
+            - Correctness Verification: When explaining a question from the book, you MUST independently verify if the 'correctIndex' or indicated correct option is actually correct. If the book's stated correct option is WRONG, and you are 100% sure it is wrong, clearly point out the error to the user and explain what the actual correct answer should be. If it is correct, proceed normally.
             - Use Markdown for bold (**text**), italics (*text*), and lists.
             - Use Markdown code blocks (`code` or ```language\n code \n```) for code snippets.
             - You can use Markdown tables if you need to present tabular data.

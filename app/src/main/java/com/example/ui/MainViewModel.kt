@@ -63,7 +63,7 @@ class MainViewModel(
         val startTime = System.currentTimeMillis()
         com.example.data.DataParser.loadInitialData(context, repository)
         val elapsedTime = System.currentTimeMillis() - startTime
-        val remainingTime = 3000L - elapsedTime
+        val remainingTime = 500L - elapsedTime // Reduced delay for smoother transition
         if (remainingTime > 0) {
             kotlinx.coroutines.delay(remainingTime)
         }
