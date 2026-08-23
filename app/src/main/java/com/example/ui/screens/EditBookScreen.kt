@@ -337,7 +337,7 @@ fun EditBookScreen(
                 questions = questions,
                 currentBookId = currentBookId,
                 viewModel = viewModel,
-                onDismiss = { viewModel.clearOpenAiAssistant() },
+                onDismiss = { showAiAssistant = false },
                 onNavigateToAiSettings = onNavigateToAiSettings,
                 onNavigateToUsage = onNavigateToUsage,
                 onQuestionsUpdated = { updatedQuestions ->
@@ -972,7 +972,7 @@ fun EditQuestionDialog(
                         questions = listOf(question),
                         currentBookId = bookId,
                         viewModel = viewModel,
-                        onDismiss = { viewModel.clearOpenAiAssistant() },
+                        onDismiss = { showAiAssistant = false },
                         onNavigateToAiSettings = onNavigateToAiSettings,
                 onNavigateToUsage = onNavigateToUsage,
                         onQuestionsUpdated = { updatedQuestions ->
@@ -986,7 +986,7 @@ fun EditQuestionDialog(
                                 for (q in deletedQuestions) {
                                     viewModel.repository.deleteQuestion(q)
                                 }
-                                viewModel.clearOpenAiAssistant()
+                                showAiAssistant = false
                                 // A hack to force navigate back
                                 onSave(question, null, null) 
                             }

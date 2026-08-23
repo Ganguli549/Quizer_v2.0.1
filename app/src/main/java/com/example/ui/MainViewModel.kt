@@ -31,7 +31,9 @@ class MainViewModel(
     private val _showAiAssistant = kotlinx.coroutines.flow.MutableStateFlow(false)
     val showAiAssistant = _showAiAssistant.asStateFlow()
 
-    fun triggerOpenAiAssistant() {
+    var targetAiMode: String? = null
+    fun triggerOpenAiAssistant(chatContextId: String? = null) {
+        targetAiMode = chatContextId
         _showAiAssistant.value = true
     }
     fun clearOpenAiAssistant() {
@@ -100,7 +102,7 @@ class MainViewModel(
     var currentExamSettings: ExamSettings? = null
     var currentLearnSettings: ExamSettings? = null
 
-    private val _chatHistory = MutableStateFlow<List<com.example.data.ChatMessageEntity>>(emptyList())
+    private val _chatHistory = MutableStateFlow<Map<String, List<com.example.data.ChatMessageEntity>>>(emptyMap())
     val chatHistory = _chatHistory.asStateFlow()
 
     private val _pendingUpdates = MutableStateFlow<Map<String, List<com.example.ui.components.PendingQuestionUpdate>>>(emptyMap())
@@ -207,7 +209,9 @@ class MainViewModel(
             val intent = android.content.Intent(context, com.example.MainActivity::class.java).apply {
                 flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("OPEN_AI_ASSISTANT", true)
-                putExtra("BOOK_ID", chatContextId)
+                putExtra("BOOK_ID", chatContextId.removeSuffix("_edit").removeSuffix("_read"))
+                putExtra("CHAT_CONTEXT_ID", chatContextId)
+                putExtra("CHAT_CONTEXT_ID", chatContextId)
             }
             val pendingIntent = android.app.PendingIntent.getActivity(
                 context, 
@@ -310,7 +314,7 @@ class MainViewModel(
                     command = prompt,
                     allQuestions = allQuestions,
                     mode = mode,
-                    chatHistory = chatHistory.value,
+                    chatHistory = chatHistory.value[chatContextId] ?: emptyList(),
                     currentContextInfo = currentContextInfo,
                     pdfBytes = pdfBytes,
                     extractedText = extractedTextFromFile,
@@ -464,7 +468,7 @@ class MainViewModel(
                 val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(com.example.data.DataParser.autoFixJson(cleanedResult)).jsonArray
                 
                 val gson = com.example.data.SharedGson.normal
-                val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.substringBefore("_")
+                val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.removeSuffix("_edit").removeSuffix("_read")
                 
                 for (item in jsonArray) {
                     val obj = item.jsonObject
@@ -528,21 +532,23 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
 
     fun loadChatHistory(bookId: String) {
         viewModelScope.launch {
-            _chatHistory.value = repository.getChatsForBook(bookId)
+            val list = repository.getChatsForBook(bookId)
+            _chatHistory.value = _chatHistory.value.toMutableMap().apply { put(bookId, list) }
         }
     }
 
     fun addChatMessage(chat: com.example.data.ChatMessageEntity) {
         viewModelScope.launch {
             repository.insertChat(chat)
-            _chatHistory.value = repository.getChatsForBook(chat.bookId)
+            val list = repository.getChatsForBook(chat.bookId)
+            _chatHistory.value = _chatHistory.value.toMutableMap().apply { put(chat.bookId, list) }
         }
     }
     
     fun clearChatHistory(bookId: String) {
         viewModelScope.launch {
             repository.clearChatsForBook(bookId)
-            _chatHistory.value = emptyList()
+            _chatHistory.value = _chatHistory.value.toMutableMap().apply { remove(bookId) }
         }
     }
 

@@ -64,9 +64,20 @@ fun AppNavigation(viewModel: MainViewModel) {
     val showAiAssistant by viewModel.showAiAssistant.collectAsState()
     androidx.compose.runtime.LaunchedEffect(showAiAssistant) {
         if (showAiAssistant) {
+            val targetMode = viewModel.targetAiMode
+            val targetRoute: Any = if (targetMode != null && targetMode.endsWith("_read")) {
+                ReadBookRoute
+            } else {
+                EditBookRoute
+            }
+            
             val currentRoute = navController.currentBackStackEntry?.destination?.route
-            if (currentRoute != EditBookRoute::class.qualifiedName) {
-                navController.navigate(EditBookRoute)
+            if (currentRoute != targetRoute::class.qualifiedName) {
+                if (targetRoute is ReadBookRoute) {
+                    navController.navigate(ReadBookRoute)
+                } else {
+                    navController.navigate(EditBookRoute)
+                }
             }
         }
     }

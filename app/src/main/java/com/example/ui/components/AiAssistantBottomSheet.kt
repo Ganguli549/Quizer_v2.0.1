@@ -94,7 +94,8 @@ fun AiAssistantBottomSheet(
     var showDevLogs by remember { mutableStateOf(false) }
     val devLogs by viewModel.devLogs.collectAsState()
     
-    val chatHistory by viewModel.chatHistory.collectAsState()
+    val allChatHistory by viewModel.chatHistory.collectAsState()
+    val chatHistory = allChatHistory[chatContextId] ?: emptyList()
     val listState = rememberLazyListState()
     
     val coroutineScope = rememberCoroutineScope()
@@ -170,18 +171,26 @@ fun AiAssistantBottomSheet(
     }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val hideSheet: () -> Unit = {
+    val closeSheetAnim: () -> Unit = {
         coroutineScope.launch {
-            sheetState.hide()
-            onDismiss()
+            try {
+                sheetState.hide()
+            } catch (e: Exception) {
+            } finally {
+                onDismiss()
+            }
         }
+    }
+    
+    val handleNativeDismiss: () -> Unit = {
+        onDismiss()
     }
     
     CustomModalBottomSheet(
         sheetState = sheetState,
         maxHeightFraction = 0.90f,
         enableDynamicHeight = true,
-        onDismissRequest = hideSheet
+        onDismissRequest = handleNativeDismiss
     ) {
         Column(
             modifier = Modifier
@@ -218,24 +227,6 @@ fun AiAssistantBottomSheet(
                     ) {
                         Icon(Icons.Default.MoreVert, "More Options", modifier = Modifier.size(20.dp))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        IconButton(
-                            onClick = { 
-                                coroutineScope.launch {
-                                    onDismiss()
-                                }
-                            }, 
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Icon(Icons.Default.Close, "Close", modifier = Modifier.size(16.dp))
-                        }
-                    }
                     DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
@@ -244,7 +235,7 @@ fun AiAssistantBottomSheet(
                             text = { Text("AI Settings") },
                             onClick = { 
                                 menuExpanded = false
-                                hideSheet()
+                                closeSheetAnim()
                                 onNavigateToAiSettings() 
                             },
                             leadingIcon = { Icon(Icons.Default.Settings, "Settings") }
@@ -253,7 +244,7 @@ fun AiAssistantBottomSheet(
                             text = { Text("API Usages") },
                             onClick = { 
                                 menuExpanded = false
-                                hideSheet()
+                                closeSheetAnim()
                                 onNavigateToUsage() 
                             },
                             leadingIcon = { Icon(Icons.Default.Info, "API Usages") }

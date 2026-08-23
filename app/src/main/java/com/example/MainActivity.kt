@@ -1,6 +1,5 @@
 package com.example
 
-// Triggering reinstall
 import android.os.Bundle
 import android.os.Environment
 import java.io.File
@@ -105,9 +104,10 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         if (intent?.getBooleanExtra("OPEN_AI_ASSISTANT", false) == true) {
             val bookId = intent.getStringExtra("BOOK_ID")
+            val chatContextId = intent.getStringExtra("CHAT_CONTEXT_ID")
             if (bookId != null) {
                 viewModel.selectBook(bookId)
-                viewModel.triggerOpenAiAssistant()
+                viewModel.triggerOpenAiAssistant(chatContextId)
             }
         }
     }

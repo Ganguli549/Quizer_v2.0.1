@@ -25,7 +25,7 @@ fun CustomModalBottomSheet(
 ) {
     val coroutineScope = rememberCoroutineScope()
     var currentFraction by remember(maxHeightFraction, enableDynamicHeight) { 
-        mutableStateOf(if (enableDynamicHeight) 0.45f else maxHeightFraction) 
+        mutableStateOf(maxHeightFraction) // Default to 90% (maxHeightFraction) 
     }
     val animatedFraction by animateFloatAsState(targetValue = currentFraction, label = "sheetHeightAnim")
 
@@ -38,12 +38,12 @@ fun CustomModalBottomSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp)
+                    .padding(top = 12.dp, bottom = 4.dp)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
                                 if (enableDynamicHeight) {
-                                    currentFraction = if (currentFraction == 0.45f) maxHeightFraction else 0.45f
+                                    currentFraction = if (currentFraction == 0.50f) maxHeightFraction else 0.50f
                                 }
                             }
                         )
@@ -54,15 +54,19 @@ fun CustomModalBottomSheet(
                             onDragEnd = {
                                 if (dragY > 40f) { // dragged down
                                     if (enableDynamicHeight && currentFraction == maxHeightFraction) {
-                                        currentFraction = 0.45f
+                                        currentFraction = 0.50f
                                     } else {
                                         coroutineScope.launch {
-                                            sheetState.hide()
-                                            onDismissRequest()
+                                            try {
+                                                sheetState.hide()
+                                            } catch (e: Exception) {
+                                            } finally {
+                                                onDismissRequest()
+                                            }
                                         }
                                     }
                                 } else if (dragY < -40f) { // dragged up
-                                    if (enableDynamicHeight && currentFraction == 0.45f) {
+                                    if (enableDynamicHeight && currentFraction == 0.50f) {
                                         currentFraction = maxHeightFraction
                                     }
                                 }
