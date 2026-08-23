@@ -36,7 +36,6 @@ class MainViewModel(
             
             if (isFirstLaunch && com.example.data.BackupManager.hasBackup()) {
                 _showBackupRestoreDialog.value = true
-                return@launch
             }
             
             finishInitialization(context)
@@ -60,10 +59,15 @@ class MainViewModel(
         _showBackupRestoreDialog.value = false
         viewModelScope.launch {
             if (restore) {
+                com.example.data.AppDatabase.getDatabase(context).close()
                 val success = com.example.data.BackupManager.restoreBackup(context)
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     if (success) {
-                        android.widget.Toast.makeText(context, "Backup restored successfully", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Backup restored successfully. Restarting...", android.widget.Toast.LENGTH_SHORT).show()
+                        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        context.startActivity(intent)
+                        Runtime.getRuntime().exit(0)
                     } else {
                         android.widget.Toast.makeText(context, "Failed to restore backup", android.widget.Toast.LENGTH_LONG).show()
                     }
@@ -71,7 +75,6 @@ class MainViewModel(
             } else {
                 com.example.data.BackupManager.clearBackup()
             }
-            finishInitialization(context)
         }
     }
     private var quizGenJob: kotlinx.coroutines.Job? = null
@@ -153,6 +156,34 @@ class MainViewModel(
         )
     }
     
+    private fun updateNotification(context: android.content.Context, id: Int, title: String, content: String, isOngoing: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+        }
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                "ai_extraction_channel",
+                "AI Extraction",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            ).apply { description = "Notifications for AI question extraction progress" }
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val builder = androidx.core.app.NotificationCompat.Builder(context, "ai_extraction_channel")
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .setOngoing(isOngoing)
+            .setAutoCancel(!isOngoing)
+            
+        androidx.core.app.NotificationManagerCompat.from(context).notify(id, builder.build())
+    }
+    
     fun startAiProcessing(
         context: android.content.Context,
         chatContextId: String,
@@ -162,6 +193,9 @@ class MainViewModel(
         currentContextInfo: String,
         pdfUri: android.net.Uri? = null
     ) {
+        val notificationId = chatContextId.hashCode()
+        updateNotification(context, notificationId, "AI Assistant", "Analyzing request...", true)
+        
         addChatMessage(
             ChatMessageEntity(bookId = chatContextId, role = "user", content = prompt, timestamp = System.currentTimeMillis())
         )
@@ -184,6 +218,7 @@ class MainViewModel(
                     
                     if (isZip) {
                         setAiProcessingStatus(chatContextId, "Extracting ZIP...", 0.1f)
+                        updateNotification(context, notificationId, "AI Assistant", "Extracting ZIP...", true)
                         val zis = java.util.zip.ZipInputStream(contentResolver.openInputStream(pdfUri))
                         val textBuilder = StringBuilder()
                         val availableImages = mutableListOf<String>()
@@ -218,13 +253,16 @@ class MainViewModel(
                         }
                     } else if (isText) {
                         setAiProcessingStatus(chatContextId, "Reading Text File...", 0.1f)
+                        updateNotification(context, notificationId, "AI Assistant", "Reading Text File...", true)
                         extractedTextFromFile = contentResolver.openInputStream(pdfUri)?.use { String(it.readBytes()) }
                     } else if (isImage) {
                         setAiProcessingStatus(chatContextId, "Reading Image...", 0.1f)
+                        updateNotification(context, notificationId, "AI Assistant", "Reading Image...", true)
                         val bytes = contentResolver.openInputStream(pdfUri)?.use { it.readBytes() }
                         if (bytes != null) attachments.add(com.example.data.AiFileAttachment(bytes, mimeType))
                     } else {
                         setAiProcessingStatus(chatContextId, "Reading PDF...", 0.1f)
+                        updateNotification(context, notificationId, "AI Assistant", "Reading PDF...", true)
                         pdfBytes = contentResolver.openInputStream(pdfUri)?.use { it.readBytes() }
                     }
                 }
@@ -241,6 +279,7 @@ class MainViewModel(
                     attachments = attachments,
                     onStatusUpdate = { status, progress ->
                         setAiProcessingStatus(chatContextId, status, progress)
+                        updateNotification(context, notificationId, "AI Assistant", status, true)
                     },
                     onDevLog = { log ->
                         addDevLog(log)
@@ -249,17 +288,21 @@ class MainViewModel(
                 
                 if (updates.isNotEmpty()) {
                     setPendingUpdates(chatContextId, updates)
+                    updateNotification(context, notificationId, "AI Extraction", "Ready for Review", false)
                     addChatMessage(
                         ChatMessageEntity(bookId = chatContextId, role = "model", content = responseText + "\n\nPlease review the pending updates above.", timestamp = System.currentTimeMillis())
                     )
                 } else {
+                    updateNotification(context, notificationId, "AI Extraction", "Finished", false)
                     addChatMessage(
                         ChatMessageEntity(bookId = chatContextId, role = "model", content = responseText, timestamp = System.currentTimeMillis())
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
+                updateNotification(context, notificationId, "AI Extraction", "Cancelled", false)
                 throw e
             } catch (e: Exception) {
+                updateNotification(context, notificationId, "AI Extraction", "Error: ${e.message}", false)
                 addChatMessage(
                     ChatMessageEntity(bookId = chatContextId, role = "model", content = "Error: ${e.message}", timestamp = System.currentTimeMillis())
                 )

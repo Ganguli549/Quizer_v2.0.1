@@ -95,7 +95,6 @@ class MainActivity : ComponentActivity() {
             val themeMode by viewModel.themeModeState.collectAsState()
             val isAppReady by viewModel.isAppReady.collectAsState()
             val appIcon by viewModel.appIconState.collectAsState()
-            val showBackupDialog by viewModel.showBackupRestoreDialog.collectAsState()
             
             MyApplicationTheme(appTheme = appTheme, themeMode = themeMode) {
                 Surface(
@@ -109,11 +108,16 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
                         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                                hasPermissions = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                val storageGranted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                                     Environment.isExternalStorageManager()
                                 } else {
                                     androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                 }
+                                val notificationsGranted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                    androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                } else true
+                                
+                                hasPermissions = storageGranted && notificationsGranted
                             }
                         }
                         lifecycleOwner.lifecycle.addObserver(observer)
@@ -123,27 +127,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     if (!hasPermissions) {
-                        com.example.ui.screens.PermissionScreen(
-                            onRequestPermission = {
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                                    try {
-                                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                                        intent.addCategory("android.intent.category.DEFAULT")
-                                        intent.data = Uri.parse(String.format("package:%s", applicationContext.packageName))
-                                        startActivity(intent)
-                                    } catch (e: Exception) {
-                                        val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                                        startActivity(intent)
-                                    }
-                                } else {
-                                    androidx.core.app.ActivityCompat.requestPermissions(
-                                        this@MainActivity,
-                                        arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE, android.Manifest.permission.READ_EXTERNAL_STORAGE),
-                                        100
-                                    )
-                                }
-                            }
-                        )
+                        com.example.ui.screens.PermissionScreen()
                     } else {
                         androidx.compose.animation.Crossfade(targetState = isAppReady, animationSpec = androidx.compose.animation.core.tween(500), label = "appReadyTransition") { ready ->
                             if (ready) {
@@ -151,13 +135,6 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 com.example.ui.screens.SplashScreen(appIcon)
                             }
-                        }
-                        
-                        if (showBackupDialog) {
-                            com.example.ui.screens.RestoreBackupDialog(
-                                onRestore = { viewModel.onRestoreBackupDecision(appContext, true) },
-                                onDiscard = { viewModel.onRestoreBackupDecision(appContext, false) }
-                            )
                         }
                     }
                 }

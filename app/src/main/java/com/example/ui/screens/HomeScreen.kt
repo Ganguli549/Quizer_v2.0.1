@@ -86,6 +86,14 @@ fun HomeScreen(
         }
     }
     
+    val showBackupDialog by viewModel.showBackupRestoreDialog.collectAsState()
+    
+    if (showBackupDialog) {
+        com.example.ui.screens.RestoreBackupDialog(
+            onRestore = { viewModel.onRestoreBackupDecision(context, true) },
+            onDiscard = { viewModel.onRestoreBackupDecision(context, false) }
+        )
+    }
     
     LaunchedEffect(Unit) {
         viewModel.generateQuizQuestions()

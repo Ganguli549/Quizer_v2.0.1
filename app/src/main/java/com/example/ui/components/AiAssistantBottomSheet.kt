@@ -257,7 +257,7 @@ fun AiAssistantBottomSheet(
             
             // Chat history area
             if (showDevLogs) {
-                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f, fill = false).fillMaxWidth()) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Developer Logs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Row {
@@ -277,7 +277,7 @@ fun AiAssistantBottomSheet(
                     }
                     LazyColumn(
                         state = devListState, 
-                        modifier = Modifier.weight(1f).fillMaxWidth()
+                        modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
                     ) {
                         items(devLogs) { log ->
                             Text(
@@ -295,7 +295,7 @@ fun AiAssistantBottomSheet(
             } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
                 if (chatHistory.isEmpty()) {
@@ -384,9 +384,9 @@ fun AiAssistantBottomSheet(
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     if (pending.isDelete) {
-                                        Text("Delete Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                                        Text("Delete Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f, fill = false))
                                     } else {
-                                        Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                        Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f, fill = false))
                                         TextButton(onClick = { editingPendingQuestion = pending }) {
                                             Text("Review")
                                         }
@@ -457,7 +457,7 @@ fun AiAssistantBottomSheet(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { viewModel.setPendingUpdates(chatContextId, null) },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f, fill = false)
                     ) { Text("Cancel") }
                     Button(
                         onClick = {
@@ -499,7 +499,7 @@ fun AiAssistantBottomSheet(
                                 viewModel.setAiProcessingStatus(chatContextId, null)
                             }
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f, fill = false)
                     ) { Text("Save Updates") }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -596,7 +596,7 @@ fun AiAssistantBottomSheet(
                             Icon(androidx.compose.material.icons.Icons.Default.Add, "Upload PDF")
                         }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                     enabled = !isProcessing,
                     maxLines = 10,
                     shape = RoundedCornerShape(24.dp),
