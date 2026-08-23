@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -18,10 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -57,6 +60,14 @@ fun CustomModalBottomSheet(
             dismissOnClickOutside = false
         )
     ) {
+        val view = LocalView.current
+        LaunchedEffect(view) {
+            (view.parent as? DialogWindowProvider)?.window?.let { window ->
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+            }
+        }
+        
         val configuration = LocalConfiguration.current
         val screenHeightDp = configuration.screenHeightDp.dp
         val density = LocalDensity.current
@@ -65,10 +76,22 @@ fun CustomModalBottomSheet(
         
         val dragOffsetY = remember { mutableStateOf(0f) }
 
+        val imeBottomDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+        val navBottomDp = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+        
+        val animatedImeBottom by animateDpAsState(
+            targetValue = imeBottomDp,
+            animationSpec = tween(300)
+        )
+        val animatedNavPadding by animateDpAsState(
+            targetValue = if (imeBottomDp > 0.dp) 0.dp else navBottomDp,
+            animationSpec = tween(300)
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .imePadding(),
+                .padding(bottom = animatedImeBottom),
             contentAlignment = Alignment.BottomCenter
         ) {
             // Scrim
@@ -103,7 +126,7 @@ fun CustomModalBottomSheet(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .navigationBarsPadding() 
+                        .padding(bottom = animatedNavPadding) 
                 ) {
                     // Drag Handle
                     Box(
