@@ -77,6 +77,13 @@ fun EditBookScreen(
     val listState = rememberLazyListState()
     var showMenu by remember { mutableStateOf(false) }
     var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val globalShowAi by viewModel.showAiAssistant.collectAsState()
+    LaunchedEffect(globalShowAi) {
+        if (globalShowAi) {
+            showAiAssistant = true
+            viewModel.clearOpenAiAssistant()
+        }
+    }
     var showRestorePointsDialog by remember { mutableStateOf(false) }
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showHierarchyDialog by remember { mutableStateOf(false) }
@@ -138,7 +145,7 @@ fun EditBookScreen(
                 modifier = Modifier.padding(bottom = 32.dp, end = 16.dp)
             ) {
                 FloatingActionButton(
-                    onClick = { showAiAssistant = true },
+                    onClick = { viewModel.triggerOpenAiAssistant() },
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                 ) {
@@ -330,7 +337,7 @@ fun EditBookScreen(
                 questions = questions,
                 currentBookId = currentBookId,
                 viewModel = viewModel,
-                onDismiss = { showAiAssistant = false },
+                onDismiss = { viewModel.clearOpenAiAssistant() },
                 onNavigateToAiSettings = onNavigateToAiSettings,
                 onNavigateToUsage = onNavigateToUsage,
                 onQuestionsUpdated = { updatedQuestions ->
@@ -727,7 +734,7 @@ fun EditQuestionDialog(
             floatingActionButton = {
                 if (!isReviewMode) {
                     FloatingActionButton(
-                        onClick = { showAiAssistant = true },
+                        onClick = { viewModel.triggerOpenAiAssistant() },
                         modifier = Modifier.padding(bottom = 32.dp, end = 16.dp),
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         contentColor = MaterialTheme.colorScheme.onTertiaryContainer
@@ -965,7 +972,7 @@ fun EditQuestionDialog(
                         questions = listOf(question),
                         currentBookId = bookId,
                         viewModel = viewModel,
-                        onDismiss = { showAiAssistant = false },
+                        onDismiss = { viewModel.clearOpenAiAssistant() },
                         onNavigateToAiSettings = onNavigateToAiSettings,
                 onNavigateToUsage = onNavigateToUsage,
                         onQuestionsUpdated = { updatedQuestions ->
@@ -979,7 +986,7 @@ fun EditQuestionDialog(
                                 for (q in deletedQuestions) {
                                     viewModel.repository.deleteQuestion(q)
                                 }
-                                showAiAssistant = false
+                                viewModel.clearOpenAiAssistant()
                                 // A hack to force navigate back
                                 onSave(question, null, null) 
                             }

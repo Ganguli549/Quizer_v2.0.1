@@ -12,34 +12,38 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.compose.animation.core.animateFloatAsState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CustomModalBottomSheet(
+    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     maxHeightFraction: Float = 0.8f,
     onDismissRequest: () -> Unit,
+    enableDynamicHeight: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
-    
+    var currentFraction by remember(maxHeightFraction, enableDynamicHeight) { 
+        mutableStateOf(if (enableDynamicHeight) 0.45f else maxHeightFraction) 
+    }
+    val animatedFraction by animateFloatAsState(targetValue = currentFraction, label = "sheetHeightAnim")
+
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         sheetGesturesEnabled = false,
         contentWindowInsets = { WindowInsets.safeDrawing },
-        dragHandle = { 
+        dragHandle = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Increase touch target for the handle
                     .padding(vertical = 12.dp)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
-                                coroutineScope.launch {
-                                    sheetState.hide()
-                                    onDismissRequest()
+                                if (enableDynamicHeight) {
+                                    currentFraction = if (currentFraction == 0.45f) maxHeightFraction else 0.45f
                                 }
                             }
                         )
@@ -48,11 +52,18 @@ fun CustomModalBottomSheet(
                         var dragY = 0f
                         detectVerticalDragGestures(
                             onDragEnd = {
-                                // If dragged down by at least 40 pixels, dismiss the sheet
-                                if (dragY > 40f) {
-                                    coroutineScope.launch {
-                                        sheetState.hide()
-                                        onDismissRequest()
+                                if (dragY > 40f) { // dragged down
+                                    if (enableDynamicHeight && currentFraction == maxHeightFraction) {
+                                        currentFraction = 0.45f
+                                    } else {
+                                        coroutineScope.launch {
+                                            sheetState.hide()
+                                            onDismissRequest()
+                                        }
+                                    }
+                                } else if (dragY < -40f) { // dragged up
+                                    if (enableDynamicHeight && currentFraction == 0.45f) {
+                                        currentFraction = maxHeightFraction
                                     }
                                 }
                                 dragY = 0f
@@ -78,12 +89,12 @@ fun CustomModalBottomSheet(
         containerColor = MaterialTheme.colorScheme.surface,
         content = {
             val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-            val maxHeight = screenHeight * maxHeightFraction
+            val targetHeight = screenHeight * animatedFraction
             
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = maxHeight)
+                    .heightIn(max = targetHeight)
             ) {
                 content()
             }

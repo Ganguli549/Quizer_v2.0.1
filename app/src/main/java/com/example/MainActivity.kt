@@ -31,6 +31,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: MainViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -58,7 +60,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         val viewModelProvider = ViewModelProvider(this, factory)
-        val viewModel = viewModelProvider.get(MainViewModel::class.java)
+        viewModel = viewModelProvider.get(MainViewModel::class.java)
+        handleIntent(intent)
 
         // We will call this in onResume to ensure permissions are granted
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
@@ -90,6 +93,26 @@ class MainActivity : ComponentActivity() {
             }
         })
 
+        setContentSafe()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("OPEN_AI_ASSISTANT", false) == true) {
+            val bookId = intent.getStringExtra("BOOK_ID")
+            if (bookId != null) {
+                viewModel.selectBook(bookId)
+                viewModel.triggerOpenAiAssistant()
+            }
+        }
+    }
+
+    private fun setContentSafe() {
         setContent {
             val appTheme by viewModel.themeState.collectAsState()
             val themeMode by viewModel.themeModeState.collectAsState()
@@ -140,7 +163,4 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-}
-
-
+    }}

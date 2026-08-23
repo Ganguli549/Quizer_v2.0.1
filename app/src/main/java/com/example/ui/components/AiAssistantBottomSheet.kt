@@ -99,6 +99,22 @@ fun AiAssistantBottomSheet(
     
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, chatContextId) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START || event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.setChatVisible(chatContextId)
+            } else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP || event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+                viewModel.setChatVisible(null)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        viewModel.setChatVisible(chatContextId)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.setChatVisible(null)
+        }
+    }
 
     LaunchedEffect(currentBookId) {
         viewModel.loadChatHistory(chatContextId)
@@ -153,9 +169,19 @@ fun AiAssistantBottomSheet(
         }
     }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val hideSheet: () -> Unit = {
+        coroutineScope.launch {
+            sheetState.hide()
+            onDismiss()
+        }
+    }
+    
     CustomModalBottomSheet(
+        sheetState = sheetState,
         maxHeightFraction = 0.90f,
-        onDismissRequest = onDismiss
+        enableDynamicHeight = true,
+        onDismissRequest = hideSheet
     ) {
         Column(
             modifier = Modifier
@@ -218,7 +244,7 @@ fun AiAssistantBottomSheet(
                             text = { Text("AI Settings") },
                             onClick = { 
                                 menuExpanded = false
-                                onDismiss()
+                                hideSheet()
                                 onNavigateToAiSettings() 
                             },
                             leadingIcon = { Icon(Icons.Default.Settings, "Settings") }
@@ -227,7 +253,7 @@ fun AiAssistantBottomSheet(
                             text = { Text("API Usages") },
                             onClick = { 
                                 menuExpanded = false
-                                onDismiss()
+                                hideSheet()
                                 onNavigateToUsage() 
                             },
                             leadingIcon = { Icon(Icons.Default.Info, "API Usages") }
@@ -432,7 +458,7 @@ fun AiAssistantBottomSheet(
                                                                 val idx = updatedList.indexOfFirst { it.updatedQuestion.id == pending.updatedQuestion.id }
                                                                 if (idx != -1) {
                                                                     updatedList[idx] = pending.copy(updatedQuestion = pending.updatedQuestion.copy(explanationImage = imgUrl))
-                                                                    viewModel.setPendingUpdates(chatContextId, updatedList)
+                                                                    viewModel.setPendingUpdates(context, chatContextId, updatedList)
                                                                 }
                                                             }
                                                         }
@@ -456,13 +482,13 @@ fun AiAssistantBottomSheet(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { viewModel.setPendingUpdates(chatContextId, null) },
+                        onClick = { viewModel.setPendingUpdates(context, chatContextId, null) },
                         modifier = Modifier.weight(1f, fill = false)
                     ) { Text("Cancel") }
                     Button(
                         onClick = {
                             val currentUpdates = pendingUpdates?.toList() ?: emptyList()
-                            viewModel.setPendingUpdates(chatContextId, null)
+                            viewModel.setPendingUpdates(context, chatContextId, null)
                             viewModel.setAiProcessingStatus(chatContextId, "Saving updates...")
                             coroutineScope.launch {
                                 val updateList = mutableListOf<QuestionEntity>()
@@ -609,7 +635,7 @@ fun AiAssistantBottomSheet(
                 if (isProcessing) {
                     IconButton(
                         onClick = {
-                            viewModel.cancelAiProcessing(chatContextId)
+                            viewModel.cancelAiProcessing(context, chatContextId)
                         },
                         colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
@@ -653,7 +679,7 @@ fun AiAssistantBottomSheet(
                     val idx = updatedList.indexOfFirst { it.updatedQuestion.id == savedQ.id }
                     if (idx != -1) {
                         updatedList[idx] = updatedList[idx].copy(updatedQuestion = savedQ)
-                        viewModel.setPendingUpdates(chatContextId, updatedList)
+                        viewModel.setPendingUpdates(context, chatContextId, updatedList)
                     }
                 }
                 editingPendingQuestion = null

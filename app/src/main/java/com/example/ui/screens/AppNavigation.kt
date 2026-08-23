@@ -61,6 +61,15 @@ object EditBookRoute
 @Composable
 fun AppNavigation(viewModel: MainViewModel) {
     val navController = rememberNavController()
+    val showAiAssistant by viewModel.showAiAssistant.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(showAiAssistant) {
+        if (showAiAssistant) {
+            val currentRoute = navController.currentBackStackEntry?.destination?.route
+            if (currentRoute != EditBookRoute::class.qualifiedName) {
+                navController.navigate(EditBookRoute)
+            }
+        }
+    }
     
     NavHost(
         navController = navController, 
