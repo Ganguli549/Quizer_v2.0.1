@@ -598,36 +598,216 @@ fun ReadBookScreen(
     val isDark = readingTheme == ReadingTheme.Night || (readingTheme == ReadingTheme.System && appIsDark)
     
     val paperBrush = rememberPaperTextureBrush(themeColors.background)
+    
     ReadingMaterialTheme(themeColors = themeColors, isDark = isDark, isSystem = readingTheme == ReadingTheme.System) {
-        Box(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            val systemBarsPadding = androidx.compose.foundation.layout.WindowInsets.systemBars.asPaddingValues()
-            
-            Box(
-                modifier = Modifier.fillMaxSize().drawBehind {
-                    if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia) {
-                        drawRect(paperBrush)
-                        val vColor = Color(0x10302015)
-                        val edgeSize = 80f
-                        drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(vColor, Color.Transparent), startY = 0f, endY = edgeSize))
-                        drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, vColor), startY = size.height - edgeSize, endY = size.height))
-                        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(vColor, Color.Transparent), startX = 0f, endX = edgeSize))
-                        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, vColor), startX = size.width - edgeSize, endX = size.width))
-                        val brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                            colors = listOf(Color(0x00000000), Color(0x153E2723)),
-                            center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height / 2),
-                            radius = size.width.coerceAtLeast(size.height) * 0.8f
+        Scaffold(
+        modifier = Modifier.drawBehind {
+            if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia) {
+                drawRect(paperBrush)
+                
+                // Add vignette effect for book pages
+                val vColor = Color(0x10302015)
+                val edgeSize = 80f
+                // Top
+                drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(vColor, Color.Transparent), startY = 0f, endY = edgeSize))
+                // Bottom
+                drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, vColor), startY = size.height - edgeSize, endY = size.height))
+                // Left
+                drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(vColor, Color.Transparent), startX = 0f, endX = edgeSize))
+                // Right
+                drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.Transparent, vColor), startX = size.width - edgeSize, endX = size.width))
+                
+                val brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                    colors = listOf(Color(0x00000000), Color(0x153E2723)),
+                    center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height / 2),
+                    radius = size.width.coerceAtLeast(size.height) * 0.8f
+                )
+                drawRect(brush)
+            }
+        },
+        containerColor = if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia) Color.Transparent else themeColors.background,
+        contentColor = themeColors.text,
+        floatingActionButton = {
+            AnimatedVisibility(visible = isBarsVisible, enter = scaleIn(), exit = scaleOut()) {
+                FloatingActionButton(onClick = { showAiAssistant = true }) {
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = "AI Assistant")
+                }
+            }
+        },
+        bottomBar = {
+            AnimatedVisibility(
+                visible = isBarsVisible,
+                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
+            ) {
+                BottomAppBar(
+                    modifier = Modifier.fillMaxWidth(),
+                    containerColor = themeColors.background.copy(alpha = 0.95f),
+                    contentColor = themeColors.text,
+                    tonalElevation = 8.dp,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = bottomBarInfo.first,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = themeColors.text,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(end = 16.dp)
                         )
-                        drawRect(brush)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = themeColors.primary.copy(alpha = 0.1f),
+                            contentColor = themeColors.primary
+                        ) {
+                            Text(
+                                text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
-                .then(
-                    if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia)
+            }
+        },
+        topBar = {
+            AnimatedVisibility(
+                visible = isBarsVisible,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                if (isSearchActive) {
+                    TopAppBar(
+                        title = {
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = { Text("Search...") },
+                                singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { 
+                                isSearchActive = false
+                                searchQuery = ""
+                            }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                            }
+                        },
+                        actions = {
+                            if (searchMatches.isNotEmpty()) {
+                                Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge)
+                                IconButton(onClick = { 
+                                    if (currentMatchIndex > 0) {
+                                        currentMatchIndex--
+                                        coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.KeyboardArrowUp, "Previous")
+                                }
+                                IconButton(onClick = { 
+                                    if (currentMatchIndex < searchMatches.size - 1) {
+                                        currentMatchIndex++
+                                        coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                                    }
+                                }) {
+                                    Icon(Icons.Default.KeyboardArrowDown, "Next")
+                                }
+                            }
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Close, "Clear")
+                                }
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
+                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
+                        )
+                    )
+                } else {
+                    TopAppBar(
+                        title = { Text(currentBook?.name ?: "Read Book", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                        navigationIcon = {
+                            IconButton(onClick = onHome) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = { showChapterIndex = true }) {
+                                Icon(Icons.AutoMirrored.Filled.List, "Index")
+                            }
+                            IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
+                                Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode")
+                            }
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(Icons.Default.MoreVert, "More Options")
+                            }
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false },
+                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Search") },
+                                    onClick = { showMenu = false; isSearchActive = true; isBarsVisible = true },
+                                    leadingIcon = { Icon(Icons.Default.Search, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Full Screen") },
+                                    onClick = { showMenu = false; isBarsVisible = false },
+                                    leadingIcon = { Icon(Icons.Default.Fullscreen, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Theme") },
+                                    onClick = { showMenu = false; showThemeMenu = true },
+                                    leadingIcon = { Icon(Icons.Default.Palette, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Edit Book") },
+                                    onClick = { showMenu = false; onEditBook() },
+                                    leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Brief Explanation") },
+                                    onClick = { showMenu = false; showBriefExplanation = !showBriefExplanation },
+                                    leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null) }
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
+                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
+                        )
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                                .then(
+                    if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia) 
                         Modifier.background(Color.Transparent)
-                    else
+                    else 
                         Modifier.background(themeColors.background)
                 )
+
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
@@ -635,311 +815,382 @@ fun ReadBookScreen(
                         }
                     )
                 }
-            ) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val totalItems = bookItems.size
-                    if (isLoadingBookItems) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            androidx.compose.material3.CircularProgressIndicator()
-                        }
-                    } else {
-                        androidx.compose.foundation.lazy.LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize().nestedScroll(scrollDirectionConnection),
-                            contentPadding = PaddingValues(
-                                top = systemBarsPadding.calculateTopPadding() + 64.dp,
-                                bottom = systemBarsPadding.calculateBottomPadding() + 100.dp,
-                            )
-                        ) {
-                            itemsIndexed(
-                                items = bookItems,
-                                key = { _, item -> item.key }
-                            ) { index, item ->
-                                when (item) {
-                                    is ReadBookItem.PathHeader -> {
-                                        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                            if (item.level == 0) {
-                                                Text(item.title, style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = themeColors.primary)
-                                            } else {
-                                                Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, color = themeColors.text.copy(alpha = 0.7f))
-                                            }
-                                        }
+        ) {
+            val totalItems = bookItems.size
+            if (isLoadingBookItems) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().nestedScroll(scrollDirectionConnection),
+                    contentPadding = PaddingValues(
+                        top = padding.calculateTopPadding(),
+                        bottom = padding.calculateBottomPadding() + 80.dp,
+                    )
+                ) {
+                    itemsIndexed(
+                        items = bookItems,
+                        key = { _, item -> item.key }
+                    ) { index, item ->
+                        when (item) {
+                            is ReadBookItem.PathHeader -> {
+                                val textSize = when (item.level) {
+                                    0 -> 28.sp
+                                    1 -> 26.sp
+                                    2 -> 24.sp
+                                    else -> 22.sp
+                                }
+                                val textColor = when (item.level) {
+                                    0 -> MaterialTheme.colorScheme.primary
+                                    1 -> MaterialTheme.colorScheme.secondary
+                                    else -> MaterialTheme.colorScheme.tertiary
+                                }
+                                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                    if (item.level == 0 && index > 0) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(bottom = 24.dp, top = 8.dp),
+                                            thickness = 2.dp,
+                                            color = themeColors.primary.copy(alpha = 0.3f)
+                                        )
                                     }
-                                    is ReadBookItem.QuestionGroupHeader -> {
-                                        Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
-                                            com.example.ui.components.ExpandableQuestionHeader(
-                                                headerText = item.text,
-                                                rangeStr = item.range,
-                                                textColor = themeColors.text,
-                                                modifier = Modifier.clickable { isBarsVisible = !isBarsVisible },
-                                                isQuizMode = false,
-                                                initiallyExpanded = true,
-                                                onClick = { isBarsVisible = !isBarsVisible }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (item.level == 0) {
+                                            Box(modifier = Modifier.width(4.dp).height(32.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)))
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                        }
+                                        Column {
+                                            Text(
+                                                text = item.label.uppercase(),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = textColor.copy(alpha = 0.7f),
+                                                letterSpacing = 1.sp
+                                            )
+                                            Text(
+                                                text = item.title,
+                                                fontSize = textSize,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = textColor
                                             )
                                         }
                                     }
-                                    is ReadBookItem.QuestionData -> {
-                                        val isHighlighted = searchMatches.isNotEmpty() && currentMatchIndex >= 0 && currentMatchIndex < searchMatches.size && searchMatches[currentMatchIndex] == index
-                                        ReadBookQuestionItem(
-                                            question = item.question,
-                                            localNumber = item.localNumber,
-                                            inBookQuizMode = inBookQuizMode,
-                                            gson = com.example.data.SharedGson.normal,
-                                            context = context,
-                                            isDarkTheme = isDarkTheme,
-                                            themeColors = themeColors,
-                                            searchQuery = searchQuery,
-                                            highlightColor = Color.Yellow,
-                                            onTextClick = { isBarsVisible = !isBarsVisible },
-                                            showBriefExplanation = showBriefExplanation
-                                        )
-                                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = themeColors.text.copy(alpha = 0.1f))
+                                }
+                            }
+                            is ReadBookItem.QuestionGroupHeader -> {
+                                Column(modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                                    com.example.ui.components.ExpandableQuestionHeader(
+                                        headerText = item.text,
+                                        rangeStr = item.range,
+                                        textColor = themeColors.text,
+                                        modifier = Modifier.clickable { isBarsVisible = !isBarsVisible },
+                                        isQuizMode = false,
+                                        initiallyExpanded = true,
+                                        onClick = { isBarsVisible = !isBarsVisible }
+                                    )
+                                }
+                            }
+                            is ReadBookItem.QuestionData -> {
+                                val isHighlighted = searchMatches.isNotEmpty() && currentMatchIndex >= 0 && currentMatchIndex < searchMatches.size && searchMatches[currentMatchIndex] == index
+                                Box(
+                                    modifier = Modifier.fillMaxWidth()
+                                        
+                                        .background(if (isHighlighted) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else Color.Transparent)
+                                ) {
+                                    ReadBookQuestionItem(
+                                        question = item.question,
+                                        localNumber = item.localNumber,
+                                        inBookQuizMode = inBookQuizMode,
+                                        gson = com.example.data.SharedGson.normal,
+                                        context = context,
+                                        isDarkTheme = isDarkTheme,
+                                        themeColors = themeColors,
+                                        searchQuery = searchQuery,
+                                        highlightColor = Color.Yellow,
+                                        onTextClick = { isBarsVisible = !isBarsVisible },
+                                        showBriefExplanation = showBriefExplanation
+                                    )
+                                }
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = themeColors.text.copy(alpha = 0.1f))
+                            }
+                        }
+                    }
+                }
+
+            
+            }
+            // Fast Scroller
+            if (totalItems > 0 && isBarsVisible) {
+                val trackHeight = constraints.maxHeight.toFloat()
+                val thumbHeight = 40.dp
+                val thumbHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { thumbHeight.toPx() }
+                
+                var dragY by remember { mutableStateOf(0f) }
+                var isDragging by remember { mutableStateOf(false) }
+                
+                val thumbY by remember(totalItems, trackHeight, thumbHeightPx) {
+                    androidx.compose.runtime.derivedStateOf {
+                        if (isDragging) {
+                            dragY.coerceIn(0f, trackHeight - thumbHeightPx)
+                        } else {
+                            val firstVisible = listState.firstVisibleItemIndex
+                            ((firstVisible.toFloat() / maxOf(1, totalItems - 1)) * (trackHeight - thumbHeightPx)).coerceIn(0f, trackHeight - thumbHeightPx)
+                        }
+                    }
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .width(32.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = { offset ->
+                                    isScrollerActive = true
+                                    val y = offset.y - (thumbHeightPx / 2)
+                                    val targetIndex = ((y / (trackHeight - thumbHeightPx)) * totalItems).toInt().coerceIn(0, totalItems - 1)
+                                    coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                                    try {
+                                        tryAwaitRelease()
+                                    } finally {
+                                        isScrollerActive = false
                                     }
                                 }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    isDragging = true
+                                    isScrollerActive = true
+                                    dragY = offset.y - (thumbHeightPx / 2)
+                                },
+                                onDragEnd = { 
+                                    isDragging = false 
+                                    isScrollerActive = false
+                                },
+                                onDragCancel = { 
+                                    isDragging = false 
+                                    isScrollerActive = false
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    dragY = change.position.y - (thumbHeightPx / 2)
+                                    val targetIndex = ((dragY / (trackHeight - thumbHeightPx)) * totalItems).toInt().coerceIn(0, totalItems - 1)
+                                    coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                                }
+                            )
+                        }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .offset { androidx.compose.ui.unit.IntOffset(16.dp.toPx().toInt(), thumbY.toInt()) }
+                            .size(6.dp, thumbHeight)
+                            .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                    )
+                }
+            }
+        } // End of BoxWithConstraints
+        
+        
+        if (showThemeMenu) {
+            AlertDialog(
+                onDismissRequest = { showThemeMenu = false },
+                title = { Text("Select Reading Theme") },
+                text = {
+                    Column {
+                        ReadingTheme.values().forEachIndexed { index, theme ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedThemeIndex = index
+                                        com.example.data.SecurePrefs.get(context).edit().putInt("reading_theme", index).apply()
+                                        showThemeMenu = false
+                                    }
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .background(getThemeColors(theme).background, RoundedCornerShape(4.dp))
+                                ) {
+                                    Text(
+                                        "Aa",
+                                        color = getThemeColors(theme).text,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(theme.label, style = MaterialTheme.typography.bodyLarge)
+                                if (selectedThemeIndex == index) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showThemeMenu = false }) { Text("Close") }
+                }
+            )
+        }
+
+        if (showChapterIndex) {
+            com.example.ui.components.CustomModalBottomSheet(
+                maxHeightFraction = 0.75f,
+                onDismissRequest = { showChapterIndex = false }
+            ) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = false)) {
+                    var chapterSearchQuery by remember { mutableStateOf("") }
+                    val indexListState = rememberLazyListState()
+                    
+                    Text("Index", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    OutlinedTextField(
+                        value = chapterSearchQuery,
+                        onValueChange = { chapterSearchQuery = it },
+                        placeholder = { Text("Search chapters...")  },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, "Search") },
+                        trailingIcon = {
+                            if (chapterSearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { chapterSearchQuery = "" }) {
+                                    Icon(Icons.Default.Close, "Clear")
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Spacer(modifier = Modifier.height(17.dp))
+                    
+                    val indexItems = remember(bookItems, chapterSearchQuery) {
+                        if (chapterSearchQuery.isBlank()) {
+                            bookItems.filterIsInstance<ReadBookItem.PathHeader>()
+                        } else {
+                            val q = chapterSearchQuery.lowercase()
+                            bookItems.filterIsInstance<ReadBookItem.PathHeader>().filter { 
+                                it.label.lowercase().contains(q) || it.title.lowercase().contains(q) 
                             }
                         }
                     }
                     
-                    // Fast Scroller
-                    if (totalItems > 0 && isBarsVisible) {
-                        val trackHeight = constraints.maxHeight.toFloat()
-                        val thumbHeight = 40.dp
-                        val thumbHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { thumbHeight.toPx() }
-                        
-                        var dragY by remember { mutableStateOf(0f) }
-                        var isDragging by remember { mutableStateOf(false) }
-                        
-                        val thumbY = remember(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, totalItems, isDragging, dragY) {
-                            if (isDragging) dragY
-                            else {
-                                val firstVisible = listState.firstVisibleItemIndex
-                                val scrollOffset = listState.firstVisibleItemScrollOffset
-                                val visibleItems = listState.layoutInfo.visibleItemsInfo.size
-                                
-                                if (totalItems == 0) 0f
-                                else {
-                                    val ratio = (firstVisible.toFloat() + (scrollOffset.toFloat() / 1000f)) / totalItems.toFloat()
-                                    (ratio * (trackHeight - thumbHeightPx)).coerceIn(0f, trackHeight - thumbHeightPx)
-                                }
-                            }
-                        }
-                        
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .fillMaxHeight()
-                                .width(32.dp)
-                                .padding(end = 4.dp, top = 80.dp, bottom = 80.dp)
-                                .pointerInput(totalItems) {
-                                    detectVerticalDragGestures(
-                                        onDragStart = { offset ->
-                                            isDragging = true
-                                            dragY = (offset.y - thumbHeightPx / 2).coerceIn(0f, trackHeight - thumbHeightPx)
-                                        },
-                                        onDragEnd = { isDragging = false },
-                                        onDragCancel = { isDragging = false },
-                                        onVerticalDrag = { change, dragAmount ->
-                                            change.consume()
-                                            dragY = (dragY + dragAmount).coerceIn(0f, trackHeight - thumbHeightPx)
-                                            val targetIndex = ((dragY / (trackHeight - thumbHeightPx)) * totalItems).toInt().coerceIn(0, totalItems - 1)
-                                            coroutineScope.launch {
-                                                listState.scrollToItem(targetIndex)
-                                            }
-                                        }
-                                    )
-                                }
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .offset { androidx.compose.ui.unit.IntOffset(0, thumbY.toInt()) }
-                                    .width(6.dp)
-                                    .height(thumbHeight)
-                                    .align(Alignment.TopEnd)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(themeColors.primary.copy(alpha = if (isDragging) 0.8f else 0.4f))
-                            )
+                    // Auto-scroll logic if search query yields results
+                    LaunchedEffect(chapterSearchQuery) {
+                        if (chapterSearchQuery.isNotBlank() && indexItems.isNotEmpty()) {
+                            indexListState.animateScrollToItem(0)
                         }
                     }
-                }
-            }
-
-            Box(modifier = Modifier.align(Alignment.TopCenter)) {
-                AnimatedVisibility(
-                    visible = isBarsVisible,
-                    enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
-                ) {
-                    if (isSearchActive) {
-                        TopAppBar(
-                            title = {
-                                TextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    placeholder = { Text("Search...") },
-                                    singleLine = true,
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        disabledContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            },
-                            navigationIcon = {
-                                IconButton(onClick = { 
-                                     isSearchActive = false
-                                    searchQuery = ""
-                                }) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                                }
-                            },
-                            actions = {
-                                if (searchMatches.isNotEmpty()) {
-                                    Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge)
-                                    IconButton(onClick = { 
-                                         if (currentMatchIndex > 0) {
-                                            currentMatchIndex--
-                                            coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
-                                        }
-                                    }) {
-                                        Icon(Icons.Default.KeyboardArrowUp, "Previous")
-                                    }
-                                    IconButton(onClick = { 
-                                         if (currentMatchIndex < searchMatches.size - 1) {
-                                            currentMatchIndex++
-                                            coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
-                                        }
-                                    }) {
-                                        Icon(Icons.Default.KeyboardArrowDown, "Next")
-                                    }
-                                }
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Close, "Clear")
-                                    }
-                                }
-                            },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
-                                scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
-                            )
-                        )
-                    } else {
-                        TopAppBar(
-                            title = { Text(currentBook?.name ?: "Read Book", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                            navigationIcon = {
-                                IconButton(onClick = onHome) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                                }
-                            },
-                            actions = {
-                                IconButton(onClick = { showChapterIndex = true }) {
-                                    Icon(Icons.AutoMirrored.Filled.List, "Index")
-                                }
-                                IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
-                                    Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode")
-                                }
-                                IconButton(onClick = { showMenu = true }) {
-                                    Icon(Icons.Default.MoreVert, "More Options")
-                                }
-                                DropdownMenu(
-                                    expanded = showMenu,
-                                    onDismissRequest = { showMenu = false },
-                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Search") },
-                                        onClick = { showMenu = false; isSearchActive = true; isBarsVisible = true },
-                                        leadingIcon = { Icon(Icons.Default.Search, null) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Full Screen") },
-                                        onClick = { showMenu = false; isBarsVisible = false },
-                                        leadingIcon = { Icon(Icons.Default.Fullscreen, null) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Theme") },
-                                        onClick = { showMenu = false; showThemeMenu = true },
-                                        leadingIcon = { Icon(Icons.Default.Palette, null) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Edit Book") },
-                                        onClick = { showMenu = false; onEditBook() },
-                                        leadingIcon = { Icon(Icons.Default.Edit, null) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Brief Explanation") },
-                                        onClick = { showMenu = false; showBriefExplanation = !showBriefExplanation },
-                                        leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null) }
-                                    )
-                                }
-                            },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
-                                scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
-                            )
-                        )
-                    }
-                }
-            }
-
-            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                AnimatedVisibility(
-                    visible = isBarsVisible,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-                ) {
-                    BottomAppBar(
-                        modifier = Modifier.fillMaxWidth(),
-                        containerColor = themeColors.background.copy(alpha = 0.95f),
-                        contentColor = themeColors.text,
-                        tonalElevation = 8.dp,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    
+                    LazyColumn(state = indexListState) {
+                        items(items = indexItems, key = { it.key }) { pathItem ->
+                            val indent = (pathItem.level * 16).dp
                             Text(
-                                text = bottomBarInfo.first,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = themeColors.text,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f).padding(end = 16.dp)
+                                text = "${pathItem.label}: ${pathItem.title}",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val idx = bookItems.indexOf(pathItem)
+                                        if (idx != -1) {
+                                            coroutineScope.launch {
+                                                listState.scrollToItem(idx)
+                                            }
+                                            showChapterIndex = false
+                                        }
+                                    }
+                                    .padding(start = indent, top = 12.dp, bottom = 12.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (pathItem.level == 0) FontWeight.Bold else FontWeight.Normal,
+                                color = if (pathItem.level == 0) MaterialTheme.colorScheme.primary else themeColors.text
                             )
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = themeColors.primary.copy(alpha = 0.1f),
-                                contentColor = themeColors.primary
-                            ) {
-                                Text(
-                                    text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
+                            HorizontalDivider(modifier = Modifier.padding(start = indent))
                         }
-                    }
-                }
-            }
-            
-            Box(modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = systemBarsPadding.calculateBottomPadding() + 88.dp)) {
-                AnimatedVisibility(
-                    visible = isBarsVisible,
-                    enter = scaleIn(),
-                    exit = scaleOut()
-                ) {
-                    FloatingActionButton(onClick = { showAiAssistant = true }) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = "AI Assistant")
                     }
                 }
             }
         }
+
+        if (showAiAssistant) {
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            val viewportStart = listState.layoutInfo.viewportStartOffset
+            val viewportEnd = listState.layoutInfo.viewportEndOffset
+            
+            var contextInfo = ""
+            var filteredQuestions = allQuestions
+            val visibleLocalNumbers = mutableListOf<Int>()
+            
+            if (bookItems.isNotEmpty() && visibleItems.isNotEmpty()) {
+                var bestQItem: ReadBookItem.QuestionData? = null
+                var maxVisibleHeight = 0
+                
+                var currentPath = ""
+                
+                for (info in visibleItems) {
+                    val index = info.index
+                    if (index in bookItems.indices) {
+                        val item = bookItems[index]
+                        if (item is ReadBookItem.QuestionData) {
+                            if (currentPath.isEmpty()) currentPath = item.question.path
+                            visibleLocalNumbers.add(item.localNumber)
+                            
+                            val itemTop = maxOf(viewportStart, info.offset)
+                            val itemBottom = minOf(viewportEnd, info.offset + info.size)
+                            val visibleHeight = maxOf(0, itemBottom - itemTop)
+                            
+                            if (visibleHeight > maxVisibleHeight) {
+                                maxVisibleHeight = visibleHeight
+                                bestQItem = item
+                            }
+                        }
+                    }
+                }
+                
+                if (bestQItem != null) {
+                    currentPath = bestQItem.question.path
+                    val currentQ = bestQItem.question
+                    val localNum = bestQItem.localNumber
+                    contextInfo = "The user is currently viewing the topic/path: '$currentPath'. The most prominent question on their screen is question ID ${currentQ.id} (which is question $localNum in this topic). They can also see questions: ${visibleLocalNumbers.joinToString(", ")}."
+                    filteredQuestions = allQuestions.filter { it.path == currentPath }
+                }
+            }
+
+            com.example.ui.components.AiAssistantBottomSheet(
+                mode = com.example.ui.components.AiChatMode.READ_BOOK,
+                questions = filteredQuestions,
+                currentBookId = currentBookId,
+                viewModel = viewModel,
+                onDismiss = { showAiAssistant = false },
+                onNavigateToAiSettings = onNavigateToAiSettings,
+                onNavigateToUsage = onNavigateToUsage,
+                                onQuestionsUpdated = { updatedQuestions ->
+                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        com.example.ui.screens.createRestorePoint(context, viewModel.repository, currentBookId, "Pre-AI Update")
+                        updatedQuestions.forEach { 
+                            viewModel.repository.updateQuestion(it)
+                        }
+                        val newQuestions = viewModel.repository.getQuestionsForBookSync(currentBookId).resolveHeaders()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            allQuestions = newQuestions
+                        }
+                        // Save back to original file as well
+                        val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                        val targetFile = java.io.File(basePath, "Quizer/${currentBookId}.qbook")
+                        com.example.ui.screens.exportQBook(context, viewModel.repository, currentBookId, targetFile)
+                    }
+                },
+                currentContextInfo = contextInfo,
+                visibleQuestionNumbers = visibleLocalNumbers.distinct()
+            )
+        }
+    }
     }
 }
 
@@ -1224,8 +1475,6 @@ fun ReadBookQuestionItem(
                     }
                 }
             }
-
-
         }
     }
 }
