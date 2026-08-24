@@ -601,6 +601,7 @@ fun ReadBookScreen(
     
     ReadingMaterialTheme(themeColors = themeColors, isDark = isDark, isSystem = readingTheme == ReadingTheme.System) {
         Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets.systemBars.only(androidx.compose.foundation.layout.WindowInsetsSides.Horizontal),
         modifier = Modifier.drawBehind {
             if (readingTheme == ReadingTheme.BookPage || readingTheme == ReadingTheme.Sepia) {
                 drawRect(paperBrush)
