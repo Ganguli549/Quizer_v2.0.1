@@ -1,0 +1,1 @@
+rm -f rewrite_scaffold.py fix_bars.py fix_ui.py fix_errors.py move_bars.py fix_mess.py fix_align.py fix_lazy_col.py fix_align2.py fix_box.py fix_box2.py fix_syntax.py fix_syntax2.py fix_syntax3.py fix_complete.py rewrite_all.py fix_final.py fix_color.py temp_bars.txt ReadBookScreen_fixed.kt
