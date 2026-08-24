@@ -80,7 +80,7 @@ class MainViewModel(
                 val success = com.example.data.BackupManager.restoreBackup(context)
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     if (success) {
-                        com.example.data.SecurePrefs.get(context).edit().putBoolean("is_first_launch", false).apply()
+                        com.example.data.SecurePrefs.get(context).edit().putBoolean("is_first_launch", false).commit()
                         android.widget.Toast.makeText(context, "Backup restored successfully. Restarting...", android.widget.Toast.LENGTH_SHORT).show()
                         val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
                         intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
