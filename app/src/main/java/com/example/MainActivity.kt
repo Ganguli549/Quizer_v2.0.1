@@ -42,7 +42,10 @@ class MainActivity : ComponentActivity() {
             } catch (ex: Exception) {}
         }
         
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        )
         
         // We handle permissions in Compose now.
 

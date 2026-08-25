@@ -1158,11 +1158,12 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     var currentPracticeMistakesParentId: Long? = null
     var activeCurrentIndex = 0
     var activeQuizSessionId = 0L
+    var activeQTimes = mutableMapOf<Int, Long>()
     var activeSelectedAnswers = mutableMapOf<Int, Set<Int>>()
     var activeLockedAnswers = mutableMapOf<Int, Boolean>()
     var activeTimeRemainingMs = -1L
 
-    fun saveActiveQuizState(currentIndex: Int, selectedAnswers: Map<Int, Set<Int>>, lockedAnswers: Map<Int, Boolean>, timeRemainingMs: Long) {
+    fun saveActiveQuizState(currentIndex: Int, selectedAnswers: Map<Int, Set<Int>>, lockedAnswers: Map<Int, Boolean>, timeRemainingMs: Long, qTimes: Map<Int, Long> = emptyMap()) {
         val state = mapOf(
             "bookId" to currentBookId.value,
             "questions" to _quizQuestions.value.map { it.id },
@@ -1170,6 +1171,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             "selectedAnswers" to selectedAnswers,
             "lockedAnswers" to lockedAnswers,
             "timeRemainingMs" to timeRemainingMs,
+            "qTimes" to qTimes,
             "sessionId" to activeQuizSessionId
         )
         settingsManager.setActiveQuizState(currentBookId.value, com.example.data.SharedGson.normal.toJson(state))
@@ -1180,6 +1182,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         settingsManager.setActiveQuizState(currentBookId.value, null)
         _activeQuizTrigger.value++
         activeCurrentIndex = 0
+        activeQTimes = mutableMapOf()
         activeSelectedAnswers = mutableMapOf()
         activeLockedAnswers = mutableMapOf()
         activeTimeRemainingMs = -1L
@@ -1231,6 +1234,11 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 val lockAnsRaw = (state["lockedAnswers"] as? Map<*, *>) ?: emptyMap<Any, Any>()
                 activeLockedAnswers = lockAnsRaw.entries.associate { (k, v) -> 
                     k.toString().toInt() to (v as? Boolean ?: false) 
+                }.toMutableMap()
+                
+                val qTimesRaw = (state["qTimes"] as? Map<*, *>) ?: emptyMap<Any, Any>()
+                activeQTimes = qTimesRaw.entries.associate { (k, v) -> 
+                    k.toString().toInt() to (v as? Number)?.toLong()!! 
                 }.toMutableMap()
                 
                 activeTimeRemainingMs = (state["timeRemainingMs"] as Double).toLong()

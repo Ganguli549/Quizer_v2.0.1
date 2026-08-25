@@ -53,7 +53,7 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
     var currentIndex by remember { mutableStateOf(viewModel.activeCurrentIndex) }
     var autoNextTrigger by remember { mutableStateOf(0L) }
     var selectedAnswers by remember { mutableStateOf(viewModel.activeSelectedAnswers) }
-    val qTimes = remember { mutableStateOf(mutableMapOf<Int, Long>()) }
+    val qTimes = remember { mutableStateOf(viewModel.activeQTimes.toMutableMap()) }
     var lockedAnswers by remember { mutableStateOf(viewModel.activeLockedAnswers) }
     var showGridDialog by remember { mutableStateOf(false) }
     var showCancelDialog by remember { mutableStateOf(false) }
@@ -127,7 +127,7 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
     DisposableEffect(Unit) {
         onDispose {
             if (!isSubmitted.value) {
-                viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs)
+                viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value)
             }
         }
     }
@@ -1333,7 +1333,7 @@ Format the explanation nicely in Markdown. You can generate Markdown tables if n
                 TextButton(onClick = {
                     showCancelDialog = false
                     isSubmitted.value = true // Prevent onDispose from saving corrupted state
-                    viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs)
+                    viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value)
                     onCancel()
                 }) {
                     Text("Save & Exit")
