@@ -429,7 +429,7 @@ fun ReadBookScreen(
         }
     }
 
-    LaunchedEffect(isBarsVisible) {
+    LaunchedEffect(isBarsVisible, isDarkTheme) {
         if (window != null) {
             val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, view)
             if (!isBarsVisible) {
@@ -438,6 +438,12 @@ fun ReadBookScreen(
             } else {
                 insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            insetsController.isAppearanceLightNavigationBars = !isDarkTheme
+            insetsController.isAppearanceLightStatusBars = !isDarkTheme
         }
     }
 

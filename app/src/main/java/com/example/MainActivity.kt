@@ -47,6 +47,12 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
         
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        
         // We handle permissions in Compose now.
 
         val db = AppDatabase.getDatabase(this)
@@ -128,6 +134,19 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     var hasPermissions by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                    
+                    val view = androidx.compose.ui.platform.LocalView.current
+                    androidx.compose.runtime.LaunchedEffect(themeMode) {
+                        val window = this@MainActivity.window
+                        val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, view)
+                        val isDark = when (themeMode) {
+                            "dark" -> true
+                            "light" -> false
+                            else -> (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                        }
+                        insetsController.isAppearanceLightStatusBars = !isDark
+                        insetsController.isAppearanceLightNavigationBars = !isDark
+                    }
                     
                     // Update permission state on resume
                     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
