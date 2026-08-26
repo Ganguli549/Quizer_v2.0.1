@@ -92,6 +92,16 @@ fun CustomModalBottomSheet(
         },
         containerColor = MaterialTheme.colorScheme.surface,
         content = {
+            val view = androidx.compose.ui.platform.LocalView.current
+            LaunchedEffect(view) {
+                val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+                if (window != null) {
+                    window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        window.isNavigationBarContrastEnforced = false
+                    }
+                }
+            }
             val screenHeight = LocalConfiguration.current.screenHeightDp.dp
             val targetHeight = screenHeight * animatedFraction
             
