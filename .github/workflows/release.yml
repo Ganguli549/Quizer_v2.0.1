@@ -14,23 +14,38 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Decode Keystore
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
+
+      - name: Prepare Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode --ignore-garbage > release.keystore
+          ALIAS="${KEY_ALIAS:-upload}"
+          STORE_PASS="${KEYSTORE_PASSWORD:-android}"
+          KEY_PASS="${KEY_PASSWORD:-android}"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode --ignore-garbage > release.keystore
+          else
+            echo "No custom KEYSTORE_BASE64 secret provided; generating a release keystore for build..."
+            keytool -genkey -v -keystore release.keystore -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$STORE_PASS" -keypass "$KEY_PASS" -dname "CN=Quizer, OU=App, O=AIStudio, L=Mountain View, S=CA, C=US"
+          fi
 
       - name: Build Release APK
         env:
@@ -39,11 +54,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
-        run: gradle assembleRelease --stacktrace -Dorg.gradle.jvmargs="-Xmx2048m -Djava.awt.headless=true" --no-daemon
+        run: |
+          export KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-android}"
+          export KEY_ALIAS="${KEY_ALIAS:-upload}"
+          export KEY_PASSWORD="${KEY_PASSWORD:-android}"
+          ./gradlew assembleRelease --stacktrace -Dorg.gradle.jvmargs="-Xmx2048m -Djava.awt.headless=true" --no-daemon
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 1
