@@ -127,8 +127,9 @@ class MainActivity : ComponentActivity() {
             val themeMode by viewModel.themeModeState.collectAsState()
             val isAppReady by viewModel.isAppReady.collectAsState()
             val appIcon by viewModel.appIconState.collectAsState()
+            val isMatteMode by viewModel.isMatteModeState.collectAsState()
             
-            MyApplicationTheme(appTheme = appTheme, themeMode = themeMode) {
+            MyApplicationTheme(appTheme = appTheme, themeMode = themeMode, isMatteMode = isMatteMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

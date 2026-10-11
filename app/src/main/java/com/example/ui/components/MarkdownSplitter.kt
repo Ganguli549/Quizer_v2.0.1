@@ -19,13 +19,17 @@ fun MathSplitterRichText(
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
     isSelectable: Boolean = true,
-    onClick: (() -> Unit)? = null
+    isBookmarked: Boolean = false,
+    onBookmarkToggle: (() -> Unit)? = null,
+    customMenuItems: List<CustomTextMenuItem> = emptyList(),
+    onClick: (() -> Unit)? = null,
+    onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val mathRegex = Regex("(?s)(?:^|\\n)[ \\t]*(?:\\$\\$|\\\\\\[|\\$)(.*?)(?:\\$\\$|\\\\\\]|\\$)[ \\t]*(?=\\n|$)")
     val matches = mathRegex.findAll(text).toList()
 
     if (matches.isEmpty()) {
-        RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+        RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         return
     }
 
@@ -34,7 +38,7 @@ fun MathSplitterRichText(
         for (match in matches) {
             val before = text.substring(lastIndex, match.range.first)
             if (before.isNotBlank()) {
-                RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+                RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
             
             val mathStr = match.value.trim()
@@ -46,14 +50,18 @@ fun MathSplitterRichText(
                 searchQuery = searchQuery, 
                 highlightColor = highlightColor, 
                 isSelectable = isSelectable, 
-                onClick = onClick
+                isBookmarked = isBookmarked,
+                onBookmarkToggle = onBookmarkToggle,
+                customMenuItems = customMenuItems,
+                onClick = onClick,
+                onClickWithCoords = onClickWithCoords
             )
             
             lastIndex = match.range.last + 1
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
-            RichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+            RichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         }
     }
 }
@@ -67,13 +75,17 @@ fun SmartRichText(
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
     isSelectable: Boolean = true,
-    onClick: (() -> Unit)? = null
+    isBookmarked: Boolean = false,
+    onBookmarkToggle: (() -> Unit)? = null,
+    customMenuItems: List<CustomTextMenuItem> = emptyList(),
+    onClick: (() -> Unit)? = null,
+    onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val tableRegex = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
     val matches = tableRegex.findAll(text).toList()
     
     if (matches.isEmpty()) {
-        MathSplitterRichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+        MathSplitterRichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         return
     }
     
@@ -82,7 +94,7 @@ fun SmartRichText(
         for (match in matches) {
             val before = text.substring(lastIndex, match.range.first)
             if (before.isNotBlank()) {
-                MathSplitterRichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+                MathSplitterRichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
             
             // Parse table
@@ -112,7 +124,7 @@ fun SmartRichText(
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
-            MathSplitterRichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, onClick)
+            MathSplitterRichText(after, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         }
     }
 }

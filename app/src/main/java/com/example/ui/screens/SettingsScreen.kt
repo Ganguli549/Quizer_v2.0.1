@@ -134,7 +134,6 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
                     )
                 }
                 
-                Spacer(modifier = Modifier.height(12.dp))
                 Text("Color Scheme:", style = MaterialTheme.typography.labelLarge)
                 Spacer(modifier = Modifier.height(4.dp))
                 
@@ -166,6 +165,29 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
                     ThemeChip("colorful", "Colorful")
                     ThemeChip("amoled", "Dark")
                 }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                val isMatteMode by viewModel.isMatteModeState.collectAsState()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.playToggle(); viewModel.updateIsMatteMode(!isMatteMode) },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Matte Skin", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Applies a subtle, soft-textured matte overlay across the entire app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isMatteMode,
+                        onCheckedChange = { viewModel.playToggle(); viewModel.updateIsMatteMode(it) }
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -173,6 +195,9 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
             Column {
                 Text("Data & Backups", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(12.dp))
+                
+                val isMatteMode by viewModel.isMatteModeState.collectAsState()
+                Spacer(modifier = Modifier.height(16.dp))
                 
                 var autoSaveEnabled by remember { mutableStateOf(com.example.data.SecurePrefs.get(context).getBoolean("auto_save_enabled", true)) }
                 

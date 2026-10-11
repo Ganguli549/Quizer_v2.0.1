@@ -122,6 +122,10 @@ class SettingsManager(val context: Context) {
         }
     }
 
+    var isMatteMode: Boolean
+        get() = prefs.getBoolean("is_matte_mode", false)
+        set(value) = prefs.edit().putBoolean("is_matte_mode", value).apply()
+
     var appThemeMode: String
         get() = prefs.getString("app_theme_mode", "system") ?: "system" // "system", "light", "dark"
         set(value) { prefs.edit().putString("app_theme_mode", value).commit() }
@@ -192,6 +196,14 @@ class SettingsManager(val context: Context) {
         prefs.edit().putInt("scroll_index_$bookId", index).putInt("scroll_offset_$bookId", offset).apply()
     }
 
+    fun getShowBookmarks(bookId: String): Boolean {
+        return prefs.getBoolean("show_bookmarks_$bookId", false)
+    }
+
+    fun setShowBookmarks(bookId: String, value: Boolean) {
+        prefs.edit().putBoolean("show_bookmarks_$bookId", value).apply()
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
     }
@@ -204,6 +216,7 @@ class SettingsManager(val context: Context) {
             .remove("active_quiz_state_$bookId")
             .remove("scroll_idx_$bookId")
             .remove("scroll_off_$bookId")
+            .remove("show_bookmarks_$bookId")
             .apply()
     }
 }

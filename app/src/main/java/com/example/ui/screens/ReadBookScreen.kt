@@ -34,7 +34,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.*
@@ -363,6 +362,10 @@ fun ReadBookScreen(
 ) {
     val currentBookId by viewModel.currentBookId.collectAsState()
     val context = LocalContext.current
+    val bookmarks by viewModel.bookmarks.collectAsState(initial = emptyList())
+    val bookmarkedQuestionIds by remember(bookmarks) {
+        derivedStateOf { bookmarks.map { it.questionId }.toSet() }
+    }
     var selectedThemeIndex by remember { mutableStateOf(com.example.data.SecurePrefs.get(context).getInt("reading_theme", 0)) }
     val readingTheme = ReadingTheme.values()[selectedThemeIndex.coerceIn(0, ReadingTheme.values().size - 1)]
     val themeColors = getThemeColors(readingTheme)
@@ -379,6 +382,9 @@ fun ReadBookScreen(
     var showChapterIndex by remember { mutableStateOf(false) }
     var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showBriefExplanation by remember { mutableStateOf(false) }
+    var showBookmarks by remember(currentBookId) {
+        mutableStateOf(viewModel.settingsManager.getShowBookmarks(currentBookId))
+    }
     
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -453,13 +459,54 @@ fun ReadBookScreen(
     val scrollDirectionConnection = remember {
         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
             override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                if (available.y < -3f && isBarsVisible && !isScrollerActive) {
+                // Scrolling downwards: enter full screen (read mode)
+                if (available.y < -5f && isBarsVisible && !isScrollerActive) {
                     isBarsVisible = false
-                } else if (available.y > 3f && !isBarsVisible && !isScrollerActive) {
-                    isBarsVisible = true
+                }
+                // Scrolling upwards: should NOT trigger full screen exit
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+            ): androidx.compose.ui.geometry.Offset {
+                // When reached top of the book via scrolling, top bar and bottom bar appear
+                if (available.y > 0f && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= 0) {
+                    if (!isBarsVisible) {
+                        isBarsVisible = true
+                    }
                 }
                 return androidx.compose.ui.geometry.Offset.Zero
             }
+        }
+    }
+
+    // When reaching the top of the book, top bar and bottom bar should appear
+    LaunchedEffect(listState) {
+        var wasScrolledDown = false
+        snapshotFlow {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        }.collect { isAtTop ->
+            if (!isAtTop) {
+                wasScrolledDown = true
+            } else if (wasScrolledDown) {
+                isBarsVisible = true
+                wasScrolledDown = false
+            }
+        }
+    }
+
+    val displayMetrics = context.resources.displayMetrics
+    val screenWidthPx = displayMetrics.widthPixels.toFloat()
+    val screenHeightPx = displayMetrics.heightPixels.toFloat()
+
+    val onMiddleClickCoords: (Float, Float) -> Unit = { rawX, rawY ->
+        val inHorizontal = rawX >= screenWidthPx * 0.15f && rawX <= screenWidthPx * 0.85f
+        val inVertical = rawY >= screenHeightPx * 0.20f && rawY <= screenHeightPx * 0.80f
+        if (inHorizontal && inVertical) {
+            isBarsVisible = !isBarsVisible
         }
     }
 
@@ -775,11 +822,6 @@ fun ReadBookScreen(
                                     leadingIcon = { Icon(Icons.Default.Search, null) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Full Screen") },
-                                    onClick = { showMenu = false; isBarsVisible = false },
-                                    leadingIcon = { Icon(Icons.Default.Fullscreen, null) }
-                                )
-                                DropdownMenuItem(
                                     text = { Text("Theme") },
                                     onClick = { showMenu = false; showThemeMenu = true },
                                     leadingIcon = { Icon(Icons.Default.Palette, null) }
@@ -788,6 +830,30 @@ fun ReadBookScreen(
                                     text = { Text("Edit Book") },
                                     onClick = { showMenu = false; onEditBook() },
                                     leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (showBookmarks) "Hide bookmarks" else "Show bookmarks") },
+                                    onClick = {
+                                        showMenu = false
+                                        val newShow = !showBookmarks
+                                        showBookmarks = newShow
+                                        viewModel.settingsManager.setShowBookmarks(currentBookId, newShow)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            if (newShow) {
+                                                if (bookmarkedQuestionIds.isEmpty()) "Bookmarks shown (0 bookmarks)" else "Bookmarks shown"
+                                            } else {
+                                                "Bookmarks hidden"
+                                            },
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (showBookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                            null
+                                        )
+                                    }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Brief Explanation") },
@@ -817,8 +883,14 @@ fun ReadBookScreen(
 
                 .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = {
-                            isBarsVisible = !isBarsVisible
+                        onTap = { offset ->
+                            val width = size.width.toFloat()
+                            val height = size.height.toFloat()
+                            val inHorizontal = offset.x >= width * 0.15f && offset.x <= width * 0.85f
+                            val inVertical = offset.y >= height * 0.20f && offset.y <= height * 0.80f
+                            if (inHorizontal && inVertical) {
+                                isBarsVisible = !isBarsVisible
+                            }
                         }
                     )
                 }
@@ -891,15 +963,14 @@ fun ReadBookScreen(
                                         headerText = item.text,
                                         rangeStr = item.range,
                                         textColor = themeColors.text,
-                                        modifier = Modifier.clickable { isBarsVisible = !isBarsVisible },
                                         isQuizMode = false,
-                                        initiallyExpanded = true,
-                                        onClick = { isBarsVisible = !isBarsVisible }
+                                        initiallyExpanded = true
                                     )
                                 }
                             }
                             is ReadBookItem.QuestionData -> {
                                 val isHighlighted = searchMatches.isNotEmpty() && currentMatchIndex >= 0 && currentMatchIndex < searchMatches.size && searchMatches[currentMatchIndex] == index
+                                val isQuestionBookmarked = bookmarkedQuestionIds.contains(item.question.id)
                                 Box(
                                     modifier = Modifier.fillMaxWidth()
                                         
@@ -912,10 +983,22 @@ fun ReadBookScreen(
                                         gson = com.example.data.SharedGson.normal,
                                         context = context,
                                         isDarkTheme = isDarkTheme,
+                                        readingTheme = readingTheme,
                                         themeColors = themeColors,
                                         searchQuery = searchQuery,
                                         highlightColor = Color.Yellow,
-                                        onTextClick = { isBarsVisible = !isBarsVisible },
+                                        isBookmarked = isQuestionBookmarked,
+                                        showBookmarkHighlight = showBookmarks,
+                                        onBookmarkToggle = {
+                                            val willBookmark = !isQuestionBookmarked
+                                            viewModel.toggleBookmark(item.question.bookId, item.question.id)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                if (willBookmark) "Question #${item.localNumber} bookmarked" else "Bookmark removed",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        },
+                                        onTextClickWithCoords = onMiddleClickCoords,
                                         showBriefExplanation = showBriefExplanation
                                     )
                                 }
@@ -927,76 +1010,115 @@ fun ReadBookScreen(
 
             
             }
-            // Fast Scroller
-            if (totalItems > 0 && isBarsVisible) {
-                val trackHeight = constraints.maxHeight.toFloat()
-                val thumbHeight = 40.dp
-                val thumbHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { thumbHeight.toPx() }
-                
-                var dragY by remember { mutableStateOf(0f) }
-                var isDragging by remember { mutableStateOf(false) }
-                
-                val thumbY by remember(totalItems, trackHeight, thumbHeightPx) {
-                    androidx.compose.runtime.derivedStateOf {
-                        if (isDragging) {
-                            dragY.coerceIn(0f, trackHeight - thumbHeightPx)
-                        } else {
-                            val firstVisible = listState.firstVisibleItemIndex
-                            ((firstVisible.toFloat() / maxOf(1, totalItems - 1)) * (trackHeight - thumbHeightPx)).coerceIn(0f, trackHeight - thumbHeightPx)
+            // Fast Scroller - positioned strictly between top bar and bottom bar
+            AnimatedVisibility(
+                visible = totalItems > 0 && isBarsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(
+                        top = padding.calculateTopPadding() + 6.dp,
+                        bottom = padding.calculateBottomPadding() + 6.dp
+                    )
+                    .fillMaxHeight()
+                    .width(36.dp)
+            ) {
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val trackHeight = constraints.maxHeight.toFloat()
+                    val thumbHeight = 44.dp
+                    val thumbHeightPx = with(LocalDensity.current) { thumbHeight.toPx() }
+                    
+                    var dragY by remember { mutableStateOf(0f) }
+                    var isDragging by remember { mutableStateOf(false) }
+                    
+                    val thumbY by remember(totalItems, trackHeight, thumbHeightPx) {
+                        derivedStateOf {
+                            val usableTrack = maxOf(1f, trackHeight - thumbHeightPx)
+                            if (isDragging) {
+                                dragY.coerceIn(0f, usableTrack)
+                            } else {
+                                val firstVisible = listState.firstVisibleItemIndex
+                                ((firstVisible.toFloat() / maxOf(1, totalItems - 1)) * usableTrack).coerceIn(0f, usableTrack)
+                            }
                         }
                     }
-                }
-                
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .width(32.dp)
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = { offset ->
-                                    isScrollerActive = true
-                                    val y = offset.y - (thumbHeightPx / 2)
-                                    val targetIndex = ((y / (trackHeight - thumbHeightPx)) * totalItems).toInt().coerceIn(0, totalItems - 1)
-                                    coroutineScope.launch { listState.scrollToItem(targetIndex) }
-                                    try {
-                                        tryAwaitRelease()
-                                    } finally {
-                                        isScrollerActive = false
-                                    }
-                                }
-                            )
-                        }
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    isDragging = true
-                                    isScrollerActive = true
-                                    dragY = offset.y - (thumbHeightPx / 2)
-                                },
-                                onDragEnd = { 
-                                    isDragging = false 
-                                    isScrollerActive = false
-                                },
-                                onDragCancel = { 
-                                    isDragging = false 
-                                    isScrollerActive = false
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    dragY = change.position.y - (thumbHeightPx / 2)
-                                    val targetIndex = ((dragY / (trackHeight - thumbHeightPx)) * totalItems).toInt().coerceIn(0, totalItems - 1)
-                                    coroutineScope.launch { listState.scrollToItem(targetIndex) }
-                                }
-                            )
-                        }
-                ) {
+                    
                     Box(
                         modifier = Modifier
-                            .offset { androidx.compose.ui.unit.IntOffset(16.dp.toPx().toInt(), thumbY.toInt()) }
-                            .size(6.dp, thumbHeight)
-                            .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                    )
+                            .fillMaxSize()
+                            .pointerInput(totalItems, trackHeight) {
+                                detectTapGestures(
+                                    onPress = { offset ->
+                                        val usableTrack = maxOf(1f, trackHeight - thumbHeightPx)
+                                        if (usableTrack > 0f) {
+                                            isScrollerActive = true
+                                            val y = offset.y - (thumbHeightPx / 2)
+                                            val targetIndex = ((y / usableTrack) * totalItems).toInt().coerceIn(0, totalItems - 1)
+                                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                                            try {
+                                                tryAwaitRelease()
+                                            } finally {
+                                                isScrollerActive = false
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            .pointerInput(totalItems, trackHeight) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        isDragging = true
+                                        isScrollerActive = true
+                                        dragY = offset.y - (thumbHeightPx / 2)
+                                    },
+                                    onDragEnd = { 
+                                        isDragging = false 
+                                        isScrollerActive = false
+                                    },
+                                    onDragCancel = { 
+                                        isDragging = false 
+                                        isScrollerActive = false
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        val usableTrack = maxOf(1f, trackHeight - thumbHeightPx)
+                                        if (usableTrack > 0f) {
+                                            dragY = change.position.y - (thumbHeightPx / 2)
+                                            val targetIndex = ((dragY / usableTrack) * totalItems).toInt().coerceIn(0, totalItems - 1)
+                                            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
+                        // Subtle track guide line centered behind thumb
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 5.dp)
+                                .fillMaxHeight()
+                                .width(2.dp)
+                                .background(
+                                    color = themeColors.text.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(1.dp)
+                                )
+                        )
+                        // Scroll thumb
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 3.dp)
+                                .offset { IntOffset(0, thumbY.toInt()) }
+                                .size(width = if (isDragging) 8.dp else 6.dp, height = thumbHeight)
+                                .background(
+                                    color = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                                    shape = RoundedCornerShape(3.dp)
+                                )
+                        )
+                    }
                 }
             }
         } // End of BoxWithConstraints
@@ -1210,10 +1332,15 @@ fun ReadBookQuestionItem(
     gson: Gson,
     context: android.content.Context,
     isDarkTheme: Boolean,
+    readingTheme: ReadingTheme = ReadingTheme.Day,
     themeColors: ThemeColors,
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
+    isBookmarked: Boolean = false,
+    showBookmarkHighlight: Boolean = true,
+    onBookmarkToggle: (() -> Unit)? = null,
     onTextClick: (() -> Unit)? = null,
+    onTextClickWithCoords: ((Float, Float) -> Unit)? = null,
     showBriefExplanation: Boolean = false
 ) {
     var isRevealed by remember(question.id, inBookQuizMode) { mutableStateOf(!inBookQuizMode) }
@@ -1248,8 +1375,51 @@ fun ReadBookQuestionItem(
         }
     }
 
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().animateContentSize()) {
-        
+    val highlighterBgColor = when {
+        readingTheme == ReadingTheme.Night || isDarkTheme -> Color(0x35FFE082)
+        readingTheme == ReadingTheme.Sepia || readingTheme == ReadingTheme.BookPage -> Color(0x35FFD54F)
+        else -> Color(0x40FFEB3B)
+    }
+    val markerBorderColor = Color(0xFFFFB300)
+    val shouldHighlight = isBookmarked && showBookmarkHighlight
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .fillMaxWidth()
+            .then(
+                if (shouldHighlight) {
+                    Modifier
+                        .background(highlighterBgColor, RoundedCornerShape(10.dp))
+                        .drawBehind {
+                            drawRoundRect(
+                                color = markerBorderColor,
+                                topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                                size = androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
+                            )
+                        }
+                } else Modifier
+            )
+            .padding(horizontal = if (shouldHighlight) 10.dp else 8.dp, vertical = 6.dp)
+            .animateContentSize()
+    ) {
+        val questionCustomMenuItems = remember(isBookmarked, localNumber, onBookmarkToggle) {
+            if (onBookmarkToggle != null) {
+                listOf(
+                    com.example.ui.components.CustomTextMenuItem(
+                        id = 99991,
+                        title = if (isBookmarked) "Unbookmark" else "Bookmark Q$localNumber",
+                        iconRes = if (isBookmarked) com.example.R.drawable.ic_bookmark else com.example.R.drawable.ic_bookmark_border,
+                        showText = false,
+                        order = 0,
+                        onClick = {
+                            onBookmarkToggle.invoke()
+                        }
+                    )
+                )
+            } else emptyList()
+        }
         
         com.example.ui.components.SmartRichText(
             text = "<b>Q.$localNumber</b> ${question.question}",
@@ -1257,7 +1427,11 @@ fun ReadBookQuestionItem(
             color = themeColors.text,
             searchQuery = searchQuery,
             highlightColor = highlightColor,
-            onClick = onTextClick
+            isBookmarked = isBookmarked,
+            onBookmarkToggle = onBookmarkToggle,
+            customMenuItems = questionCustomMenuItems,
+            onClick = onTextClick,
+            onClickWithCoords = onTextClickWithCoords
         )
         
         if (question.format == "table" && question.tableData != null) {
@@ -1283,7 +1457,8 @@ fun ReadBookQuestionItem(
                 color = themeColors.text,
                 searchQuery = searchQuery,
                 highlightColor = highlightColor,
-                onClick = onTextClick
+                onClick = onTextClick,
+                onClickWithCoords = onTextClickWithCoords
             )
         }
         
@@ -1353,7 +1528,7 @@ fun ReadBookQuestionItem(
                     text = "${(65 + displayIndex).toChar()}.", 
                     fontWeight = FontWeight.Normal, 
                     color = textColor, 
-                    fontSize = 18.sp,
+                    fontSize = 18.sp, 
                     modifier = Modifier.padding(end = 8.dp)
                 )
                 com.example.ui.components.SmartRichText(
@@ -1362,7 +1537,7 @@ fun ReadBookQuestionItem(
                     color = textColor,
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
-                    isSelectable = false,
+                    isSelectable = !inBookQuizMode || isRevealed,
                     onClick = {
                         if (inBookQuizMode && !isRevealed) {
                             if (question.multipleCorrect) {
@@ -1374,6 +1549,11 @@ fun ReadBookQuestionItem(
                             }
                         } else {
                             onTextClick?.invoke()
+                        }
+                    },
+                    onClickWithCoords = { rawX, rawY ->
+                        if (!inBookQuizMode || isRevealed) {
+                            onTextClickWithCoords?.invoke(rawX, rawY)
                         }
                     }
                 )
@@ -1402,7 +1582,8 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
-                        onClick = onTextClick
+                        onClick = onTextClick,
+                        onClickWithCoords = onTextClickWithCoords
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Detailed:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = themeColors.text)
@@ -1413,7 +1594,8 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
-                        onClick = onTextClick
+                        onClick = onTextClick,
+                        onClickWithCoords = onTextClickWithCoords
                     )
                 } else if (hasBrief) {
                     com.example.ui.components.SmartRichText(
@@ -1423,7 +1605,8 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
-                        onClick = onTextClick
+                        onClick = onTextClick,
+                        onClickWithCoords = onTextClickWithCoords
                     )
                 } else if (hasDetailed) {
                     com.example.ui.components.SmartRichText(
@@ -1433,7 +1616,8 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
-                        onClick = onTextClick
+                        onClick = onTextClick,
+                        onClickWithCoords = onTextClickWithCoords
                     )
                 }
                 if (!question.explanationTable.isNullOrEmpty()) {

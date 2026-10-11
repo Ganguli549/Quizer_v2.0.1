@@ -2,7 +2,9 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -170,6 +172,7 @@ fun MyApplicationTheme(
   // Dynamic color is available on Android 12+
   dynamicColor: Boolean = true,
   appTheme: String = "dynamic",
+  isMatteMode: Boolean = false,
   content: @Composable () -> Unit,
 ) {
   val darkTheme = when (themeMode) {
@@ -179,6 +182,20 @@ fun MyApplicationTheme(
   }
 
   val colorScheme = getAppColorScheme(darkTheme = darkTheme, dynamicColor = dynamicColor, appTheme = appTheme)
+
+  val finalColorScheme = if (isMatteMode) {
+      val t = if (darkTheme) androidx.compose.ui.graphics.Color(0xFF2C2C2C) else androidx.compose.ui.graphics.Color(0xFFE2E2E2)
+      fun c(color: androidx.compose.ui.graphics.Color, f: Float = 0.25f) = androidx.compose.ui.graphics.lerp(color, t, f)
+      colorScheme.copy(
+          primary = c(colorScheme.primary, 0.15f),
+          primaryContainer = c(colorScheme.primaryContainer, 0.15f),
+          secondary = c(colorScheme.secondary, 0.15f),
+          secondaryContainer = c(colorScheme.secondaryContainer, 0.15f),
+          background = c(colorScheme.background, 0.4f),
+          surface = c(colorScheme.surface, 0.4f),
+          surfaceVariant = c(colorScheme.surfaceVariant, 0.4f)
+      )
+  } else colorScheme
 
   val view = androidx.compose.ui.platform.LocalView.current
   if (!view.isInEditMode) {
@@ -201,5 +218,17 @@ fun MyApplicationTheme(
       extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(32.dp)
   )
 
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, shapes = shapes, content = content)
+  MaterialTheme(colorScheme = finalColorScheme, typography = Typography, shapes = shapes) {
+      androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+          content()
+          if (isMatteMode) {
+              val matteBrush = rememberMatteNoiseBrush()
+              androidx.compose.foundation.layout.Box(
+                  modifier = androidx.compose.ui.Modifier
+                      .fillMaxSize()
+                      .matteEffect(true, matteBrush)
+              )
+          }
+      }
+  }
 }

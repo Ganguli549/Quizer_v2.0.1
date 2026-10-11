@@ -76,24 +76,18 @@ class MainViewModel(
         _showBackupRestoreDialog.value = false
         viewModelScope.launch {
             if (restore) {
-                com.example.data.AppDatabase.getDatabase(context).close()
                 val success = com.example.data.BackupManager.restoreBackup(context)
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     if (success) {
-                        com.example.data.SecurePrefs.get(context).edit().putBoolean("is_first_launch", false).commit()
-                        android.widget.Toast.makeText(context, "Backup restored successfully. Restarting...", android.widget.Toast.LENGTH_SHORT).show()
-                        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                        intent?.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        context.startActivity(intent)
-                        Runtime.getRuntime().exit(0)
+                        android.widget.Toast.makeText(context, "Backup restored successfully", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         android.widget.Toast.makeText(context, "Failed to restore backup", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             } else {
                 com.example.data.BackupManager.clearBackup()
-                finishInitialization(context)
             }
+            finishInitialization(context)
         }
     }
     private var quizGenJob: kotlinx.coroutines.Job? = null
@@ -1140,7 +1134,10 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     private val _themeState = MutableStateFlow(settingsManager.appTheme)
     val themeState = _themeState.asStateFlow()
 
-    private val _themeModeState = MutableStateFlow(settingsManager.appThemeMode)
+    private val _isMatteModeState = kotlinx.coroutines.flow.MutableStateFlow(settingsManager.isMatteMode)
+    val isMatteModeState = _isMatteModeState.asStateFlow()
+
+    private val _themeModeState = kotlinx.coroutines.flow.MutableStateFlow(settingsManager.appThemeMode)
     val themeModeState = _themeModeState.asStateFlow()
 
     private val _timerSoundEnabledState = MutableStateFlow(settingsManager.timerSoundEnabled)
@@ -1262,6 +1259,11 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     fun updateTheme(themeStr: String) {
         settingsManager.appTheme = themeStr
         _themeState.value = themeStr
+    }
+
+    fun updateIsMatteMode(isMatte: Boolean) {
+        settingsManager.isMatteMode = isMatte
+        _isMatteModeState.value = isMatte
     }
 
     fun updateThemeMode(modeStr: String) {

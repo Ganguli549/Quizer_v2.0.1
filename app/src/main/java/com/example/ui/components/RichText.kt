@@ -106,6 +106,191 @@ object MarkwonCache {
     }
 }
 
+data class CustomTextMenuItem(
+    val id: Int,
+    val title: String,
+    val iconRes: Int? = null,
+    val showText: Boolean = true,
+    val order: Int = 0,
+    val onClick: (selectedText: String) -> Unit
+)
+
+class CustomSelectionActionModeCallback(
+    var customItems: List<CustomTextMenuItem> = emptyList()
+) : android.view.ActionMode.Callback {
+    var textView: TextView? = null
+    private var isDestroying = false
+
+    companion object {
+        const val ID_COPY = 10001
+        const val ID_SELECT_ALL = 10002
+        const val ID_SHARE = 10003
+    }
+
+    override fun onCreateActionMode(mode: android.view.ActionMode?, menu: android.view.Menu?): Boolean {
+        isDestroying = false
+        if (mode == null || menu == null) return false
+        populateCustomMenu(mode, menu)
+        return true
+    }
+
+    override fun onPrepareActionMode(mode: android.view.ActionMode?, menu: android.view.Menu?): Boolean {
+        if (mode == null || menu == null) return false
+        populateCustomMenu(mode, menu)
+        return true
+    }
+
+    private fun createItemTitle(context: android.content.Context?, customItem: CustomTextMenuItem): CharSequence {
+        if (customItem.showText) {
+            return customItem.title
+        }
+        val iconRes = customItem.iconRes
+        if (context != null && iconRes != null) {
+            try {
+                val drawable = androidx.core.content.ContextCompat.getDrawable(context, iconRes)?.mutate()
+                if (drawable != null) {
+                    val density = context.resources.displayMetrics.density
+                    val sizePx = (22 * density).toInt().coerceAtLeast(24)
+                    drawable.setBounds(0, 0, sizePx, sizePx)
+                    val targetString = " "
+                    val spannable = android.text.SpannableString(targetString)
+                    val imageSpan = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        android.text.style.ImageSpan(drawable, android.text.style.ImageSpan.ALIGN_CENTER)
+                    } else {
+                        android.text.style.ImageSpan(drawable, android.text.style.ImageSpan.ALIGN_BOTTOM)
+                    }
+                    spannable.setSpan(imageSpan, 0, targetString.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    return spannable
+                }
+            } catch (e: Exception) {
+                // Ignore and fall back
+            }
+        }
+        return "🔖"
+    }
+
+    private fun populateCustomMenu(mode: android.view.ActionMode, menu: android.view.Menu) {
+        menu.clear()
+
+        for (customItem in customItems) {
+            val titleFormatted = createItemTitle(textView?.context, customItem)
+            val item = menu.add(android.view.Menu.NONE, customItem.id, customItem.order, titleFormatted)
+            customItem.iconRes?.let { iconRes ->
+                try {
+                    item.setIcon(iconRes)
+                } catch (e: Exception) {}
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                item.contentDescription = customItem.title
+                item.tooltipText = customItem.title
+            }
+            item.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+        }
+
+        val copyItem = menu.add(android.view.Menu.NONE, ID_COPY, 10, "Copy")
+        try {
+            copyItem.setIcon(com.example.R.drawable.ic_copy)
+        } catch (e: Exception) {}
+        copyItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+
+        val selectAllItem = menu.add(android.view.Menu.NONE, ID_SELECT_ALL, 20, "Select all")
+        try {
+            selectAllItem.setIcon(com.example.R.drawable.ic_select_all)
+        } catch (e: Exception) {}
+        selectAllItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+
+        val shareItem = menu.add(android.view.Menu.NONE, ID_SHARE, 30, "Share")
+        try {
+            shareItem.setIcon(com.example.R.drawable.ic_share)
+        } catch (e: Exception) {}
+        shareItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+    }
+
+    override fun onActionItemClicked(mode: android.view.ActionMode?, item: android.view.MenuItem?): Boolean {
+        if (item == null || mode == null) return false
+        val tv = textView ?: return false
+
+        val selStart = tv.selectionStart
+        val selEnd = tv.selectionEnd
+        val selectedText = if (selStart in 0..tv.text.length && selEnd in 0..tv.text.length && selStart != selEnd) {
+            val start = minOf(selStart, selEnd)
+            val end = maxOf(selStart, selEnd)
+            tv.text.subSequence(start, end).toString()
+        } else ""
+
+        val customItem = customItems.find { it.id == item.itemId }
+        if (customItem != null) {
+            safeFinishActionMode(mode)
+            tv.post {
+                val spannable = tv.text as? android.text.Spannable
+                if (spannable != null) {
+                    android.text.Selection.removeSelection(spannable)
+                }
+                customItem.onClick(selectedText)
+            }
+            return true
+        }
+
+        when (item.itemId) {
+            ID_COPY -> {
+                if (selectedText.isNotEmpty()) {
+                    val clipboard = tv.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Selected Text", selectedText))
+                    android.widget.Toast.makeText(tv.context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                safeFinishActionMode(mode)
+                tv.post {
+                    val spannable = tv.text as? android.text.Spannable
+                    if (spannable != null) {
+                        android.text.Selection.removeSelection(spannable)
+                    }
+                }
+                return true
+            }
+            ID_SELECT_ALL -> {
+                val spannable = tv.text as? android.text.Spannable
+                if (spannable != null) {
+                    android.text.Selection.setSelection(spannable, 0, spannable.length)
+                }
+                return true
+            }
+            ID_SHARE -> {
+                if (selectedText.isNotEmpty()) {
+                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, selectedText)
+                    }
+                    tv.context.startActivity(android.content.Intent.createChooser(shareIntent, "Share text"))
+                }
+                safeFinishActionMode(mode)
+                tv.post {
+                    val spannable = tv.text as? android.text.Spannable
+                    if (spannable != null) {
+                        android.text.Selection.removeSelection(spannable)
+                    }
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun safeFinishActionMode(mode: android.view.ActionMode) {
+        if (!isDestroying) {
+            isDestroying = true
+            try {
+                mode.finish()
+            } catch (e: Exception) {
+                isDestroying = false
+            }
+        }
+    }
+
+    override fun onDestroyActionMode(mode: android.view.ActionMode?) {
+        isDestroying = true
+    }
+}
+
 @Composable
 fun RichText(
     text: String,
@@ -115,7 +300,11 @@ fun RichText(
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
     isSelectable: Boolean = true,
-    onClick: (() -> Unit)? = null
+    isBookmarked: Boolean = false,
+    onBookmarkToggle: (() -> Unit)? = null,
+    customMenuItems: List<CustomTextMenuItem> = emptyList(),
+    onClick: (() -> Unit)? = null,
+    onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val fontSizePx = fontSize.value * context.resources.displayMetrics.density
@@ -123,7 +312,7 @@ fun RichText(
         MarkwonCache.get(context, fontSizePx, color)
     }
 
-        val processedText = text
+    val processedText = text
         .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$\\$([^`]*?)\\$\\$\\s*```")) { "$$${it.groupValues[1]}$$" }
         .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$([^`]*?)\\$\\s*```")) { "$$${it.groupValues[1]}$$" }
         .replace(Regex("(?s)`\\$\\$([^`]*?)\\$\\$`")) { "$$${it.groupValues[1]}$$" }
@@ -177,6 +366,31 @@ fun RichText(
         
         spannable
     }
+
+    val resolvedCustomItems = remember(customMenuItems, onBookmarkToggle, isBookmarked) {
+        if (customMenuItems.isNotEmpty()) {
+            customMenuItems
+        } else if (onBookmarkToggle != null) {
+            listOf(
+                CustomTextMenuItem(
+                    id = 99991,
+                    title = if (isBookmarked) "Unbookmark" else "Bookmark",
+                    iconRes = if (isBookmarked) com.example.R.drawable.ic_bookmark else com.example.R.drawable.ic_bookmark_border,
+                    showText = false,
+                    order = 0,
+                    onClick = { onBookmarkToggle.invoke() }
+                )
+            )
+        } else {
+            emptyList()
+        }
+    }
+
+    val customSelectionCallback = remember {
+        CustomSelectionActionModeCallback()
+    }
+    customSelectionCallback.customItems = resolvedCustomItems
+
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -184,11 +398,18 @@ fun RichText(
                 setTextColor(if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK)
                 textSize = fontSize.value
                 setTextIsSelectable(isSelectable)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
+                }
+                customSelectionCallback.textView = this
+                customSelectionActionModeCallback = customSelectionCallback
                 markwon.setParsedMarkdown(this, spannableToDisplay)
-                if (onClick != null) {
+                tag = spannableToDisplay
+                if (onClick != null || onClickWithCoords != null) {
                     val gestureDetector = android.view.GestureDetector(ctx, object : android.view.GestureDetector.SimpleOnGestureListener() {
                         override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
-                            onClick()
+                            onClickWithCoords?.invoke(e.rawX, e.rawY)
+                            onClick?.invoke()
                             return false
                         }
                     })
@@ -203,14 +424,21 @@ fun RichText(
             textView.setTextColor(if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK)
             textView.textSize = fontSize.value
             textView.setTextIsSelectable(isSelectable)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                textView.setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
+            }
+            customSelectionCallback.textView = textView
+            customSelectionCallback.customItems = resolvedCustomItems
+            textView.customSelectionActionModeCallback = customSelectionCallback
             if (textView.tag != spannableToDisplay) {
                 markwon.setParsedMarkdown(textView, spannableToDisplay)
                 textView.tag = spannableToDisplay
             }
-            if (onClick != null) {
+            if (onClick != null || onClickWithCoords != null) {
                 val gestureDetector = android.view.GestureDetector(textView.context, object : android.view.GestureDetector.SimpleOnGestureListener() {
                     override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
-                        onClick()
+                        onClickWithCoords?.invoke(e.rawX, e.rawY)
+                        onClick?.invoke()
                         return false
                     }
                 })

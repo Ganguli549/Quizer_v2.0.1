@@ -24,10 +24,13 @@ object BackupManager {
             }
             
             // Backup prefs
-            val prefsFile = File(context.applicationInfo.dataDir, "shared_prefs/secure_prefs.xml")
-            if (prefsFile.exists()) {
-                val destFile = File(backupFolder, "secure_prefs.xml")
-                copyFile(prefsFile, destFile)
+            val sharedPrefsFolder = File(context.applicationInfo.dataDir, "shared_prefs")
+            if (sharedPrefsFolder.exists()) {
+                sharedPrefsFolder.listFiles()?.forEach { file ->
+                    if (file.name.endsWith(".xml")) {
+                        copyFile(file, File(backupFolder, file.name))
+                    }
+                }
             }
             return true
         } catch (e: Exception) {
@@ -53,12 +56,12 @@ object BackupManager {
                 }
             }
             
-            val prefsBackup = File(backupFolder, "secure_prefs.xml")
-            val prefsDest = File(context.applicationInfo.dataDir, "shared_prefs/secure_prefs.xml")
-            if (prefsBackup.exists()) {
-                val prefsFolder = prefsDest.parentFile
-                if (prefsFolder != null && !prefsFolder.exists()) prefsFolder.mkdirs()
-                copyFile(prefsBackup, prefsDest)
+            val prefsDestFolder = File(context.applicationInfo.dataDir, "shared_prefs")
+            if (!prefsDestFolder.exists()) prefsDestFolder.mkdirs()
+            backupFolder.listFiles()?.forEach { file ->
+                if (file.name.endsWith(".xml")) {
+                    copyFile(file, File(prefsDestFolder, file.name))
+                }
             }
             return true
         } catch (e: Exception) {
