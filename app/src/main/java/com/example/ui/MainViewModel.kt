@@ -585,9 +585,33 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     private val _onlyBookmarks = MutableStateFlow(false)
     val onlyBookmarks = _onlyBookmarks.asStateFlow()
 
+    private val _quizFlowMode = MutableStateFlow(settingsManager.quizFlowMode)
+    val quizFlowMode = _quizFlowMode.asStateFlow()
+
+    fun setQuizFlowMode(mode: String) {
+        if (_quizFlowMode.value != mode) {
+            _quizFlowMode.value = mode
+            settingsManager.quizFlowMode = mode
+            generateQuizQuestions()
+        }
+    }
+
+    private val _shuffleQuestions = MutableStateFlow(settingsManager.shuffleQuestions)
+    val shuffleQuestions = _shuffleQuestions.asStateFlow()
+
+    fun setShuffleQuestions(shuffle: Boolean) {
+        if (_shuffleQuestions.value != shuffle) {
+            _shuffleQuestions.value = shuffle
+            settingsManager.shuffleQuestions = shuffle
+            generateQuizQuestions()
+        }
+    }
+
     fun setOnlyBookmarks(value: Boolean) {
-        _onlyBookmarks.value = value
-        generateQuizQuestions()
+        if (_onlyBookmarks.value != value) {
+            _onlyBookmarks.value = value
+            generateQuizQuestions()
+        }
     }
 
     fun setQuizQuestionsForBookmarks() {
@@ -847,146 +871,22 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         applySortingAndLimitToQuestions(criticalQs)
     }
 
-    private fun processQuestionPool(pool: List<com.example.data.QuestionSummary>, flowMode: String, isShuffle: Boolean, limit: Int?, offset: Int = 1): List<com.example.data.QuestionSummary> {
-        val grouped = mutableListOf<List<com.example.data.QuestionSummary>>()
-        var i = 0
-        while (i < pool.size) {
-            val q = pool[i]
-            if (!q.questionHeader.isNullOrBlank() && q.questionHeader.contains("<p>")) {
-                val passage = mutableListOf(q)
-                var j = i + 1
-                while (j < pool.size && pool[j].questionHeader == q.questionHeader && pool[j].path == q.path) {
-                    passage.add(pool[j])
-                    j++
-                }
-                grouped.add(passage)
-                i = j
-            } else {
-                grouped.add(listOf(q))
-                i++
-            }
-        }
-
-        if (flowMode == "progressive") {
-            val statsMap = allStats.value.associateBy { it.questionId }
-            val targetTotal = if (limit != null && limit > 0) limit.coerceAtMost(pool.size) else pool.size
-            val targetMistakenCount = Math.round(targetTotal * 0.4f).toInt()
-
-            // 1. Pick 40% most mistaken questions (wrong > 0)
-            val mistakenCandidates = grouped.filter { g -> g.sumOf { statsMap[it.id]?.wrong ?: 0 } > 0 }
-                .sortedWith(
-                    compareByDescending<List<com.example.data.QuestionSummary>> { g -> g.sumOf { statsMap[it.id]?.wrong ?: 0 } }
-                        .thenBy { g ->
-                            val att = g.sumOf { statsMap[it.id]?.attempts ?: 0 }
-                            if (att > 0) (g.sumOf { statsMap[it.id]?.correct ?: 0 }.toFloat() / att) else 0f
-                        }
-                        .thenByDescending { g -> g.maxOfOrNull { statsMap[it.id]?.lastSeen ?: 0L } ?: 0L }
-                )
-
-            val chosenMistakenGroups = mutableListOf<List<com.example.data.QuestionSummary>>()
-            val chosenMistakenIds = mutableSetOf<Long>()
-            var chosenMistakenCount = 0
-
-            for (g in mistakenCandidates) {
-                if (chosenMistakenCount >= targetMistakenCount && chosenMistakenGroups.isNotEmpty()) break
-                chosenMistakenGroups.add(g)
-                chosenMistakenCount += g.size
-                chosenMistakenIds.addAll(g.map { it.id })
-            }
-
-            // 2. Pick remaining questions (at least 60%, or up to 100% if mistaken questions are 0) using current progressive logic
-            val remainingNeed = targetTotal - chosenMistakenCount
-            val remainingGroups = grouped.filter { g -> g.none { it.id in chosenMistakenIds } }
-
-            val groupScores = remainingGroups.associateWith { g ->
-                var sum = 0f
-                for (q in g) {
-                    val stat = statsMap[q.id]
-                    if (stat == null || stat.attempts == 0) {
-                        sum += -1f
-                    } else {
-                        sum += (stat.correct.toFloat() / stat.attempts.toFloat()) + (stat.attempts * 0.0001f)
-                    }
-                }
-                sum / g.size
-            }
-            val sortedRemaining = remainingGroups.sortedBy { groupScores[it] ?: 0f }
-
-            val chosenRemainingGroups = mutableListOf<List<com.example.data.QuestionSummary>>()
-            var chosenRemainingCount = 0
-            for (g in sortedRemaining) {
-                if (limit != null && limit > 0 && chosenRemainingCount >= remainingNeed && chosenRemainingGroups.isNotEmpty()) break
-                chosenRemainingGroups.add(g)
-                chosenRemainingCount += g.size
-            }
-
-            val progressiveResult = mutableListOf<List<com.example.data.QuestionSummary>>()
-            progressiveResult.addAll(chosenMistakenGroups)
-            progressiveResult.addAll(chosenRemainingGroups)
-
-            if (isShuffle) {
-                progressiveResult.shuffle()
-            }
-
-            grouped.clear()
-            grouped.addAll(progressiveResult)
-        }
-
-        if (flowMode == "sequence" && offset > 1) {
-            val dropCount = (offset - 1) % Math.max(1, pool.size)
-            // sequence offset drops individual questions, which might break a passage group.
-            // For simplicity, we drop GROUPS.
-            val dropGroupsCount = dropCount % Math.max(1, grouped.size)
-            val firstPart = grouped.drop(dropGroupsCount)
-            val remainingNeed = (limit ?: 0) - firstPart.sumOf { it.size }
-            if (remainingNeed > 0 && limit != null && limit > 0) {
-                var added = 0
-                val secondPart = mutableListOf<List<com.example.data.QuestionSummary>>()
-                for (g in grouped.take(dropGroupsCount)) {
-                    if (added >= remainingNeed) break
-                    secondPart.add(g)
-                    added += g.size
-                }
-                grouped.clear()
-                grouped.addAll(firstPart)
-                grouped.addAll(secondPart)
-            } else {
-                grouped.clear()
-                grouped.addAll(firstPart)
-            }
-        }
-
-        val finalGrouped = mutableListOf<List<com.example.data.QuestionSummary>>()
-        if (limit != null && limit > 0) {
-            var qCount = 0
-            for (g in grouped) {
-                if (qCount >= limit && finalGrouped.isNotEmpty()) break
-                finalGrouped.add(g)
-                qCount += g.size
-            }
-        } else {
-            finalGrouped.addAll(grouped)
-        }
-
-        if (isShuffle && flowMode != "progressive") {
-            finalGrouped.shuffle()
-        }
-
-        val finalQuestions = mutableListOf<com.example.data.QuestionSummary>()
-        for (g in finalGrouped) {
-            if (isShuffle) {
-                finalQuestions.addAll(g.shuffled())
-            } else {
-                finalQuestions.addAll(g)
-            }
-        }
-        
-        return finalQuestions
+    @androidx.annotation.VisibleForTesting
+    internal fun processQuestionPool(
+        pool: List<com.example.data.QuestionSummary>,
+        flowMode: String,
+        isShuffle: Boolean,
+        limit: Int?,
+        offset: Int = 1,
+        customStatsMap: Map<Long, com.example.data.QuestionStatEntity>? = null
+    ): List<com.example.data.QuestionSummary> {
+        val statsMap = customStatsMap ?: allStats.value.associateBy { it.questionId }
+        return QuestionPoolProcessor.process(pool, flowMode, isShuffle, limit, offset, statsMap)
     }
 
     private fun applySortingAndLimitToQuestions(baseList: List<com.example.data.QuestionSummary>) {
-        val currentFlow = if (isLearnMode) settingsManager.learnFlowMode else settingsManager.quizFlowMode
-        val currentShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else settingsManager.shuffleQuestions
+        val currentFlow = if (isLearnMode) settingsManager.learnFlowMode else _quizFlowMode.value
+        val currentShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else _shuffleQuestions.value
         val currentLimit = if (isLearnMode) settingsManager.learnQuestionLimit else -1
         
         val filtered = processQuestionPool(baseList, currentFlow, currentShuffle, currentLimit)
@@ -1056,8 +956,8 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 allQs
             }
             
-            val currentFlowMode = if (isLearnMode) settingsManager.learnFlowMode else settingsManager.quizFlowMode
-            val isShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else settingsManager.shuffleQuestions
+            val currentFlowMode = if (isLearnMode) settingsManager.learnFlowMode else _quizFlowMode.value
+            val isShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else _shuffleQuestions.value
             
             filtered = processQuestionPool(filtered, currentFlowMode, isShuffle, limit, offset)
 
@@ -1502,6 +1402,8 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             _questionLimit.value = if (limit == 0) null else limit
             
             _onlyBookmarks.value = false
+            _quizFlowMode.value = settingsManager.quizFlowMode
+            _shuffleQuestions.value = settingsManager.shuffleQuestions
             _sequenceOffset.value = 1
             _selectedTopic.value = null
             currentExamSettings = null

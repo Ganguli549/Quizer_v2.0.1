@@ -52,7 +52,7 @@ fun HomeScreen(
     val sequenceOffset by viewModel.sequenceOffset.collectAsState()
     var mode by remember { mutableStateOf(viewModel.settingsManager.quizMode) }
     var showExamConfigDialog by remember { mutableStateOf(false) }
-    var flowMode by remember { mutableStateOf(viewModel.settingsManager.quizFlowMode) }
+    val flowMode by viewModel.quizFlowMode.collectAsState()
     var questionTimer by remember { mutableStateOf(viewModel.settingsManager.questionTimerSeconds) }
     
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -598,10 +598,10 @@ fun HomeScreen(
                         
                         if (questionLimit != null) {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                RadioButton(selected = flowMode == "sequence", onClick = { flowMode = "sequence"; viewModel.settingsManager.quizFlowMode = "sequence"; viewModel.generateQuizQuestions() })
+                                RadioButton(selected = flowMode == "sequence", onClick = { viewModel.setQuizFlowMode("sequence") })
                                 Text("Sequence", modifier = Modifier.padding(start = 0.dp, end = 8.dp))
                                 
-                                RadioButton(selected = flowMode == "progressive", onClick = { flowMode = "progressive"; viewModel.settingsManager.quizFlowMode = "progressive"; viewModel.generateQuizQuestions() })
+                                RadioButton(selected = flowMode == "progressive", onClick = { viewModel.setQuizFlowMode("progressive") })
                                 Text("Progressive", modifier = Modifier.padding(start = 0.dp))
                             }
                             
@@ -702,7 +702,7 @@ fun HomeScreen(
                         if (showOptions) {
                             Spacer(modifier = Modifier.height(8.dp))
                             
-                            var shuffleQ by remember { mutableStateOf(viewModel.settingsManager.shuffleQuestions) }
+                            val shuffleQ by viewModel.shuffleQuestions.collectAsState()
                             var shuffleOpts by remember { mutableStateOf(viewModel.settingsManager.shuffleOptions) }
                             var useDistractors by remember { mutableStateOf(viewModel.settingsManager.useDistractors) }
                             var questionFlow by remember { mutableStateOf(viewModel.settingsManager.questionFlow) }
@@ -715,7 +715,7 @@ fun HomeScreen(
                             ) {
                                 FilterChip(
                                     selected = shuffleQ,
-                                    onClick = { shuffleQ = !shuffleQ; viewModel.settingsManager.shuffleQuestions = shuffleQ; viewModel.generateQuizQuestions() },
+                                    onClick = { viewModel.setShuffleQuestions(!shuffleQ) },
                                     label = { Text("Shuffle Questions") }
                                 )
                                 FilterChip(
