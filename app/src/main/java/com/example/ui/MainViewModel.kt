@@ -867,13 +867,38 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             }
         }
 
-        if (flowMode == "progressive" && isShuffle) {
-            grouped.shuffle()
-        }
-
         if (flowMode == "progressive") {
             val statsMap = allStats.value.associateBy { it.questionId }
-            val groupScores = grouped.associateWith { g ->
+            val targetTotal = if (limit != null && limit > 0) limit.coerceAtMost(pool.size) else pool.size
+            val targetMistakenCount = Math.round(targetTotal * 0.4f).toInt()
+
+            // 1. Pick 40% most mistaken questions (wrong > 0)
+            val mistakenCandidates = grouped.filter { g -> g.sumOf { statsMap[it.id]?.wrong ?: 0 } > 0 }
+                .sortedWith(
+                    compareByDescending<List<com.example.data.QuestionSummary>> { g -> g.sumOf { statsMap[it.id]?.wrong ?: 0 } }
+                        .thenBy { g ->
+                            val att = g.sumOf { statsMap[it.id]?.attempts ?: 0 }
+                            if (att > 0) (g.sumOf { statsMap[it.id]?.correct ?: 0 }.toFloat() / att) else 0f
+                        }
+                        .thenByDescending { g -> g.maxOfOrNull { statsMap[it.id]?.lastSeen ?: 0L } ?: 0L }
+                )
+
+            val chosenMistakenGroups = mutableListOf<List<com.example.data.QuestionSummary>>()
+            val chosenMistakenIds = mutableSetOf<Long>()
+            var chosenMistakenCount = 0
+
+            for (g in mistakenCandidates) {
+                if (chosenMistakenCount >= targetMistakenCount && chosenMistakenGroups.isNotEmpty()) break
+                chosenMistakenGroups.add(g)
+                chosenMistakenCount += g.size
+                chosenMistakenIds.addAll(g.map { it.id })
+            }
+
+            // 2. Pick remaining questions (at least 60%, or up to 100% if mistaken questions are 0) using current progressive logic
+            val remainingNeed = targetTotal - chosenMistakenCount
+            val remainingGroups = grouped.filter { g -> g.none { it.id in chosenMistakenIds } }
+
+            val groupScores = remainingGroups.associateWith { g ->
                 var sum = 0f
                 for (q in g) {
                     val stat = statsMap[q.id]
@@ -885,7 +910,26 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 }
                 sum / g.size
             }
-            grouped.sortBy { groupScores[it] ?: 0f }
+            val sortedRemaining = remainingGroups.sortedBy { groupScores[it] ?: 0f }
+
+            val chosenRemainingGroups = mutableListOf<List<com.example.data.QuestionSummary>>()
+            var chosenRemainingCount = 0
+            for (g in sortedRemaining) {
+                if (limit != null && limit > 0 && chosenRemainingCount >= remainingNeed && chosenRemainingGroups.isNotEmpty()) break
+                chosenRemainingGroups.add(g)
+                chosenRemainingCount += g.size
+            }
+
+            val progressiveResult = mutableListOf<List<com.example.data.QuestionSummary>>()
+            progressiveResult.addAll(chosenMistakenGroups)
+            progressiveResult.addAll(chosenRemainingGroups)
+
+            if (isShuffle) {
+                progressiveResult.shuffle()
+            }
+
+            grouped.clear()
+            grouped.addAll(progressiveResult)
         }
 
         if (flowMode == "sequence" && offset > 1) {
