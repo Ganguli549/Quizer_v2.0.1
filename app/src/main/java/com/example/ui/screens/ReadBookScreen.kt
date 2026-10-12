@@ -68,6 +68,8 @@ import com.google.gson.Gson
 import com.example.ui.components.RichText
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import android.app.Activity
 
 
@@ -380,6 +382,7 @@ fun ReadBookScreen(
         viewModel.settingsManager.readBookQuizMode = inBookQuizMode
     }
     var showChapterIndex by remember { mutableStateOf(false) }
+    var chapterSheetOpenCount by remember { mutableIntStateOf(0) }
     var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showBriefExplanation by remember { mutableStateOf(false) }
     var showBookmarks by remember(currentBookId) {
@@ -396,20 +399,24 @@ fun ReadBookScreen(
         )
     }
     
+    var hasRestoredScrollPosition by remember(currentBookId) { mutableStateOf(false) }
+
     DisposableEffect(currentBookId, listState) {
         onDispose {
-            viewModel.settingsManager.setBookScrollPosition(
-                currentBookId,
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset
-            )
+            if (hasRestoredScrollPosition) {
+                viewModel.settingsManager.setBookScrollPosition(
+                    currentBookId,
+                    listState.firstVisibleItemIndex,
+                    listState.firstVisibleItemScrollOffset
+                )
+            }
         }
     }
     
     // Also save periodically or when scrolling stops to be safe, but DisposableEffect onDispose handles when composable leaves the composition.
     // However, if the app is killed, onDispose might not run.
     LaunchedEffect(listState.isScrollInProgress) {
-        if (!listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress && hasRestoredScrollPosition) {
             viewModel.settingsManager.setBookScrollPosition(
                 currentBookId,
                 listState.firstVisibleItemIndex,
@@ -580,6 +587,17 @@ fun ReadBookScreen(
         }
         isLoadingBookItems = false
     }
+
+    LaunchedEffect(bookItems, currentBookId) {
+        if (bookItems.isNotEmpty() && !hasRestoredScrollPosition) {
+            val savedIdx = viewModel.settingsManager.getBookScrollIndex(currentBookId)
+            val savedOffset = viewModel.settingsManager.getBookScrollOffset(currentBookId)
+            if (savedIdx in bookItems.indices) {
+                listState.scrollToItem(savedIdx, savedOffset)
+            }
+            hasRestoredScrollPosition = true
+        }
+    }
     
     val searchMatches = remember(bookItems, searchQuery) {
         if (searchQuery.isBlank()) return@remember emptyList<Int>()
@@ -639,6 +657,46 @@ fun ReadBookScreen(
             } else {
                 Pair("Book", 0)
             }
+        }
+    }
+
+    val allPathHeaders = remember(bookItems) {
+        bookItems.filterIsInstance<ReadBookItem.PathHeader>()
+    }
+
+    val currentPathHeader by remember(bookItems) {
+        derivedStateOf {
+            val currentIndex = listState.firstVisibleItemIndex.coerceIn(0, (bookItems.size - 1).coerceAtLeast(0))
+            var found: ReadBookItem.PathHeader? = null
+            for (i in currentIndex downTo 0) {
+                val item = bookItems.getOrNull(i)
+                if (item is ReadBookItem.PathHeader) {
+                    found = item
+                    break
+                }
+            }
+            if (found == null) {
+                for (i in currentIndex until bookItems.size) {
+                    val item = bookItems.getOrNull(i)
+                    if (item is ReadBookItem.PathHeader) {
+                        found = item
+                        break
+                    }
+                }
+            }
+            found
+        }
+    }
+
+    val currentTopicIndex by remember(allPathHeaders) {
+        derivedStateOf {
+            val header = currentPathHeader
+            if (header != null) {
+                val idx = allPathHeaders.indexOfFirst {
+                    it.label == header.label && it.title == header.title && it.level == header.level
+                }
+                if (idx != -1) idx else 0
+            } else 0
         }
     }
 
@@ -802,7 +860,10 @@ fun ReadBookScreen(
                             }
                         },
                         actions = {
-                            IconButton(onClick = { showChapterIndex = true }) {
+                            IconButton(onClick = {
+                                chapterSheetOpenCount++
+                                showChapterIndex = true
+                            }) {
                                 Icon(Icons.AutoMirrored.Filled.List, "Index")
                             }
                             IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
@@ -1172,13 +1233,20 @@ fun ReadBookScreen(
         }
 
         if (showChapterIndex) {
+            val targetTopicIndex = currentTopicIndex
+
             com.example.ui.components.CustomModalBottomSheet(
                 maxHeightFraction = 0.75f,
                 onDismissRequest = { showChapterIndex = false }
             ) {
                 Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = false)) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
-                    val indexListState = rememberLazyListState()
+                    val indexListState = remember(chapterSheetOpenCount) {
+                        androidx.compose.foundation.lazy.LazyListState(
+                            firstVisibleItemIndex = targetTopicIndex,
+                            firstVisibleItemScrollOffset = 0
+                        )
+                    }
                     
                     Text("Index", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1201,46 +1269,86 @@ fun ReadBookScreen(
                     )
                     Spacer(modifier = Modifier.height(17.dp))
                     
-                    val indexItems = remember(bookItems, chapterSearchQuery) {
+                    val indexItems = remember(allPathHeaders, chapterSearchQuery) {
                         if (chapterSearchQuery.isBlank()) {
-                            bookItems.filterIsInstance<ReadBookItem.PathHeader>()
+                            allPathHeaders
                         } else {
                             val q = chapterSearchQuery.lowercase()
-                            bookItems.filterIsInstance<ReadBookItem.PathHeader>().filter { 
+                            allPathHeaders.filter { 
                                 it.label.lowercase().contains(q) || it.title.lowercase().contains(q) 
                             }
                         }
                     }
                     
-                    // Auto-scroll logic if search query yields results
+                    LaunchedEffect(chapterSheetOpenCount, targetTopicIndex) {
+                        snapshotFlow { indexListState.layoutInfo.viewportSize.height }
+                            .filter { it > 0 }
+                            .first()
+                        if (targetTopicIndex in allPathHeaders.indices) {
+                            indexListState.scrollToItem(targetTopicIndex)
+                        }
+                    }
+
                     LaunchedEffect(chapterSearchQuery) {
                         if (chapterSearchQuery.isNotBlank() && indexItems.isNotEmpty()) {
-                            indexListState.animateScrollToItem(0)
+                            indexListState.scrollToItem(0)
+                        } else if (chapterSearchQuery.isBlank() && targetTopicIndex in indexItems.indices) {
+                            snapshotFlow { indexListState.layoutInfo.viewportSize.height }
+                                .filter { it > 0 }
+                                .first()
+                            indexListState.scrollToItem(targetTopicIndex)
                         }
                     }
                     
-                    LazyColumn(state = indexListState) {
+                    LazyColumn(
+                        state = indexListState,
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    ) {
                         items(items = indexItems, key = { it.key }) { pathItem ->
+                            val isCurrent = pathItem.label == currentPathHeader?.label &&
+                                            pathItem.title == currentPathHeader?.title &&
+                                            pathItem.level == currentPathHeader?.level
                             val indent = (pathItem.level * 16).dp
-                            Text(
-                                text = "${pathItem.label}: ${pathItem.title}",
+                            Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .padding(start = indent, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        val idx = bookItems.indexOf(pathItem)
+                                        val idx = bookItems.indexOfFirst {
+                                            it is ReadBookItem.PathHeader &&
+                                            it.label == pathItem.label &&
+                                            it.title == pathItem.title &&
+                                            it.level == pathItem.level
+                                        }
                                         if (idx != -1) {
                                             coroutineScope.launch {
                                                 listState.scrollToItem(idx)
                                             }
                                             showChapterIndex = false
                                         }
-                                    }
-                                    .padding(start = indent, top = 12.dp, bottom = 12.dp),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = if (pathItem.level == 0) FontWeight.Bold else FontWeight.Normal,
-                                color = if (pathItem.level == 0) MaterialTheme.colorScheme.primary else themeColors.text
-                            )
-                            HorizontalDivider(modifier = Modifier.padding(start = indent))
+                                    },
+                                color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else Color.Transparent,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${pathItem.label}: ${pathItem.title}",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (isCurrent) FontWeight.Bold else if (pathItem.level == 0) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isCurrent) MaterialTheme.colorScheme.primary else if (pathItem.level == 0) MaterialTheme.colorScheme.primary else themeColors.text
+                                    )
+                                }
+                            }
+                            if (!isCurrent) {
+                                HorizontalDivider(modifier = Modifier.padding(start = indent))
+                            }
                         }
                     }
                 }
