@@ -198,19 +198,16 @@ fun AiAssistantBottomSheet(
     DisposableEffect(lifecycleOwner, chatContextId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START || event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                viewModel.setChatVisible(chatContextId, context)
-                viewModel.onAppForegrounded(context)
+                viewModel.setChatVisible(chatContextId)
             } else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP || event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
-                viewModel.setChatVisible(null, context)
-                viewModel.onAppMinimized(context)
+                viewModel.setChatVisible(null)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        viewModel.setChatVisible(chatContextId, context)
+        viewModel.setChatVisible(chatContextId)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            viewModel.setChatVisible(null, context)
-            viewModel.postActiveTaskNotifications(context)
+            viewModel.setChatVisible(null)
         }
     }
 
