@@ -16,6 +16,10 @@ class QuizRepository(private val db: AppDatabase) {
         db.chatDao().clearChatsForBook(bookId)
     }
 
+    suspend fun deleteChat(id: Long) {
+        db.chatDao().deleteChatById(id)
+    }
+
     val books: Flow<List<BookEntity>> = db.bookDao().getAllBooks()
     val allStats: Flow<List<QuestionStatEntity>> = db.statDao().getAllStats()
     val history: Flow<List<QuizHistoryEntity>> = db.historyDao().getAllHistory()

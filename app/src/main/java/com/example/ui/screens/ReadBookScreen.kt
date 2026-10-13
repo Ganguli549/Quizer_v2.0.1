@@ -388,6 +388,7 @@ fun ReadBookScreen(
     var showBookmarks by remember(currentBookId) {
         mutableStateOf(viewModel.settingsManager.getShowBookmarks(currentBookId))
     }
+    var editingQuestion by remember { mutableStateOf<QuestionEntity?>(null) }
     
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -700,6 +701,45 @@ fun ReadBookScreen(
         }
     }
 
+    val currentReadingQuestion by remember(bookItems, allQuestions) {
+        derivedStateOf {
+            if (bookItems.isEmpty()) {
+                allQuestions.firstOrNull()
+            } else {
+                val currentIndex = listState.firstVisibleItemIndex.coerceIn(0, (bookItems.size - 1).coerceAtLeast(0))
+                val currentItem = bookItems.getOrNull(currentIndex)
+                if (currentItem is ReadBookItem.QuestionData) {
+                    currentItem.question
+                } else {
+                    var found: QuestionEntity? = null
+                    for (i in currentIndex until bookItems.size) {
+                        val item = bookItems[i]
+                        if (item is ReadBookItem.QuestionData) {
+                            found = item.question
+                            break
+                        }
+                    }
+                    if (found == null) {
+                        for (i in currentIndex downTo 0) {
+                            val item = bookItems[i]
+                            if (item is ReadBookItem.QuestionData) {
+                                found = item.question
+                                break
+                            }
+                        }
+                    }
+                    found ?: allQuestions.firstOrNull()
+                }
+            }
+        }
+    }
+
+    val openEditBookWithQuestion = { targetQuestion: QuestionEntity? ->
+        val target = targetQuestion ?: currentReadingQuestion
+        viewModel.setTargetEditQuestion(target?.id, target?.globalId)
+        onEditBook()
+    }
+
     val themeMode by viewModel.themeModeState.collectAsState()
     val appIsDark = when(themeMode) {
         "light" -> false
@@ -775,7 +815,10 @@ fun ReadBookScreen(
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = themeColors.primary.copy(alpha = 0.1f),
-                            contentColor = themeColors.primary
+                            contentColor = themeColors.primary,
+                            modifier = Modifier.clickable {
+                                openEditBookWithQuestion(currentReadingQuestion)
+                            }
                         ) {
                             Text(
                                 text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
@@ -889,7 +932,10 @@ fun ReadBookScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Edit Book") },
-                                    onClick = { showMenu = false; onEditBook() },
+                                    onClick = { 
+                                        showMenu = false
+                                        openEditBookWithQuestion(currentReadingQuestion)
+                                    },
                                     leadingIcon = { Icon(Icons.Default.Edit, null) }
                                 )
                                 DropdownMenuItem(
@@ -1058,6 +1104,9 @@ fun ReadBookScreen(
                                                 if (willBookmark) "Question #${item.localNumber} bookmarked" else "Bookmark removed",
                                                 android.widget.Toast.LENGTH_SHORT
                                             ).show()
+                                        },
+                                        onEditQuestion = {
+                                            editingQuestion = item.question
                                         },
                                         onTextClickWithCoords = onMiddleClickCoords,
                                         showBriefExplanation = showBriefExplanation
@@ -1427,8 +1476,68 @@ fun ReadBookScreen(
                 visibleQuestionNumbers = visibleLocalNumbers.distinct()
             )
         }
+
+        if (editingQuestion != null) {
+            com.example.ui.screens.EditQuestionDialog(
+                viewModel = viewModel,
+                question = editingQuestion!!,
+                bookId = currentBookId,
+                onDismiss = { editingQuestion = null },
+                onSave = { updatedQuestion, startId, endId ->
+                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        var finalQuestion = updatedQuestion
+                        if (finalQuestion.img?.startsWith("http") == true) {
+                            val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, finalQuestion.img!!)
+                            if (downloaded != null) finalQuestion = finalQuestion.copy(img = downloaded)
+                        }
+                        if (finalQuestion.explanationImage?.startsWith("http") == true) {
+                            val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, finalQuestion.explanationImage!!)
+                            if (downloaded != null) finalQuestion = finalQuestion.copy(explanationImage = downloaded)
+                        }
+                        if (startId != null && endId != null) {
+                            val sIdx = allQuestions.indexOfFirst { it.id == startId }.takeIf { it != -1 } ?: 0
+                            val eIdx = allQuestions.indexOfFirst { it.id == endId }.takeIf { it != -1 } ?: (allQuestions.size - 1)
+                            if (sIdx <= eIdx) {
+                                val text = finalQuestion.questionHeader ?: ""
+                                val headerText = text.takeIf { it.isNotBlank() }
+                                val headerJson = if (headerText != null) "{\"startId\": $startId, \"endId\": $endId, \"text\": \"${headerText.replace("\"", "\\\"").replace("\n", "\\n")}\"}" else null
+                                
+                                for (i in sIdx..eIdx) {
+                                    val q = allQuestions[i]
+                                    val updatedQ = if (q.id == finalQuestion.id) finalQuestion.copy(questionHeader = headerJson) else q.copy(questionHeader = headerJson)
+                                    viewModel.repository.updateQuestion(updatedQ)
+                                }
+                                if (allQuestions.indexOfFirst { it.id == finalQuestion.id } !in sIdx..eIdx) {
+                                    viewModel.repository.updateQuestion(finalQuestion)
+                                }
+                            }
+                        } else {
+                            viewModel.repository.updateQuestion(finalQuestion)
+                        }
+
+                        // Create restore point
+                        com.example.ui.screens.createRestorePoint(context, viewModel.repository, currentBookId, "Edited Q${finalQuestion.id}")
+
+                        // Save back to original file as well
+                        val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                        val targetFile = java.io.File(basePath, "Quizer/${currentBookId}.qbook")
+                        com.example.ui.screens.exportQBook(context, viewModel.repository, currentBookId, targetFile)
+
+                        // Refresh allQuestions in ReadBookScreen
+                        val refreshed = viewModel.repository.getQuestionsForBookSync(currentBookId).resolveHeaders()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            allQuestions = refreshed
+                            editingQuestion = null
+                            android.widget.Toast.makeText(context, "Q.${finalQuestion.id} saved", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                onNavigateToAiSettings = onNavigateToAiSettings,
+                onNavigateToUsage = onNavigateToUsage
+            )
+        }
     }
-    }
+}
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1447,6 +1556,7 @@ fun ReadBookQuestionItem(
     isBookmarked: Boolean = false,
     showBookmarkHighlight: Boolean = true,
     onBookmarkToggle: (() -> Unit)? = null,
+    onEditQuestion: (() -> Unit)? = null,
     onTextClick: (() -> Unit)? = null,
     onTextClickWithCoords: ((Float, Float) -> Unit)? = null,
     showBriefExplanation: Boolean = false
@@ -1512,9 +1622,10 @@ fun ReadBookQuestionItem(
             .padding(horizontal = if (shouldHighlight) 10.dp else 8.dp, vertical = 6.dp)
             .animateContentSize()
     ) {
-        val questionCustomMenuItems = remember(isBookmarked, localNumber, onBookmarkToggle) {
+        val questionCustomMenuItems = remember(isBookmarked, localNumber, onBookmarkToggle, onEditQuestion) {
+            val list = mutableListOf<com.example.ui.components.CustomTextMenuItem>()
             if (onBookmarkToggle != null) {
-                listOf(
+                list.add(
                     com.example.ui.components.CustomTextMenuItem(
                         id = 99991,
                         title = if (isBookmarked) "Unbookmark" else "Bookmark Q$localNumber",
@@ -1526,7 +1637,22 @@ fun ReadBookQuestionItem(
                         }
                     )
                 )
-            } else emptyList()
+            }
+            if (onEditQuestion != null) {
+                list.add(
+                    com.example.ui.components.CustomTextMenuItem(
+                        id = 99992,
+                        title = "Edit Q$localNumber",
+                        iconRes = com.example.R.drawable.ic_edit,
+                        showText = false,
+                        order = 1,
+                        onClick = {
+                            onEditQuestion.invoke()
+                        }
+                    )
+                )
+            }
+            list
         }
         
         com.example.ui.components.SmartRichText(
@@ -1565,6 +1691,7 @@ fun ReadBookQuestionItem(
                 color = themeColors.text,
                 searchQuery = searchQuery,
                 highlightColor = highlightColor,
+                customMenuItems = questionCustomMenuItems,
                 onClick = onTextClick,
                 onClickWithCoords = onTextClickWithCoords
             )
@@ -1645,6 +1772,7 @@ fun ReadBookQuestionItem(
                     color = textColor,
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
+                    customMenuItems = questionCustomMenuItems,
                     isSelectable = !inBookQuizMode || isRevealed,
                     onClick = {
                         if (inBookQuizMode && !isRevealed) {
@@ -1690,6 +1818,7 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
+                        customMenuItems = questionCustomMenuItems,
                         onClick = onTextClick,
                         onClickWithCoords = onTextClickWithCoords
                     )
@@ -1702,6 +1831,7 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
+                        customMenuItems = questionCustomMenuItems,
                         onClick = onTextClick,
                         onClickWithCoords = onTextClickWithCoords
                     )
@@ -1713,6 +1843,7 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
+                        customMenuItems = questionCustomMenuItems,
                         onClick = onTextClick,
                         onClickWithCoords = onTextClickWithCoords
                     )
@@ -1724,6 +1855,7 @@ fun ReadBookQuestionItem(
                         modifier = Modifier.padding(top = 4.dp),
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
+                        customMenuItems = questionCustomMenuItems,
                         onClick = onTextClick,
                         onClickWithCoords = onTextClickWithCoords
                     )

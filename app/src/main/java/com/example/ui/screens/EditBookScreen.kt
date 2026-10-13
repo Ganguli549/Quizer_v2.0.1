@@ -1,7 +1,10 @@
 package com.example.ui.screens
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.Send
 import com.example.ui.components.AiAssistantBottomSheet
@@ -122,6 +125,36 @@ fun EditBookScreen(
 
     LaunchedEffect(currentBookId) {
         loadQuestions()
+    }
+
+    var highlightedQuestionId by remember { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(questions) {
+        val targetId = viewModel.targetEditQuestionId
+        val targetGlobalId = viewModel.targetEditQuestionGlobalId
+        if (questions.isNotEmpty() && (targetId != null || targetGlobalId != null)) {
+            val sortedList = questions.sortedBy { it.id }
+            val targetIndex = sortedList.indexOfFirst {
+                (targetGlobalId != null && it.globalId == targetGlobalId) ||
+                (targetId != null && it.id == targetId)
+            }
+            if (targetIndex != -1) {
+                viewModel.clearTargetEditQuestion()
+                val targetQ = sortedList[targetIndex]
+                highlightedQuestionId = targetQ.id
+                coroutineScope.launch {
+                    try {
+                        listState.scrollToItem(targetIndex)
+                    } catch (e: Exception) {}
+                    snapshotFlow { listState.layoutInfo.totalItemsCount }
+                        .filter { it > targetIndex }
+                        .first()
+                    listState.scrollToItem(targetIndex)
+                    kotlinx.coroutines.delay(3000)
+                    highlightedQuestionId = null
+                }
+            }
+        }
     }
 
     Scaffold(
@@ -259,6 +292,7 @@ fun EditBookScreen(
                 items(items = questions.sortedBy { it.id }, key = { it.globalId }) { question ->
                     EditQuestionItem(
                         question = question,
+                        isHighlighted = (question.id == highlightedQuestionId),
                         onClick = { selectedQuestion = question }
                     )
                 }
@@ -1195,13 +1229,20 @@ fun RestorePointsDialog(
     )
 }
 @Composable
-fun EditQuestionItem(question: QuestionEntity, onClick: () -> Unit) {
+fun EditQuestionItem(question: QuestionEntity, isHighlighted: Boolean = false, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(8.dp)
+            .then(
+                if (isHighlighted) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                } else Modifier
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isHighlighted) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isHighlighted) 4.dp else 2.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(

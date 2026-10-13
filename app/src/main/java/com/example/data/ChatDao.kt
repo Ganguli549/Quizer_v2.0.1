@@ -12,6 +12,9 @@ interface ChatDao {
     @Insert
     suspend fun insertChat(chat: ChatMessageEntity)
     
+    @Query("DELETE FROM chat_messages WHERE id = :id")
+    suspend fun deleteChatById(id: Long)
+
     @Query("DELETE FROM chat_messages WHERE bookId = :bookId")
     suspend fun clearChatsForBook(bookId: String)
 }

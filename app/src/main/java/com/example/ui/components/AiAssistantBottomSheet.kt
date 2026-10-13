@@ -24,6 +24,10 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.*
@@ -100,6 +104,7 @@ fun AiAssistantBottomSheet(
     
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, chatContextId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -339,25 +344,126 @@ fun AiAssistantBottomSheet(
                     }
                 }
                 
-                items(chatHistory) { msg ->
+                items(chatHistory, key = { "${it.id}_${it.timestamp}" }) { msg ->
                     val isUser = msg.role == "user"
+                    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+                    val maxBubbleWidth = configuration.screenWidthDp.dp * 0.85f
+
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                     ) {
-
-                        
-                        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-                        Box(
-                            modifier = Modifier
-                                .background(
-                                    color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = if (isUser) RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
-                                )
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                                .widthIn(max = configuration.screenWidthDp.dp * 0.85f)
+                        Column(
+                            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
+                            modifier = Modifier.widthIn(max = maxBubbleWidth)
                         ) {
-                            ChatMessageContent(content = msg.content, isUser = isUser)
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = if (isUser) RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                            ) {
+                                ChatMessageContent(content = msg.content, isUser = isUser)
+                            }
+
+                            // Action buttons row (copy for user; copy and retry for AI)
+                            Row(
+                                modifier = Modifier.padding(
+                                    top = 2.dp,
+                                    start = if (isUser) 0.dp else 4.dp,
+                                    end = if (isUser) 4.dp else 0.dp
+                                ),
+                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                var isCopied by remember { mutableStateOf(false) }
+
+                                if (isUser) {
+                                    IconButton(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(msg.content))
+                                            isCopied = true
+                                            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                            coroutineScope.launch {
+                                                kotlinx.coroutines.delay(2000)
+                                                isCopied = false
+                                            }
+                                        },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                            contentDescription = "Copy message",
+                                            modifier = Modifier.size(15.dp),
+                                            tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            val cleanText = msg.content.replace(Regex("\\[IMG_URL:.*?\\]"), "").trim()
+                                            clipboardManager.setText(AnnotatedString(cleanText))
+                                            isCopied = true
+                                            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                            coroutineScope.launch {
+                                                kotlinx.coroutines.delay(2000)
+                                                isCopied = false
+                                            }
+                                        },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                            contentDescription = "Copy response",
+                                            modifier = Modifier.size(15.dp),
+                                            tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(2.dp))
+
+                                    IconButton(
+                                        onClick = {
+                                            if (!isProcessing) {
+                                                val msgIndex = chatHistory.indexOf(msg)
+                                                val targetPrompt = (if (msgIndex > 0) {
+                                                    chatHistory.take(msgIndex).findLast { it.role == "user" }?.content
+                                                } else null) ?: chatHistory.findLast { it.role == "user" }?.content
+
+                                                if (!targetPrompt.isNullOrBlank()) {
+                                                    android.widget.Toast.makeText(context, "Retrying response...", android.widget.Toast.LENGTH_SHORT).show()
+                                                    viewModel.deleteChatMessage(msg.id, chatContextId)
+                                                    viewModel.startAiProcessing(
+                                                        context = context.applicationContext,
+                                                        chatContextId = chatContextId,
+                                                        prompt = targetPrompt,
+                                                        allQuestions = questions,
+                                                        mode = mode,
+                                                        currentContextInfo = currentContextInfo,
+                                                        pdfUri = attachedPdfUri,
+                                                        isRetry = true
+                                                    )
+                                                } else {
+                                                    android.widget.Toast.makeText(context, "No prompt found to retry", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        enabled = !isProcessing,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Retry response",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = if (isProcessing) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

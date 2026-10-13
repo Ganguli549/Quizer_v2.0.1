@@ -40,6 +40,17 @@ class MainViewModel(
         _showAiAssistant.value = false
     }
 
+    var targetEditQuestionId: Long? = null
+    var targetEditQuestionGlobalId: String? = null
+    fun setTargetEditQuestion(id: Long?, globalId: String?) {
+        targetEditQuestionId = id
+        targetEditQuestionGlobalId = globalId
+    }
+    fun clearTargetEditQuestion() {
+        targetEditQuestionId = null
+        targetEditQuestionGlobalId = null
+    }
+
     private var activeChatContextId: String? = null
     fun setChatVisible(chatContextId: String?) {
         activeChatContextId = chatContextId
@@ -228,15 +239,18 @@ class MainViewModel(
         allQuestions: List<QuestionEntity>,
         mode: com.example.ui.components.AiChatMode,
         currentContextInfo: String,
-        pdfUri: android.net.Uri? = null
+        pdfUri: android.net.Uri? = null,
+        isRetry: Boolean = false
     ) {
         val notificationId = chatContextId.hashCode()
         val isExtractionTask = pdfUri != null || mode != com.example.ui.components.AiChatMode.READ_BOOK
         updateNotification(context, notificationId, "AI Assistant", "Analyzing request...", true, chatContextId, isExtractionTask)
         
-        addChatMessage(
-            ChatMessageEntity(bookId = chatContextId, role = "user", content = prompt, timestamp = System.currentTimeMillis())
-        )
+        if (!isRetry) {
+            addChatMessage(
+                ChatMessageEntity(bookId = chatContextId, role = "user", content = prompt, timestamp = System.currentTimeMillis())
+            )
+        }
         setAiProcessingStatus(chatContextId, "Analyzing request...", 0f)
         
         val job = viewModelScope.launch(Dispatchers.IO) {
@@ -541,6 +555,14 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         }
     }
     
+    fun deleteChatMessage(id: Long, bookId: String) {
+        viewModelScope.launch {
+            repository.deleteChat(id)
+            val list = repository.getChatsForBook(bookId)
+            _chatHistory.value = _chatHistory.value.toMutableMap().apply { put(bookId, list) }
+        }
+    }
+
     fun clearChatHistory(bookId: String) {
         viewModelScope.launch {
             repository.clearChatsForBook(bookId)
