@@ -1,13 +1,17 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
@@ -25,7 +29,16 @@ fun MathSplitterRichText(
     onClick: (() -> Unit)? = null,
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
-    val mathRegex = Regex("(?s)(?:^|\\n)[ \\t]*(?:\\$\\$|\\\\\\[|\\$)(.*?)(?:\\$\\$|\\\\\\]|\\$)[ \\t]*(?=\\n|$)")
+    val mathRegex = Regex(
+        "(?s)(?:" +
+        "```(?:math|latex)\\s*(.*?)\\s*```|" +
+        "\\$\\$(.+?)\\$\\$|" +
+        "\\\\\\[(.+?)\\\\\\]|" +
+        "\\\\begin\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}(.*?)\\\\end\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}|" +
+        "(?:^|\\r?\\n)[ \\t]*\\$([^\\n$]+?)\\$[ \\t]*(?=\\r?\\n|$)|" +
+        "(?<!\\$)\\$([^\\n$]*?(?:\\\\frac|\\\\sqrt|\\\\sum|\\\\int|\\\\left|\\\\right|\\\\over|\\\\times|\\\\div)[^\\n$]*?)\\$(?!\\$)" +
+        ")"
+    )
     val matches = mathRegex.findAll(text).toList()
 
     if (matches.isEmpty()) {
@@ -41,21 +54,39 @@ fun MathSplitterRichText(
                 RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
             
-            val mathStr = match.value.trim()
-            RichText(
-                text = mathStr, 
-                modifier = Modifier, 
-                color = color, 
-                fontSize = fontSize, 
-                searchQuery = searchQuery, 
-                highlightColor = highlightColor, 
-                isSelectable = isSelectable, 
-                isBookmarked = isBookmarked,
-                onBookmarkToggle = onBookmarkToggle,
-                customMenuItems = customMenuItems,
-                onClick = onClick,
-                onClickWithCoords = onClickWithCoords
-            )
+            val rawFormula = match.value.trim()
+            val cleanMathStr = when {
+                rawFormula.startsWith("```math") -> rawFormula.removePrefix("```math").removeSuffix("```").trim().let { "$$${sanitizeLatex(it)}$$" }
+                rawFormula.startsWith("```latex") -> rawFormula.removePrefix("```latex").removeSuffix("```").trim().let { "$$${sanitizeLatex(it)}$$" }
+                rawFormula.startsWith("\\[") && rawFormula.endsWith("\\]") -> rawFormula.removePrefix("\\[").removeSuffix("\\]").trim().let { "$$${sanitizeLatex(it)}$$" }
+                rawFormula.startsWith("\\begin") -> "$$${sanitizeLatex(rawFormula)}$$"
+                rawFormula.startsWith("$$") && rawFormula.endsWith("$$") -> "$$${sanitizeLatex(rawFormula.removePrefix("$$").removeSuffix("$$"))}$$"
+                rawFormula.startsWith("$") && rawFormula.endsWith("$") -> "$$" + sanitizeLatex(rawFormula.removePrefix("$").removeSuffix("$").trim()) + "$$"
+                else -> if (rawFormula.startsWith("$$")) "$$${sanitizeLatex(rawFormula.removePrefix("$$").removeSuffix("$$"))}$$" else "$$${sanitizeLatex(rawFormula)}$$"
+            }
+            
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp)
+            ) {
+                RichText(
+                    text = cleanMathStr, 
+                    modifier = Modifier.wrapContentSize(), 
+                    color = color, 
+                    fontSize = fontSize, 
+                    searchQuery = searchQuery, 
+                    highlightColor = highlightColor, 
+                    isSelectable = isSelectable, 
+                    isBookmarked = isBookmarked,
+                    onBookmarkToggle = onBookmarkToggle,
+                    customMenuItems = customMenuItems,
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords,
+                    isHorizontallyScrollable = true
+                )
+            }
             
             lastIndex = match.range.last + 1
         }

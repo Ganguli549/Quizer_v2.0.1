@@ -95,27 +95,41 @@ fun ReadingMaterialTheme(themeColors: ThemeColors, isDark: Boolean, isSystem: Bo
     
     val baseScheme = if (isDark) androidx.compose.material3.darkColorScheme() else androidx.compose.material3.lightColorScheme()
     
+    val bgArgb = themeColors.background.toArgb()
+    val surfaceArgb = themeColors.surface.toArgb()
+    val textArgb = themeColors.text.toArgb()
+    
+    // Contrast factors: blend surface towards text for tonal elevations & variants
+    val blendLow = if (isDark) 0.05f else 0.04f
+    val blendNormal = if (isDark) 0.10f else 0.07f
+    val blendHigh = if (isDark) 0.16f else 0.11f
+    val blendHighest = if (isDark) 0.22f else 0.16f
+    val blendVariant = if (isDark) 0.18f else 0.12f
+    
+    val computedSurfaceVariant = Color(androidx.core.graphics.ColorUtils.blendARGB(surfaceArgb, textArgb, blendVariant))
+    val computedContainer = Color(androidx.core.graphics.ColorUtils.blendARGB(surfaceArgb, textArgb, blendNormal))
+    val computedContainerHigh = Color(androidx.core.graphics.ColorUtils.blendARGB(surfaceArgb, textArgb, blendHigh))
+    val computedContainerHighest = Color(androidx.core.graphics.ColorUtils.blendARGB(surfaceArgb, textArgb, blendHighest))
+    val computedContainerLow = themeColors.surface
+
+    val onPrimaryColor = if (androidx.core.graphics.ColorUtils.calculateLuminance(themeColors.primary.toArgb()) > 0.5) Color.Black else Color.White
+
     // Create a modern look for custom reading themes (generate tonal surfaces)
     val colorScheme = baseScheme.copy(
         background = themeColors.background,
-        surface = themeColors.background,
-        surfaceVariant = themeColors.surface,
+        surface = themeColors.surface,
+        surfaceVariant = computedSurfaceVariant,
         onBackground = themeColors.text,
         onSurface = themeColors.text,
         onSurfaceVariant = themeColors.text,
         primary = themeColors.primary,
-        onPrimary = androidx.compose.ui.graphics.Color.White,
-        outline = themeColors.text.copy(alpha = 0.5f),
-        outlineVariant = themeColors.text.copy(alpha = 0.2f),
-        surfaceContainer = themeColors.surface,
-        // Fake tonal steps by blending slightly with primary or text
-        surfaceContainerHigh = androidx.compose.ui.graphics.Color(
-            androidx.core.graphics.ColorUtils.blendARGB(themeColors.surface.toArgb(), themeColors.text.toArgb(), 0.05f)
-        ),
-        surfaceContainerHighest = androidx.compose.ui.graphics.Color(
-            androidx.core.graphics.ColorUtils.blendARGB(themeColors.surface.toArgb(), themeColors.text.toArgb(), 0.1f)
-        ),
-        surfaceContainerLow = themeColors.background,
+        onPrimary = onPrimaryColor,
+        outline = themeColors.text.copy(alpha = 0.50f),
+        outlineVariant = themeColors.text.copy(alpha = 0.28f),
+        surfaceContainer = computedContainer,
+        surfaceContainerHigh = computedContainerHigh,
+        surfaceContainerHighest = computedContainerHighest,
+        surfaceContainerLow = computedContainerLow,
         surfaceContainerLowest = themeColors.background
     )
     MaterialTheme(colorScheme = colorScheme, content = content)
@@ -138,11 +152,11 @@ fun getThemeColors(theme: ReadingTheme): ThemeColors {
     val sysPrimary = MaterialTheme.colorScheme.primary
     return when(theme) {
         ReadingTheme.System -> ThemeColors(sysBg, sysSurface, sysText, sysPrimary)
-        ReadingTheme.Day -> ThemeColors(Color(0xFFFFFFFF), Color(0xFFFFFFFF), Color(0xFF000000), Color(0xFF1976D2))
-        ReadingTheme.Night -> ThemeColors(Color(0xFF000000), Color(0xFF000000), Color(0xFFB0B0B0), Color(0xFF90CAF9))
-        ReadingTheme.Sepia -> ThemeColors(Color(0xFFDCCAB3), Color(0xFFDCCAB3), Color(0xFF1F1A14), Color(0xFF6B5542))
-        ReadingTheme.Green -> ThemeColors(Color(0xFFCEE5D2), Color(0xFFCEE5D2), Color(0xFF2E4C34), Color(0xFF388E3C))
-        ReadingTheme.BookPage -> ThemeColors(Color(0xFFFAFAFA), Color(0xFFFAFAFA), Color(0xFF1A1A1A), Color(0xFF555555))
+        ReadingTheme.Day -> ThemeColors(Color(0xFFFFFFFF), Color(0xFFF2F2F2), Color(0xFF000000), Color(0xFF1976D2))
+        ReadingTheme.Night -> ThemeColors(Color(0xFF000000), Color(0xFF1E1E1E), Color(0xFFB0B0B0), Color(0xFF90CAF9))
+        ReadingTheme.Sepia -> ThemeColors(Color(0xFFDCCAB3), Color(0xFFCCB8A0), Color(0xFF1F1A14), Color(0xFF6B5542))
+        ReadingTheme.Green -> ThemeColors(Color(0xFFCEE5D2), Color(0xFFBCD8C2), Color(0xFF2E4C34), Color(0xFF388E3C))
+        ReadingTheme.BookPage -> ThemeColors(Color(0xFFFAFAFA), Color(0xFFECECEC), Color(0xFF1A1A1A), Color(0xFF555555))
     }
 }
 

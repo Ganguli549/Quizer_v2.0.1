@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
                 
                 if (hasPerms) {
                     viewModel.initializeApp(appContext)
+                    viewModel.syncBooks(appContext)
                 }
             }
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {

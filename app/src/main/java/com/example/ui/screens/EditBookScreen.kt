@@ -613,7 +613,30 @@ fun EditBookScreen(
                         val json = com.example.data.SharedGson.normal.toJson(labels)
                         if (currentBook != null) {
                             coroutineScope.launch(Dispatchers.IO) {
-                                viewModel.repository.insertBook(currentBook.copy(hierarchyLabels = json))
+                                val updatedBook = currentBook.copy(hierarchyLabels = json)
+                                viewModel.repository.insertBook(updatedBook)
+                                try {
+                                    val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                                    val bookDir = java.io.File(basePath, "Quizer/$currentBookId")
+                                    if (bookDir.exists() && bookDir.isDirectory) {
+                                        val meta = com.example.data.QBookMeta(
+                                            id = updatedBook.id,
+                                            name = updatedBook.name,
+                                            version = updatedBook.bookVersion ?: "1.0",
+                                            hierarchyLabels = labels,
+                                            updateVersion = try {
+                                                com.example.data.SharedGson.normal.fromJson(updatedBook.updateVersions, object : com.google.gson.reflect.TypeToken<List<Map<String, List<Long>>>>() {}.type)
+                                            } catch(e: Exception) { null },
+                                            questionIdStart = updatedBook.questionIdStart.takeIf { it > 0 },
+                                            questionIdEnd = updatedBook.questionIdEnd.takeIf { it > 0 }
+                                        )
+                                        val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                                        java.io.File(bookDir, "book_meta.json").writeText(gson.toJson(meta))
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                                autoSaveBook("Hierarchy labels updated")
                             }
                         }
                         showHierarchyDialog = false
@@ -1261,6 +1284,28 @@ fun EditQuestionItem(question: QuestionEntity, isHighlighted: Boolean = false, o
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
+            if (!question.questionHeader.isNullOrBlank()) {
+                val headerText = remember(question.questionHeader) {
+                    val raw = question.questionHeader!!
+                    if (raw.trimStart().startsWith("{")) {
+                        try {
+                            com.example.data.SharedGson.normal.fromJson(raw, com.example.data.QBookHeader::class.java).text
+                        } catch(e: Exception) { raw }
+                    } else raw
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.padding(bottom = 6.dp)
+                ) {
+                    Text(
+                        text = "Header: $headerText",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+            }
             Row {
                 Text("Q${question.id}. ", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 com.example.ui.components.SmartRichText(text = question.question, color = MaterialTheme.colorScheme.onSurface)

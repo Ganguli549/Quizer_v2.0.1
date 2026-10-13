@@ -16,11 +16,18 @@ suspend fun exportQBook(context: Context, repository: QuizRepository, bookId: St
             val book = repository.getBookSync(bookId) ?: return@withContext "Book not found"
             val questions = repository.getQuestionsForBookSync(bookId).resolveHeaders()
             
+            val hierarchyList = try {
+                val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                com.example.data.SharedGson.normal.fromJson<List<String>>(book.hierarchyLabels, type) ?: emptyList()
+            } catch(e: Exception) {
+                emptyList()
+            }
+
             val meta = QBookMeta(
                 id = book.id,
                 name = book.name,
                 version = book.bookVersion ?: "1.0",
-                hierarchyLabels = emptyList(),
+                hierarchyLabels = hierarchyList,
                 updateVersion = try {
                     com.example.data.SharedGson.normal.fromJson(book.updateVersions, object : com.google.gson.reflect.TypeToken<List<Map<String, List<Long>>>>() {}.type)
                 } catch(e: Exception) { null },
@@ -88,6 +95,14 @@ suspend fun exportQBook(context: Context, repository: QuizRepository, bookId: St
                 
                 // Add images
                 val quizerDir = File(basePath, "Quizer")
+                val bookDir = File(quizerDir, bookId)
+                if (bookDir.exists() && bookDir.isDirectory) {
+                    try {
+                        File(bookDir, "book_meta.json").writeText(metaJson)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
                 val bookImagesDir = File(quizerDir, "$bookId/images")
                 if (bookImagesDir.exists() && bookImagesDir.isDirectory) {
                     bookImagesDir.listFiles()?.forEach { file ->

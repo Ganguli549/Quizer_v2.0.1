@@ -89,6 +89,7 @@ fun HomeScreen(
 
     
     LaunchedEffect(Unit) {
+        viewModel.syncBooks(context)
         viewModel.generateQuizQuestions()
     }
 
@@ -295,6 +296,12 @@ fun HomeScreen(
         TrashDialog(onDismiss = { showTrashDialog = false })
     }
 
+    LaunchedEffect(showBookDialog) {
+        if (showBookDialog) {
+            viewModel.syncBooks(context)
+        }
+    }
+
     if (showBookDialog) {
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { showBookDialog = false },
@@ -323,10 +330,6 @@ fun HomeScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(vertical = 4.dp)
-                                        .clickable {
-                                            viewModel.selectBook(book.id)
-                                            showBookDialog = false
-                                        }
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -341,11 +344,22 @@ fun HomeScreen(
                                                 tint = if (book.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
-                                        Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clickable {
+                                                    viewModel.selectBook(book.id)
+                                                    showBookDialog = false
+                                                }
+                                                .padding(horizontal = 8.dp)
+                                        ) {
                                             Text(book.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                             Text("${book.totalQuestions} Questions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                        IconButton(onClick = { viewModel.deleteBook(context, book.id) }) {
+                                        IconButton(onClick = {
+                                            viewModel.deleteBook(context, book.id)
+                                            android.widget.Toast.makeText(context, "Deleted ${book.name}", android.widget.Toast.LENGTH_SHORT).show()
+                                        }) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete")
                                         }
                                         IconButton(onClick = { detailBook = book }) {

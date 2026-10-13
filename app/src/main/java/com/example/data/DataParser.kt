@@ -149,10 +149,15 @@ class DataParser {
                     }
 
                     val quizerDir = File(basePath, "Quizer")
-                    if (!quizerDir.exists()) return@withContext
+                    if (!quizerDir.exists()) {
+                        quizerDir.mkdirs()
+                    }
                     
                     val rawFiles = quizerDir.listFiles() ?: return@withContext
-                    val files = rawFiles.filter { file -> file.isFile && file.name.endsWith(".qbook") }.toTypedArray()
+                    val files = rawFiles.filter { file -> file.isFile && file.name.endsWith(".qbook", ignoreCase = true) }
+                    
+                    val settingsManager = SettingsManager(context)
+                    val updatedRemoved = settingsManager.removedBooks.toMutableSet()
                     
                     val folderBookIds = mutableListOf<String>()
                     val fileToBookId = mutableMapOf<File, String>()
@@ -161,25 +166,40 @@ class DataParser {
                     for (file in files) {
                         var id = file.nameWithoutExtension
                         var version = "1.0"
-                        if (file.name.endsWith(".qbook")) {
-                            try {
-                                java.util.zip.ZipFile(file).use { zip ->
-                                    val metaEntry = zip.getEntry("book_meta.json")
-                                    if (metaEntry != null) {
-                                        val reader = zip.getInputStream(metaEntry).bufferedReader()
-                                        val jsonStr = autoFixJson(reader.readText())
-                                        val gson = SharedGson.lenient
-                                        val meta = gson.fromJson(jsonStr, QBookMeta::class.java)
-                                        if (meta?.id != null) id = meta.id
-                                        if (meta?.version != null) version = meta.version
+                        try {
+                            java.util.zip.ZipFile(file).use { zip ->
+                                var metaEntry = zip.getEntry("book_meta.json")
+                                if (metaEntry == null) {
+                                    val entries = zip.entries()
+                                    while (entries.hasMoreElements()) {
+                                        val entry = entries.nextElement()
+                                        if (entry.name.equals("book_meta.json", ignoreCase = true) || entry.name.endsWith("/book_meta.json", ignoreCase = true)) {
+                                            metaEntry = entry
+                                            break
+                                        }
                                     }
                                 }
-                            } catch (e: Exception) {}
+                                if (metaEntry != null) {
+                                    val reader = zip.getInputStream(metaEntry).bufferedReader()
+                                    val jsonStr = autoFixJson(reader.readText())
+                                    val gson = SharedGson.lenient
+                                    val meta = gson.fromJson(jsonStr, QBookMeta::class.java)
+                                    if (!meta?.id.isNullOrBlank()) id = meta!!.id
+                                    if (!meta?.version.isNullOrBlank()) version = meta!!.version
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
                         folderBookIds.add(id)
                         fileToBookId[file] = id
                         fileToVersion[file] = version
+                        
+                        // If file is physically present in Quizer folder, remove from removedBooks blacklist
+                        updatedRemoved.remove(id)
+                        updatedRemoved.remove(file.nameWithoutExtension)
                     }
+                    settingsManager.removedBooks = updatedRemoved
                     
                     val existingBooks = repository.getAllBooksSync()
                     
@@ -194,24 +214,18 @@ class DataParser {
                         }
                     }
                     
-                    val existingBookMap = existingBooks.associateBy { it.id }
+                    // Re-query existing books after deletions
+                    val currentBooksInDb = repository.getAllBooksSync().associateBy { it.id }
                     
                     for (file in files) {
                         val bookId = fileToBookId[file] ?: file.nameWithoutExtension
-                        val existingBook = existingBookMap[bookId]
+                        val existingBook = currentBooksInDb[bookId]
+                        val fileVersionStr = fileToVersion[file] ?: "1.0"
+                        val dbVersionStr = existingBook?.bookVersion ?: "1.0"
                         
-                        if (existingBook == null) {
-                            if (file.name.endsWith(".qbook")) { 
-                                parseAndInsertFromQBook(context, repository, file)
-                            }
-                        } else {
-                            val fileVersionStr = fileToVersion[file] ?: "1.0"
-                            val dbVersionStr = existingBook.bookVersion ?: "1.0"
-                            if (fileVersionStr != dbVersionStr) {
-                                if (file.name.endsWith(".qbook")) {
-                                    parseAndInsertFromQBook(context, repository, file)
-                                }
-                            }
+                        // Parse if not in DB, has 0 questions, or version changed
+                        if (existingBook == null || existingBook.totalQuestions == 0 || fileVersionStr != dbVersionStr) {
+                            parseAndInsertFromQBook(context, repository, file, allowAutoFix = true)
                         }
                     }
                 } catch (e: Exception) {
@@ -524,7 +538,17 @@ class DataParser {
                     val headerRanges = mutableListOf<HeaderRange>()
                     
                     java.util.zip.ZipFile(file).use { zip ->
-                        val metaEntry = zip.getEntry("book_meta.json")
+                        var metaEntry = zip.getEntry("book_meta.json")
+                        if (metaEntry == null) {
+                            val entries = zip.entries()
+                            while (entries.hasMoreElements()) {
+                                val entry = entries.nextElement()
+                                if (entry.name.equals("book_meta.json", ignoreCase = true) || entry.name.endsWith("/book_meta.json", ignoreCase = true)) {
+                                    metaEntry = entry
+                                    break
+                                }
+                            }
+                        }
                         if (metaEntry != null) {
                             val reader = zip.getInputStream(metaEntry).bufferedReader()
                             val originalJson = reader.readText()
@@ -533,10 +557,22 @@ class DataParser {
                                 return@withContext "FIX_REQUIRED|Syntax errors found in book_meta.json. We can auto-fix them."
                             }
                             meta = gson.fromJson(jsonStr, QBookMeta::class.java)
-                            bookIdStr = meta?.id ?: ""
+                            bookIdStr = if (!meta?.id.isNullOrBlank()) meta!!.id else file.nameWithoutExtension
+                        } else {
+                            bookIdStr = file.nameWithoutExtension
                         }
                         
-                        val qEntry = zip.getEntry("questions.json")
+                        var qEntry = zip.getEntry("questions.json")
+                        if (qEntry == null) {
+                            val entries = zip.entries()
+                            while (entries.hasMoreElements()) {
+                                val entry = entries.nextElement()
+                                if (entry.name.equals("questions.json", ignoreCase = true) || entry.name.endsWith("/questions.json", ignoreCase = true)) {
+                                    qEntry = entry
+                                    break
+                                }
+                            }
+                        }
                         if (qEntry != null) {
                             // First, extract to backup file
                             var backupFile: File? = null
@@ -569,14 +605,14 @@ class DataParser {
                                     if (existingBook == null) {
                                         repository.insertBook(BookEntity(
                                             id = bookIdStr,
-                                            name = meta?.name ?: "Unknown Book",
+                                            name = if (!meta?.name.isNullOrBlank() && meta?.name != "Unknown Book") meta!!.name else file.nameWithoutExtension.replace("_", " "),
                                             totalQuestions = 0,
                                             totalCategories = 0,
                                             dataVariable = "QBOOK",
                                             updateId = "QBOOK_INITIAL",
                                             bookVersion = meta?.version,
                                             updateVersions = "[]",
-                                            hierarchyLabels = gson.toJson(meta?.hierarchyLabels),
+                                            hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else "[]",
                                             roadmapLeafLevel = 3
                                         ))
                                     } else if (!isUpdate) {
@@ -809,14 +845,15 @@ class DataParser {
                             totalQuestions = existingBook.totalQuestions + totalQuestions,
                             bookVersion = meta?.version ?: existingBook.bookVersion,
                             updateVersions = gson.toJson(existingUpdatesList),
-                            questionIdEnd = meta?.questionIdEnd ?: existingBook.questionIdEnd
+                            questionIdEnd = meta?.questionIdEnd ?: existingBook.questionIdEnd,
+                            hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else existingBook.hierarchyLabels
                         )
                         repository.insertBook(updatedBook)
                         return@withContext bookIdStr
                     } else {
                         val bookEntity = BookEntity(
                             id = bookIdStr,
-                            name = meta?.name ?: "Unknown Book",
+                            name = if (!meta?.name.isNullOrBlank() && meta?.name != "Unknown Book") meta!!.name else file.nameWithoutExtension.replace("_", " "),
                             totalQuestions = totalQuestions,
                             totalCategories = categorySet.size,
                             dataVariable = "QBOOK",
@@ -825,7 +862,7 @@ class DataParser {
                             updateVersions = "[]",
                             questionIdStart = qIdStart,
                             questionIdEnd = qIdEnd,
-                            hierarchyLabels = gson.toJson(meta?.hierarchyLabels),
+                            hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else "[]",
                             roadmapLeafLevel = 3
                         )
                         repository.insertBook(bookEntity)
@@ -890,7 +927,7 @@ class DataParser {
                                             updateVersion = meta.updateVersion,
                                             questionIdStart = meta.questionIdStart,
                                             questionIdEnd = meta.questionIdEnd,
-                                            hierarchyLabels = null,
+                                            hierarchyLabels = meta.hierarchyLabels,
                                             roadmapLeafLevel = null
                                         )
                                     }
@@ -973,6 +1010,11 @@ class DataParser {
                         }
                         
                         try {
+                            val settingsManager = SettingsManager(context)
+                            val updatedRemoved = settingsManager.removedBooks.toMutableSet()
+                            if (updatedRemoved.remove(bookIdStr)) {
+                                settingsManager.removedBooks = updatedRemoved
+                            }
                             context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                             val prefs = context.getSharedPreferences("book_uris", Context.MODE_PRIVATE)
                             prefs.edit().putString(bookIdStr, uri.toString()).apply()

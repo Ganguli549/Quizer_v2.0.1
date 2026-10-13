@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
@@ -135,6 +136,17 @@ fun RichTextEditor(
                             textFieldValue = wrapSelection(textFieldValue, "\\(", "\\)")
                             onValueChange(textFieldValue.text)
                         }, modifier = Modifier.size(36.dp).minimumInteractiveComponentSize()) { Text("∑") }
+                        IconButton(onClick = { 
+                            val selStart = textFieldValue.selection.min
+                            val selEnd = textFieldValue.selection.max
+                            val before = textFieldValue.text.substring(0, selStart)
+                            val after = textFieldValue.text.substring(selEnd)
+                            val newText = before + "<br>" + after
+                            textFieldValue = TextFieldValue(text = newText, selection = TextRange(selStart + 4))
+                            onValueChange(newText)
+                        }, modifier = Modifier.size(36.dp).minimumInteractiveComponentSize()) { 
+                            Text("<br>", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) 
+                        }
                     }
                 }
             }

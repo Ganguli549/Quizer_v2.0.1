@@ -56,8 +56,39 @@ class MainViewModel(
         activeChatContextId = chatContextId
     }
 
+    fun syncBooks(context: android.content.Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val hasPerms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    android.os.Environment.isExternalStorageManager()
+                } else {
+                    androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                }
+                if (!hasPerms) return@launch
+                
+                com.example.data.DataParser.syncBooksFromDirectory(context, repository)
+                
+                val allBooks = repository.getAllBooksSync()
+                if (allBooks.isNotEmpty()) {
+                    val currentId = _currentBookId.value
+                    if (currentId.isEmpty() || allBooks.none { it.id == currentId }) {
+                        withContext(Dispatchers.Main) {
+                            val preferred = allBooks.find { it.id == settingsManager.lastSelectedBookId } ?: allBooks.first()
+                            selectBook(preferred.id)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun initializeApp(context: android.content.Context) {
-        if (_isAppReady.value) return
+        if (_isAppReady.value) {
+            syncBooks(context)
+            return
+        }
         viewModelScope.launch {
             val prefs = com.example.data.SecurePrefs.get(context)
             val isFirstLaunch = prefs.getBoolean("is_first_launch", true)
@@ -73,6 +104,13 @@ class MainViewModel(
     private suspend fun finishInitialization(context: android.content.Context) {
         val startTime = System.currentTimeMillis()
         com.example.data.DataParser.loadInitialData(context, repository)
+        val allBooks = repository.getAllBooksSync()
+        if (allBooks.isNotEmpty()) {
+            val preferred = allBooks.find { it.id == settingsManager.lastSelectedBookId } ?: allBooks.first()
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                selectBook(preferred.id)
+            }
+        }
         val elapsedTime = System.currentTimeMillis() - startTime
         val remainingTime = 3000L - elapsedTime
         if (remainingTime > 0) {
@@ -441,16 +479,29 @@ class MainViewModel(
                 
                 val prompt = """
                     $sourcePromptStr
+                    
+                    Rules for Extraction:
+                    1. Extract questions, options, correctIndex, explanation, detailedExplanation, path, format, and questionHeader from the source.
+                    2. **Question Header Extraction (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passage texts, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+                       - You MUST extract these instructions/headers into the 'questionHeader' field.
+                       - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
+                       - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
+                       - If a question has no preceding instruction or group header, set 'questionHeader' to null.
+                    3. **Math Expressions**: Wrap inline math in ${"$"}${'$'}...${'$'} and block math in ${"$"}${'$'}...${"$"}${'$'}. Properly double-escape all backslashes.
+                    
                     Format the output strictly as a JSON array containing objects matching this schema:
-                    {
-                      "question": "question text",
-                      "options": ["A", "B", "C", "D"],
-                      "correctIndex": integer index of correct option,
-                      "explanation": "brief explanation",
-                      "detailedExplanation": "detailed explanation if present, or generate one",
-                      "path": "Topic/Subtopic based on PDF headers",
-                      "format": "text"
-                    }
+                    [
+                      {
+                        "question": "question text",
+                        "options": ["A", "B", "C", "D"],
+                        "correctIndex": integer index of correct option,
+                        "explanation": "brief explanation",
+                        "detailedExplanation": "detailed explanation if present, or generate one",
+                        "path": "Topic/Subtopic based on PDF headers",
+                        "format": "text",
+                        "questionHeader": "Instruction / header / passage applying to this question or group (e.g., 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)'). Set for each question in the group. Null if none."
+                      }
+                    ]
                     If explanations are missing, write them based on the text. If it is a textbook without explicit questions, generate good multiple choice questions from the content.
                     Return ONLY the JSON array. Do not use markdown blocks like ```json.
                 """.trimIndent()
@@ -479,14 +530,24 @@ class MainViewModel(
                 
                 val gson = com.example.data.SharedGson.normal
                 val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.removeSuffix("_edit").removeSuffix("_read")
+                val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
                 
                 for (item in jsonArray) {
                     val obj = item.jsonObject
                     val qOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-                    
+                    val rawHeader = when (val el = obj["questionHeader"] ?: obj["section"] ?: obj["header"]) {
+                        is kotlinx.serialization.json.JsonObject -> el.toString()
+                        is kotlinx.serialization.json.JsonPrimitive -> {
+                            if (el !is kotlinx.serialization.json.JsonNull) {
+                                val c = el.content.trim()
+                                if (c.isNotBlank() && !c.equals("null", ignoreCase = true)) c else null
+                            } else null
+                        }
+                        else -> null
+                    }
                     val updatedQ = com.example.data.QuestionEntity(
                         globalId = java.util.UUID.randomUUID().toString(),
-                        id = System.currentTimeMillis() + updates.size,
+                        id = maxPossibleId + 1 + updates.size.toLong(),
                         bookId = baseBookId,
                         category = "AI Extracted",
                         question = obj["question"]?.jsonPrimitive?.content ?: "",
@@ -496,23 +557,25 @@ class MainViewModel(
                         explanation = obj["explanation"]?.jsonPrimitive?.content ?: "",
                         detailedExplanation = obj["detailedExplanation"]?.jsonPrimitive?.content,
                         format = obj["format"]?.jsonPrimitive?.content ?: "text",
-                        section = "",
+                        section = rawHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
                         exam = "",
                         year = "",
-                        path = obj["path"]?.jsonPrimitive?.content ?: ""
+                        path = obj["path"]?.jsonPrimitive?.content ?: "",
+                        questionHeader = rawHeader
                     )
                     
                     updates.add(com.example.ui.components.PendingQuestionUpdate(-1L, updatedQ))
                 }
                 
-                if (updates.isNotEmpty()) {
-                    setPendingUpdates(context, chatContextId, updates)
+                val processedUpdates = com.example.ui.components.processExtractedQuestionHeaders(updates)
+                if (processedUpdates.isNotEmpty()) {
+                    setPendingUpdates(context, chatContextId, processedUpdates)
                     addChatMessage(
-                        com.example.data.ChatMessageEntity(bookId = chatContextId, role = "model", content = "I extracted ${updates.size} questions from the PDF. Please review the pending updates above.", timestamp = System.currentTimeMillis())
+                        com.example.data.ChatMessageEntity(bookId = chatContextId, role = "model", content = "I extracted ${processedUpdates.size} questions from the document. Please review the pending updates above.", timestamp = System.currentTimeMillis())
                     )
                 } else {
                     addChatMessage(
-                        com.example.data.ChatMessageEntity(bookId = chatContextId, role = "model", content = "I couldn't find or generate any questions from the PDF.", timestamp = System.currentTimeMillis())
+                        com.example.data.ChatMessageEntity(bookId = chatContextId, role = "model", content = "I couldn't find or generate any questions from the document.", timestamp = System.currentTimeMillis())
                     )
                 }
             } catch (e: Exception) {
@@ -1406,6 +1469,18 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 }
             }.collect()
         }
+
+        viewModelScope.launch {
+            books.collect { bookList ->
+                if (bookList.isNotEmpty()) {
+                    val currentId = _currentBookId.value
+                    if (currentId.isEmpty() || bookList.none { it.id == currentId }) {
+                        val preferred = bookList.find { it.id == settingsManager.lastSelectedBookId } ?: bookList.first()
+                        selectBook(preferred.id)
+                    }
+                }
+            }
+        }
     }
 
     fun selectBook(bookId: String, forceRefresh: Boolean = false) {
@@ -1605,7 +1680,6 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 try {
                     val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
                     val quizerDir = java.io.File(basePath, "Quizer")
-                    val qbooksDir = java.io.File(quizerDir, "qbooks")
                     val bookDir = java.io.File(quizerDir, bookId)
                     val trashDir = java.io.File(quizerDir, ".trash")
                     
@@ -1613,10 +1687,38 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                     val dateFormat = java.text.SimpleDateFormat("yy.MM.dd_HH.mm.ss", java.util.Locale.getDefault())
                     val timestamp = dateFormat.format(java.util.Date())
                     
+                    val candidateFiles = mutableListOf<java.io.File>()
+                    if (quizerDir.exists()) {
+                        quizerDir.listFiles { f -> f.isFile && f.name.endsWith(".qbook") }?.let { candidateFiles.addAll(it) }
+                    }
+
+                    for (pf in candidateFiles) {
+                        var match = (pf.name == "${bookId}.qbook" || pf.nameWithoutExtension == bookId)
+                        if (!match) {
+                            try {
+                                val identity = com.example.data.DataParser.peekIdentity(context, android.net.Uri.fromFile(pf))
+                                if (identity?.id == bookId) match = true
+                            } catch (e: Exception) {}
+                        }
+                        if (match) {
+                            try {
+                                pf.copyTo(java.io.File(trashDir, "${timestamp}_${pf.name}"), overwrite = true)
+                                pf.delete()
+                            } catch (e: Exception) {}
+                        }
+                    }
+
                     try {
-                        // Delete the specific book directory (which contains images, backups, cached state) permanently
                         if (bookDir.exists()) {
                             bookDir.deleteRecursively()
+                        }
+                        val restoreDir = java.io.File(quizerDir, "RestorePoints/$bookId")
+                        if (restoreDir.exists()) {
+                            restoreDir.deleteRecursively()
+                        }
+                        val updatesDir = java.io.File(quizerDir, "Updates")
+                        if (updatesDir.exists()) {
+                            updatesDir.listFiles { f -> f.name.startsWith("${bookId}_") }?.forEach { it.delete() }
                         }
                     } catch(e: Exception) {}
                 } catch (e: Exception) {

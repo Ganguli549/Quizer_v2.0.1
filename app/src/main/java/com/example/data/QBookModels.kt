@@ -4,7 +4,7 @@ data class QBookMeta(
     val id: String,
     val name: String,
     val version: String,
-    val hierarchyLabels: List<String>,
+    val hierarchyLabels: List<String> = emptyList(),
     val type: String? = null,
     val updateId: String? = null,
     val updateVersion: List<Map<String, List<Long>>>? = null,

@@ -34,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clip
@@ -64,6 +65,94 @@ data class PendingQuestionUpdate(
     val imageOptions: List<String> = emptyList(),
     val isDelete: Boolean = false
 )
+
+fun processExtractedQuestionHeaders(updates: List<PendingQuestionUpdate>): List<PendingQuestionUpdate> {
+    if (updates.isEmpty()) return updates
+
+    // Step 1: Extract clean text headers from each question and detect explicit ranges
+    val workingList = updates.map { pending ->
+        val q = pending.updatedQuestion
+        val rawHeader = q.questionHeader
+        val cleanHeader = if (rawHeader != null && rawHeader.trimStart().startsWith("{")) {
+            try {
+                com.example.data.SharedGson.normal.fromJson(rawHeader, com.example.data.QBookHeader::class.java).text
+            } catch (e: Exception) { rawHeader }
+        } else {
+            rawHeader
+        }
+        pending.copy(updatedQuestion = q.copy(questionHeader = cleanHeader?.trim()?.takeIf { it.isNotBlank() }))
+    }.toMutableList()
+
+    // Step 2: Propagate header if it contains explicit question range references
+    // Examples:
+    // "Choose one word Substitution (for question from 1 to 10)"
+    // "Read Passages And Answer Questions (1 -10)"
+    // "Directions (Q. 1 to 5): ..."
+    // "Questions 1-10: In the following questions..."
+    val rangeRegex = Regex("""(?i)(?:for\s+questions?\s*(?:from\s*)?|questions?\s*|\bQ\.?(?:\s*Nos?\.?)?\s*|\()\s*(\d+)\s*(?:to|-|–)\s*(\d+)\s*\)?""")
+
+    var i = 0
+    while (i < workingList.size) {
+        val currentHeader = workingList[i].updatedQuestion.questionHeader
+        if (!currentHeader.isNullOrBlank()) {
+            val match = rangeRegex.find(currentHeader)
+            if (match != null) {
+                val startNum = match.groupValues[1].toIntOrNull()
+                val endNum = match.groupValues[2].toIntOrNull()
+                if (startNum != null && endNum != null && endNum >= startNum) {
+                    val count = endNum - startNum + 1
+                    for (k in 1 until count) {
+                        val targetIdx = i + k
+                        if (targetIdx < workingList.size) {
+                            val nextQ = workingList[targetIdx].updatedQuestion
+                            // Only propagate if the next question doesn't have a different non-blank header
+                            if (nextQ.questionHeader.isNullOrBlank()) {
+                                workingList[targetIdx] = workingList[targetIdx].copy(
+                                    updatedQuestion = nextQ.copy(questionHeader = currentHeader)
+                                )
+                            } else {
+                                break // A new header block has started
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i++
+    }
+
+    // Step 3: Format contiguous question groups sharing the same header into QBookHeader JSON format
+    // {"startId": startId, "endId": endId, "text": "..."}
+    val finalList = workingList.toMutableList()
+    var groupStartIdx = 0
+    while (groupStartIdx < finalList.size) {
+        val headerText = finalList[groupStartIdx].updatedQuestion.questionHeader
+        if (!headerText.isNullOrBlank()) {
+            var groupEndIdx = groupStartIdx
+            while (groupEndIdx + 1 < finalList.size && finalList[groupEndIdx + 1].updatedQuestion.questionHeader == headerText) {
+                groupEndIdx++
+            }
+            val startId = finalList[groupStartIdx].updatedQuestion.id
+            val endId = finalList[groupEndIdx].updatedQuestion.id
+            val escapedText = headerText.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "")
+            val headerJson = "{\"startId\": $startId, \"endId\": $endId, \"text\": \"$escapedText\"}"
+            for (idx in groupStartIdx..groupEndIdx) {
+                val q = finalList[idx].updatedQuestion
+                finalList[idx] = finalList[idx].copy(
+                    updatedQuestion = q.copy(
+                        questionHeader = headerJson,
+                        section = headerText
+                    )
+                )
+            }
+            groupStartIdx = groupEndIdx + 1
+        } else {
+            groupStartIdx++
+        }
+    }
+
+    return finalList
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -254,8 +343,15 @@ fun AiAssistantBottomSheet(
                             text = { Text("AI Settings") },
                             onClick = { 
                                 menuExpanded = false
-                                closeSheetAnim()
-                                onNavigateToAiSettings() 
+                                coroutineScope.launch {
+                                    try {
+                                        sheetState.hide()
+                                    } catch (e: Exception) {
+                                    } finally {
+                                        onDismiss()
+                                        onNavigateToAiSettings()
+                                    }
+                                }
                             },
                             leadingIcon = { Icon(Icons.Default.Settings, "Settings") }
                         )
@@ -263,8 +359,15 @@ fun AiAssistantBottomSheet(
                             text = { Text("API Usages") },
                             onClick = { 
                                 menuExpanded = false
-                                closeSheetAnim()
-                                onNavigateToUsage() 
+                                coroutineScope.launch {
+                                    try {
+                                        sheetState.hide()
+                                    } catch (e: Exception) {
+                                    } finally {
+                                        onDismiss()
+                                        onNavigateToUsage()
+                                    }
+                                }
                             },
                             leadingIcon = { Icon(Icons.Default.Info, "API Usages") }
                         )
@@ -329,6 +432,7 @@ fun AiAssistantBottomSheet(
                     }
                 }
             } else {
+            val latestAiMessage = remember(chatHistory) { chatHistory.findLast { it.role != "user" } }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
@@ -346,6 +450,7 @@ fun AiAssistantBottomSheet(
                 
                 items(chatHistory, key = { "${it.id}_${it.timestamp}" }) { msg ->
                     val isUser = msg.role == "user"
+                    val isLatestAi = !isUser && (msg == latestAiMessage)
                     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
                     val maxBubbleWidth = configuration.screenWidthDp.dp * 0.85f
 
@@ -357,12 +462,49 @@ fun AiAssistantBottomSheet(
                     ) {
                         Column(
                             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-                            modifier = Modifier.widthIn(max = maxBubbleWidth)
+                            modifier = if (isUser) Modifier.widthIn(max = maxBubbleWidth) else Modifier.fillMaxWidth().padding(end = 8.dp)
                         ) {
+                            val sheetBg = MaterialTheme.colorScheme.surfaceContainerLow
+                            val surf = MaterialTheme.colorScheme.surface
+                            val onSurf = MaterialTheme.colorScheme.onSurface
+                            val sv = MaterialTheme.colorScheme.surfaceVariant
+                            val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(sheetBg.toArgb()) < 0.5
+
+                            val aiBubbleColor = run {
+                                val contrastWithSheet = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), sheetBg.toArgb())
+                                val contrastWithSurf = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), surf.toArgb())
+                                if (contrastWithSheet < 1.25 || contrastWithSurf < 1.25) {
+                                    val factor = if (isDark) 0.22f else 0.15f
+                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), factor))
+                                } else {
+                                    sv
+                                }
+                            }
+
+                            val aiBorderColor = run {
+                                val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+                                val outline = MaterialTheme.colorScheme.outline
+                                val contrastWithBubble = androidx.core.graphics.ColorUtils.calculateContrast(outlineVariant.toArgb(), aiBubbleColor.toArgb())
+                                if (contrastWithBubble < 1.35) {
+                                    outline.copy(alpha = 0.45f)
+                                } else {
+                                    outlineVariant.copy(alpha = 0.65f)
+                                }
+                            }
+
                             Box(
                                 modifier = Modifier
+                                    .then(
+                                        if (!isUser) {
+                                            Modifier.border(
+                                                width = 1.dp,
+                                                color = aiBorderColor,
+                                                shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
+                                            )
+                                        } else Modifier
+                                    )
                                     .background(
-                                        color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                        color = if (isUser) MaterialTheme.colorScheme.primary else aiBubbleColor,
                                         shape = if (isUser) RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
                                     )
                                     .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -424,43 +566,45 @@ fun AiAssistantBottomSheet(
                                         )
                                     }
 
-                                    Spacer(modifier = Modifier.width(2.dp))
+                                    if (isLatestAi) {
+                                        Spacer(modifier = Modifier.width(2.dp))
 
-                                    IconButton(
-                                        onClick = {
-                                            if (!isProcessing) {
-                                                val msgIndex = chatHistory.indexOf(msg)
-                                                val targetPrompt = (if (msgIndex > 0) {
-                                                    chatHistory.take(msgIndex).findLast { it.role == "user" }?.content
-                                                } else null) ?: chatHistory.findLast { it.role == "user" }?.content
+                                        IconButton(
+                                            onClick = {
+                                                if (!isProcessing) {
+                                                    val msgIndex = chatHistory.indexOf(msg)
+                                                    val targetPrompt = (if (msgIndex > 0) {
+                                                        chatHistory.take(msgIndex).findLast { it.role == "user" }?.content
+                                                    } else null) ?: chatHistory.findLast { it.role == "user" }?.content
 
-                                                if (!targetPrompt.isNullOrBlank()) {
-                                                    android.widget.Toast.makeText(context, "Retrying response...", android.widget.Toast.LENGTH_SHORT).show()
-                                                    viewModel.deleteChatMessage(msg.id, chatContextId)
-                                                    viewModel.startAiProcessing(
-                                                        context = context.applicationContext,
-                                                        chatContextId = chatContextId,
-                                                        prompt = targetPrompt,
-                                                        allQuestions = questions,
-                                                        mode = mode,
-                                                        currentContextInfo = currentContextInfo,
-                                                        pdfUri = attachedPdfUri,
-                                                        isRetry = true
-                                                    )
-                                                } else {
-                                                    android.widget.Toast.makeText(context, "No prompt found to retry", android.widget.Toast.LENGTH_SHORT).show()
+                                                    if (!targetPrompt.isNullOrBlank()) {
+                                                        android.widget.Toast.makeText(context, "Retrying response...", android.widget.Toast.LENGTH_SHORT).show()
+                                                        viewModel.deleteChatMessage(msg.id, chatContextId)
+                                                        viewModel.startAiProcessing(
+                                                            context = context.applicationContext,
+                                                            chatContextId = chatContextId,
+                                                            prompt = targetPrompt,
+                                                            allQuestions = questions,
+                                                            mode = mode,
+                                                            currentContextInfo = currentContextInfo,
+                                                            pdfUri = attachedPdfUri,
+                                                            isRetry = true
+                                                        )
+                                                    } else {
+                                                        android.widget.Toast.makeText(context, "No prompt found to retry", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
                                                 }
-                                            }
-                                        },
-                                        enabled = !isProcessing,
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = "Retry response",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = if (isProcessing) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                                        )
+                                            },
+                                            enabled = !isProcessing,
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = "Retry response",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = if (isProcessing) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -476,10 +620,28 @@ fun AiAssistantBottomSheet(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.Start
                         ) {
+                                val statusBubbleColor = run {
+                                    val sv = MaterialTheme.colorScheme.surfaceVariant
+                                    val surf = MaterialTheme.colorScheme.surface
+                                    val contrast = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), surf.toArgb())
+                                    if (contrast < 1.15) {
+                                        val onSurf = MaterialTheme.colorScheme.onSurface
+                                        val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(surf.toArgb()) < 0.5
+                                        val factor = if (isDark) 0.16f else 0.09f
+                                        Color(androidx.core.graphics.ColorUtils.blendARGB(surf.toArgb(), onSurf.toArgb(), factor))
+                                    } else {
+                                        sv
+                                    }
+                                }
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(16.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                                            shape = RoundedCornerShape(16.dp)
+                                        )
+                                        .background(statusBubbleColor)
                                         .animateContentSize()
                                 ) {
                                     Column(modifier = Modifier.widthIn(min = 120.dp, max = 320.dp)) {
@@ -523,7 +685,31 @@ fun AiAssistantBottomSheet(
                                     if (pending.isDelete) {
                                         Text("Delete Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f, fill = false))
                                     } else {
-                                        Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f, fill = false))
+                                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                                            if (!pending.updatedQuestion.questionHeader.isNullOrBlank()) {
+                                                val headerText = remember(pending.updatedQuestion.questionHeader) {
+                                                    val raw = pending.updatedQuestion.questionHeader!!
+                                                    if (raw.trimStart().startsWith("{")) {
+                                                        try {
+                                                            com.example.data.SharedGson.normal.fromJson(raw, com.example.data.QBookHeader::class.java).text
+                                                        } catch(e: Exception) { raw }
+                                                    } else raw
+                                                }
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    modifier = Modifier.padding(bottom = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Header: ${headerText.take(70)}${if (headerText.length > 70) "..." else ""}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold)
+                                        }
                                         TextButton(onClick = { editingPendingQuestion = pending }) {
                                             Text("Review")
                                         }
@@ -896,7 +1082,11 @@ suspend fun processAiChatCommand(
                         val existingIdx = updates.indexOfFirst { it.originalId == q.id }
                         val baseQ = if (existingIdx != -1) updates[existingIdx].updatedQuestion else q
                         val modifiedQ = when (field) {
-                            "questionHeader" -> baseQ.copy(questionHeader = value)
+                            "questionHeader" -> {
+                                val headerVal = value.trim()
+                                val headerJson = if (headerVal.startsWith("{")) headerVal else "{\"startId\": $actStart, \"endId\": $actEnd, \"text\": \"${headerVal.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\"}"
+                                baseQ.copy(questionHeader = headerJson, section = headerVal)
+                            }
                             "path" -> baseQ.copy(path = value)
                             "category" -> baseQ.copy(category = value)
                             "format" -> baseQ.copy(format = value)
@@ -952,8 +1142,13 @@ suspend fun processAiChatCommand(
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math.  Use HTML for bold/italics if necessary.
             **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`, and `\\\\alpha` instead of `\\alpha`.
-            8. Extract ALL questions from the document. Take as much space as you need.
-            9. Format the output strictly as a JSON array containing objects matching this schema:
+            8. **Question Header Extraction (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+               - You MUST extract these instructions/headers into the 'questionHeader' field.
+               - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
+               - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
+               - If a question has no preceding instruction or group header, set 'questionHeader' to null.
+            9. Extract ALL questions from the document. Take as much space as you need.
+            10. Format the output strictly as a JSON array containing objects matching this schema:
             [
               {
                 "question": "question text",
@@ -967,6 +1162,7 @@ suspend fun processAiChatCommand(
                 "tableData": "JSON string of 2D array (ONLY if format is table)",
                 "explanationImagePrompts": ["prompt1", "prompt2"] (ONLY IF REQUESTED),
                 "explanationImageOptions": ["url1", "url2"] (ONLY IF REQUESTED),
+                "questionHeader": "Instruction / header / passage applying to this question or group (e.g., 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)'). Set for each question in the group. Null if none.",
                 "section": "question header if present",
                 "exam": "exam tags if present"
               }
@@ -1039,6 +1235,16 @@ suspend fun processAiChatCommand(
                 
                 val generatedOptions1 = qOptions.map { com.example.data.QBookOption(id = java.util.UUID.randomUUID().toString(), text = it) }
                 val cIndex1 = obj["correctIndex"]?.jsonPrimitive?.int ?: 0
+                val rawHeader = when (val el = obj["questionHeader"] ?: obj["section"] ?: obj["header"]) {
+                    is kotlinx.serialization.json.JsonObject -> el.toString()
+                    is kotlinx.serialization.json.JsonPrimitive -> {
+                        if (el !is kotlinx.serialization.json.JsonNull) {
+                            val c = el.content.trim()
+                            if (c.isNotBlank() && !c.equals("null", ignoreCase = true)) c else null
+                        } else null
+                    }
+                    else -> null
+                }
                 val updatedQ = com.example.data.QuestionEntity(
                     globalId = java.util.UUID.randomUUID().toString(),
                     id = maxPossibleId + 1 + updates.size.toLong(),
@@ -1054,10 +1260,11 @@ suspend fun processAiChatCommand(
                     detailedExplanation = obj["detailedExplanation"]?.jsonPrimitive?.content,
                     format = obj["format"]?.jsonPrimitive?.content ?: "text",
                     tableData = obj["tableData"]?.jsonPrimitive?.content,
-                    section = obj["section"]?.jsonPrimitive?.content ?: "",
+                    section = rawHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
                     exam = obj["exam"]?.jsonPrimitive?.content ?: "",
                     year = "",
-                    path = obj["path"]?.jsonPrimitive?.content ?: ""
+                    path = obj["path"]?.jsonPrimitive?.content ?: "",
+                    questionHeader = rawHeader
                 )
                 updates.add(PendingQuestionUpdate(
                     originalId = -1L, 
@@ -1066,10 +1273,11 @@ suspend fun processAiChatCommand(
                 ))
             }
             
-            if (updates.isNotEmpty()) {
-                return Pair(updates, "I extracted ${updates.size} questions from the PDF. Please review the pending updates above.")
+            val processedUpdates = processExtractedQuestionHeaders(updates)
+            if (processedUpdates.isNotEmpty()) {
+                return Pair(processedUpdates, "I extracted ${processedUpdates.size} questions from the document. Please review the pending updates above.")
             } else {
-                return Pair(emptyList(), "I couldn't find or generate any questions from the PDF.")
+                return Pair(emptyList(), "I couldn't find or generate any questions from the document.")
             }
         } catch (e: Exception) {
             onDevLog("[JSON PARSE ERROR] ${e.message}\nRAW:\n$rawResult")
@@ -1352,7 +1560,7 @@ suspend fun processAiChatCommand(
 
 @Composable
 fun ChatMessageContent(content: String, isUser: Boolean = false) {
-    val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     val imageRegex = Regex("\\[IMG_URL:(.*?)\\]")
     val matches = imageRegex.findAll(content).toList()
     

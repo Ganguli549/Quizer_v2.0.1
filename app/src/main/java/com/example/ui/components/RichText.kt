@@ -37,6 +37,9 @@ import io.noties.markwon.image.coil.CoilImagesPlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.MarkwonVisitor
+import org.commonmark.node.SoftLineBreak
 
 class TextDrawable(private val text: String, private val textSize: Float, private val textColor: Int) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -44,8 +47,18 @@ class TextDrawable(private val text: String, private val textSize: Float, privat
         this.textSize = this@TextDrawable.textSize
     }
 
+    private fun getSanitizedLines(): List<String> {
+        return text.replace("<br>", "\n").replace("<br/>", "\n").replace("\\n", "\n").split("\n")
+    }
+
     override fun draw(canvas: Canvas) {
-        canvas.drawText(text, 0f, bounds.height().toFloat() - paint.descent(), paint)
+        val lines = getSanitizedLines()
+        val lineHeight = paint.descent() - paint.ascent()
+        var y = -paint.ascent()
+        for (line in lines) {
+            canvas.drawText(line, 0f, y, paint)
+            y += lineHeight
+        }
     }
 
     override fun setAlpha(alpha: Int) {
@@ -60,14 +73,159 @@ class TextDrawable(private val text: String, private val textSize: Float, privat
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     override fun getIntrinsicWidth(): Int {
-        return paint.measureText(text).toInt()
+        val lines = getSanitizedLines()
+        val maxW = lines.maxOfOrNull { paint.measureText(it) } ?: 0f
+        return maxW.toInt().coerceAtLeast(1)
     }
 
     override fun getIntrinsicHeight(): Int {
-        return (paint.descent() - paint.ascent()).toInt()
+        val lines = getSanitizedLines()
+        val lineHeight = (paint.descent() - paint.ascent()).toInt()
+        return (lineHeight * lines.size.coerceAtLeast(1))
     }
 }
 
+fun sanitizeLatex(input: String): String {
+    if (input.isBlank()) return input
+
+    var s = input.trim()
+
+    // 1. Normalize unicode accents and quotes that are not supported by TeX fonts
+    s = s.replace("ö", "o")
+        .replace("Ö", "O")
+        .replace("ü", "u")
+        .replace("Ü", "U")
+        .replace("ä", "a")
+        .replace("Ä", "A")
+        .replace("é", "e")
+        .replace("É", "E")
+        .replace("è", "e")
+        .replace("È", "E")
+        .replace("à", "a")
+        .replace("À", "A")
+        .replace("ñ", "n")
+        .replace("Ñ", "N")
+        .replace("’", "'")
+        .replace("‘", "'")
+        .replace("“", "\"")
+        .replace("”", "\"")
+
+    // 2. Map unsupported macros to standard JLatexMath equivalents
+    s = s.replace("\\varnothing", "\\emptyset")
+        .replace("\\dots", "\\ldots")
+        .replace("\\impliedby", "\\Longleftarrow")
+        .replace("\\implies", "\\Longrightarrow")
+        .replace("\\iff", "\\Longleftrightarrow")
+        .replace("\\plusminus", "\\pm")
+
+    // 3. Balance braces { and }, dropping extra unmatched closing braces
+    val sb = StringBuilder()
+    var braceDepth = 0
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (c == '\\' && i + 1 < s.length) {
+            val next = s[i + 1]
+            if (next == '{' || next == '}') {
+                sb.append(c).append(next)
+                i += 2
+                continue
+            }
+        }
+        if (c == '{') {
+            braceDepth++
+            sb.append(c)
+        } else if (c == '}') {
+            if (braceDepth > 0) {
+                braceDepth--
+                sb.append(c)
+            } else {
+                // Drop unmatched extra closing brace
+            }
+        } else {
+            sb.append(c)
+        }
+        i++
+    }
+    repeat(braceDepth) {
+        sb.append('}')
+    }
+    s = sb.toString()
+
+    // 4. Balance \left and \right
+    val leftMatches = Regex("""\\left(?![a-zA-Z])""").findAll(s).toList()
+    val rightMatches = Regex("""\\right(?![a-zA-Z])""").findAll(s).toList()
+    if (rightMatches.size > leftMatches.size) {
+        var excess = rightMatches.size - leftMatches.size
+        val rDelimMatches = Regex("""\\right\s*([.\(\)\[\]\{\}|\\/]|\\vert|\\Vert|\\lceil|\\rceil|\\lfloor|\\rfloor)""").findAll(s).toList()
+        for (m in rDelimMatches.reversed()) {
+            if (excess <= 0) break
+            val delim = m.groupValues[1]
+            val range = m.range
+            s = s.substring(0, range.first) + (if (delim == ".") "" else delim) + s.substring(range.last + 1)
+            excess--
+        }
+    } else if (leftMatches.size > rightMatches.size) {
+        repeat(leftMatches.size - rightMatches.size) {
+            s += " \\right."
+        }
+    }
+
+    return s
+}
+
+fun trySalvageLatex(rawLatex: String?, fontSizePx: Float, textColorArgb: Int): Drawable? {
+    if (rawLatex.isNullOrBlank()) return null
+    try {
+        val s = sanitizeLatex(rawLatex)
+        return ru.noties.jlatexmath.JLatexMathDrawable.builder(s)
+            .textSize(fontSizePx)
+            .color(textColorArgb)
+            .fitCanvas(false)
+            .build().apply {
+                setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+            }
+    } catch (e1: Exception) {
+        try {
+            // Aggressive salvage: strip \left and \right delimiters
+            var s = rawLatex
+                .replace(Regex("""\\left\s*([.\(\)\[\]\{\}|\\/]|\\vert|\\Vert|\\lceil|\\rceil|\\lfloor|\\rfloor)""")) {
+                    val d = it.groupValues[1]
+                    if (d == ".") "" else d
+                }
+                .replace(Regex("""\\right\s*([.\(\)\[\]\{\}|\\/]|\\vert|\\Vert|\\lceil|\\rceil|\\lfloor|\\rfloor)""")) {
+                    val d = it.groupValues[1]
+                    if (d == ".") "" else d
+                }
+            s = sanitizeLatex(s)
+            return ru.noties.jlatexmath.JLatexMathDrawable.builder(s)
+                .textSize(fontSizePx)
+                .color(textColorArgb)
+                .fitCanvas(false)
+                .build().apply {
+                    setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+                }
+        } catch (e2: Exception) {
+            try {
+                // Flatten array / environments to simple lines
+                var s = rawLatex
+                    .replace(Regex("""\\begin\{[a-zA-Z*]+\}(\{[^\}]*\})*"""), "")
+                    .replace(Regex("""\\end\{[a-zA-Z*]+\}"""), "")
+                    .replace("&", " ")
+                s = sanitizeLatex(s)
+                return ru.noties.jlatexmath.JLatexMathDrawable.builder(s)
+                    .textSize(fontSizePx)
+                    .color(textColorArgb)
+                    .fitCanvas(false)
+                    .build().apply {
+                        setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+                    }
+            } catch (e3: Exception) {
+                return null
+            }
+        }
+    }
+}
 
 object MarkwonCache {
     private val cache = mutableMapOf<Pair<Float, Color>, Markwon>()
@@ -82,6 +240,13 @@ object MarkwonCache {
                 .usePlugin(MarkwonInlineParserPlugin.create())
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(TablePlugin.create(context))
+                .usePlugin(object : AbstractMarkwonPlugin() {
+                    override fun configureVisitor(builder: MarkwonVisitor.Builder) {
+                        builder.on(SoftLineBreak::class.java) { visitor, _ ->
+                            visitor.builder().append('\n')
+                        }
+                    }
+                })
                 .usePlugin(
                     JLatexMathPlugin.create(
                         fontSizePx,
@@ -90,11 +255,19 @@ object MarkwonCache {
                                 builder.inlinesEnabled(true)
                                 builder.blocksLegacy(true)
                                 builder.blocksEnabled(true)
+                                builder.theme().blockFitCanvas(false)
                                 builder.theme().textColor(textColorArgb)
+                                builder.theme().inlineTextColor(textColorArgb)
+                                builder.theme().blockTextColor(textColorArgb)
                                 builder.errorHandler { latex, error ->
-                                    android.util.Log.e("JLatexMath", "Error parsing: $latex", error)
-                                    TextDrawable(latex ?: "MathError", fontSizePx, textColorArgb).apply {
-                                        setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+                                    val salvaged = trySalvageLatex(latex, fontSizePx, textColorArgb)
+                                    if (salvaged != null) {
+                                        salvaged
+                                    } else {
+                                        android.util.Log.w("JLatexMath", "Could not parse LaTeX: ${latex?.take(80)}... (${error.message})")
+                                        TextDrawable(latex ?: "MathError", fontSizePx, textColorArgb).apply {
+                                            setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+                                        }
                                     }
                                 }
                             }
@@ -291,6 +464,79 @@ class CustomSelectionActionModeCallback(
     }
 }
 
+fun formatRichTextLineBreaks(raw: String): String {
+    if (raw.isBlank()) return raw
+
+    // 1. First standardize math wrappers
+    val withStandardMath = raw
+        .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$\\$([^`]*?)\\$\\$\\s*```")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+        .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$([^`]*?)\\$\\s*```")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+        .replace(Regex("(?s)`\\$\\$([^`]*?)\\$\\$`")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+        .replace(Regex("(?s)`\\$([^`]*?)\\$`")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+        .replace("\\(", "$$")
+        .replace("\\)", "$$")
+        .replace("\\[", "$$")
+        .replace("\\]", "$$")
+        .replace(Regex("(?s)\\$\\$([^$]+?)\\$\\$")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+        .replace(Regex("(?<!\\$)\\$([^$]+?)\\$(?!\\$)")) { "$$${sanitizeLatex(it.groupValues[1])}$$" }
+
+    // 2. Identify all LaTeX math & code blocks to protect them from line-break transformation
+    val protectedPattern = Regex("(?s)(?:```[a-zA-Z]*[\\s\\S]*?```|`[^`]+`|\\$\\$[^$]+?\\$\\$|(?<!\\$)\\$[^$\\n]+?\\$(?!\\$))")
+    val matches = protectedPattern.findAll(withStandardMath).toList()
+
+    if (matches.isEmpty()) {
+        return transformNonMathLineBreaks(withStandardMath)
+    }
+
+    val sb = StringBuilder()
+    var lastIdx = 0
+    for (m in matches) {
+        val nonMathPart = withStandardMath.substring(lastIdx, m.range.first)
+        if (nonMathPart.isNotEmpty()) {
+            sb.append(transformNonMathLineBreaks(nonMathPart))
+        }
+        sb.append(m.value)
+        lastIdx = m.range.last + 1
+    }
+    if (lastIdx < withStandardMath.length) {
+        sb.append(transformNonMathLineBreaks(withStandardMath.substring(lastIdx)))
+    }
+    return sb.toString()
+}
+
+private fun transformNonMathLineBreaks(text: String): String {
+    if (text.isEmpty()) return text
+
+    // 1. Avoid doubling if <br> was already directly followed by \n or \r\n or \\n
+    var s = text
+        .replace(Regex("(?i)<br\\s*/?>\\s*\\\\r\\\\n"), "<br>")
+        .replace(Regex("(?i)<br\\s*/?>\\s*\\\\n"), "<br>")
+        .replace(Regex("(?i)<br\\s*/?>\\s*\\r?\\n"), "<br>")
+
+    // 2. Convert literal backslash-n strings: "\\r\\n", "\\n" into <br>
+    s = s.replace("\\r\\n", "<br>").replace("\\n", "<br>")
+
+    // 3. For actual newlines: if text has table rows (| ... |), keep newline for table rows
+    val lines = s.split(Regex("\\r?\\n"))
+    val result = StringBuilder()
+    for (i in lines.indices) {
+        val line = lines[i]
+        result.append(line)
+        if (i < lines.size - 1) {
+            val isTableRow = line.trim().startsWith("|") && line.trim().endsWith("|")
+            val nextIsTableRow = lines.getOrNull(i + 1)?.trim()?.startsWith("|") == true
+            if (isTableRow && nextIsTableRow) {
+                result.append("\n")
+            } else if (line.trimEnd().endsWith("<br>", ignoreCase = true) || line.trimEnd().endsWith("<br/>", ignoreCase = true)) {
+                // Already ended with <br>, don't double
+            } else {
+                result.append("<br>")
+            }
+        }
+    }
+    return result.toString()
+}
+
 @Composable
 fun RichText(
     text: String,
@@ -304,7 +550,8 @@ fun RichText(
     onBookmarkToggle: (() -> Unit)? = null,
     customMenuItems: List<CustomTextMenuItem> = emptyList(),
     onClick: (() -> Unit)? = null,
-    onClickWithCoords: ((Float, Float) -> Unit)? = null
+    onClickWithCoords: ((Float, Float) -> Unit)? = null,
+    isHorizontallyScrollable: Boolean = false
 ) {
     val context = LocalContext.current
     val fontSizePx = fontSize.value * context.resources.displayMetrics.density
@@ -312,16 +559,9 @@ fun RichText(
         MarkwonCache.get(context, fontSizePx, color)
     }
 
-    val processedText = text
-        .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$\\$([^`]*?)\\$\\$\\s*```")) { "$$${it.groupValues[1]}$$" }
-        .replace(Regex("(?s)```[a-zA-Z]*\\s*\\$([^`]*?)\\$\\s*```")) { "$$${it.groupValues[1]}$$" }
-        .replace(Regex("(?s)`\\$\\$([^`]*?)\\$\\$`")) { "$$${it.groupValues[1]}$$" }
-        .replace(Regex("(?s)`\\$([^`]*?)\\$`")) { "$$${it.groupValues[1]}$$" }
-        .replace("\\(", "$$")
-        .replace("\\)", "$$")
-        .replace("\\[", "$$")
-        .replace("\\]", "$$")
-        .replace(Regex("(?<!\\$)\\$([^$]+?)\\$(?!\\$)")) { "$$${it.groupValues[1]}$$" }
+    val processedText = remember(text) {
+        formatRichTextLineBreaks(text)
+    }
 
     var zoomableImageUrl by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
 
@@ -398,6 +638,7 @@ fun RichText(
                 setTextColor(if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK)
                 textSize = fontSize.value
                 setTextIsSelectable(isSelectable)
+                setHorizontallyScrolling(isHorizontallyScrollable)
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
                 }
@@ -424,6 +665,7 @@ fun RichText(
             textView.setTextColor(if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK)
             textView.textSize = fontSize.value
             textView.setTextIsSelectable(isSelectable)
+            textView.setHorizontallyScrolling(isHorizontallyScrollable)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 textView.setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
             }
@@ -449,6 +691,15 @@ fun RichText(
             } else {
                 textView.setOnTouchListener(null)
             }
+        },
+        onReset = { textView ->
+            try {
+                val spannable = textView.text as? android.text.Spannable
+                if (spannable != null) {
+                    android.text.Selection.removeSelection(spannable)
+                }
+                textView.clearFocus()
+            } catch (e: Exception) {}
         }
     )
     
