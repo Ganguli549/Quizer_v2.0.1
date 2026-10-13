@@ -198,16 +198,19 @@ fun AiAssistantBottomSheet(
     DisposableEffect(lifecycleOwner, chatContextId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START || event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                viewModel.setChatVisible(chatContextId)
+                viewModel.setChatVisible(chatContextId, context)
+                viewModel.onAppForegrounded(context)
             } else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP || event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
-                viewModel.setChatVisible(null)
+                viewModel.setChatVisible(null, context)
+                viewModel.onAppMinimized(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        viewModel.setChatVisible(chatContextId)
+        viewModel.setChatVisible(chatContextId, context)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            viewModel.setChatVisible(null)
+            viewModel.setChatVisible(null, context)
+            viewModel.postActiveTaskNotifications(context)
         }
     }
 
@@ -464,31 +467,25 @@ fun AiAssistantBottomSheet(
                             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
                             modifier = if (isUser) Modifier.widthIn(max = maxBubbleWidth) else Modifier.fillMaxWidth().padding(end = 8.dp)
                         ) {
-                            val sheetBg = MaterialTheme.colorScheme.surfaceContainerLow
-                            val surf = MaterialTheme.colorScheme.surface
+                            val sheetBg = MaterialTheme.colorScheme.surface
                             val onSurf = MaterialTheme.colorScheme.onSurface
-                            val sv = MaterialTheme.colorScheme.surfaceVariant
                             val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(sheetBg.toArgb()) < 0.5
 
                             val aiBubbleColor = run {
-                                val contrastWithSheet = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), sheetBg.toArgb())
-                                val contrastWithSurf = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), surf.toArgb())
-                                if (contrastWithSheet < 1.25 || contrastWithSurf < 1.25) {
-                                    val factor = if (isDark) 0.22f else 0.15f
-                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), factor))
+                                if (isDark) {
+                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.08f))
                                 } else {
-                                    sv
+                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.05f))
                                 }
                             }
 
                             val aiBorderColor = run {
                                 val outlineVariant = MaterialTheme.colorScheme.outlineVariant
                                 val outline = MaterialTheme.colorScheme.outline
-                                val contrastWithBubble = androidx.core.graphics.ColorUtils.calculateContrast(outlineVariant.toArgb(), aiBubbleColor.toArgb())
-                                if (contrastWithBubble < 1.35) {
-                                    outline.copy(alpha = 0.45f)
+                                if (isDark) {
+                                    outline.copy(alpha = 0.25f)
                                 } else {
-                                    outlineVariant.copy(alpha = 0.65f)
+                                    outline.copy(alpha = 0.15f)
                                 }
                             }
 
@@ -621,24 +618,18 @@ fun AiAssistantBottomSheet(
                             horizontalArrangement = Arrangement.Start
                         ) {
                                 val statusBubbleColor = run {
-                                    val sv = MaterialTheme.colorScheme.surfaceVariant
                                     val surf = MaterialTheme.colorScheme.surface
-                                    val contrast = androidx.core.graphics.ColorUtils.calculateContrast(sv.toArgb(), surf.toArgb())
-                                    if (contrast < 1.15) {
-                                        val onSurf = MaterialTheme.colorScheme.onSurface
-                                        val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(surf.toArgb()) < 0.5
-                                        val factor = if (isDark) 0.16f else 0.09f
-                                        Color(androidx.core.graphics.ColorUtils.blendARGB(surf.toArgb(), onSurf.toArgb(), factor))
-                                    } else {
-                                        sv
-                                    }
+                                    val onSurf = MaterialTheme.colorScheme.onSurface
+                                    val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(surf.toArgb()) < 0.5
+                                    val factor = if (isDark) 0.08f else 0.05f
+                                    Color(androidx.core.graphics.ColorUtils.blendARGB(surf.toArgb(), onSurf.toArgb(), factor))
                                 }
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(16.dp))
                                         .border(
                                             width = 1.dp,
-                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = if (androidx.core.graphics.ColorUtils.calculateLuminance(MaterialTheme.colorScheme.surface.toArgb()) < 0.5) 0.25f else 0.15f),
                                             shape = RoundedCornerShape(16.dp)
                                         )
                                         .background(statusBubbleColor)
@@ -1142,9 +1133,14 @@ suspend fun processAiChatCommand(
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math.  Use HTML for bold/italics if necessary.
             **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`, and `\\\\alpha` instead of `\\alpha`.
-            8. **Question Header Extraction (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+            8. **Question Header Extraction & Passage `<p>` Tag (CRITICAL)**: Documents often contain question headers, which are instructions, directions, reading passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
                - You MUST extract these instructions/headers into the 'questionHeader' field.
                - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
+               - **Passage / Reading Context `<p>` Tag (MANDATORY FOR PASSAGES)**: When a header contains a reading passage, story, case study, or context paragraphs that questions are based on, you MUST enclose the passage text inside `<p>...</p>` or `<p name="Passage Title">...</p>` tags (e.g. `<p name="Passage 1">Passage text here...</p>` or `<p>Passage text here...</p>`).
+               - Place instructions or directions BEFORE the `<p>` tag, for example:
+                 `Directions (Q. 1 to 5): Read the following passage carefully and answer the questions:\n<p name="Passage 1">Passage body text goes here...</p>`
+               - The `<p>` tag enables the app to render the passage in an expandable interactive card in Quiz and Read modes, and ensures all related questions remain grouped together.
+               - For simple instruction-only headers without a reading passage (e.g. 'Choose one word Substitution (for question from 1 to 10)'), DO NOT use `<p>` tags. Use `<p>` ONLY when encapsulating actual passage/reading content.
                - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
                - If a question has no preceding instruction or group header, set 'questionHeader' to null.
             9. Extract ALL questions from the document. Take as much space as you need.
@@ -1162,7 +1158,7 @@ suspend fun processAiChatCommand(
                 "tableData": "JSON string of 2D array (ONLY if format is table)",
                 "explanationImagePrompts": ["prompt1", "prompt2"] (ONLY IF REQUESTED),
                 "explanationImageOptions": ["url1", "url2"] (ONLY IF REQUESTED),
-                "questionHeader": "Instruction / header / passage applying to this question or group (e.g., 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)'). Set for each question in the group. Null if none.",
+                "questionHeader": "Instruction / header / passage applying to this question or group (e.g. 'Directions (Q. 1 to 5):\n<p name=\"Passage 1\">Passage text...</p>' or 'Choose one word Substitution (for question from 1 to 10)'). Wrap reading passages in <p>...</p> tags. Set for each question in the group. Null if none.",
                 "section": "question header if present",
                 "exam": "exam tags if present"
               }
@@ -1392,7 +1388,7 @@ suspend fun processAiChatCommand(
             3. **Images**: If asked for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             4. **Expansion (Single to Multiple)**: If asked to expand a question into multiple questions, you should return the original question PLUS the newly generated questions. For new questions, assign them "id": -1.
             5. **Table Format**: If asked to convert tabular data to 'table' format, set 'format' to "table", and construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). Clean up the 'question' text to remove the table data.
-            6. **Question Header**: If asked to edit the header or extract common context, use the 'questionHeader' field. To apply a header to a range of questions, format the 'questionHeader' string as a JSON object: '{"startId": 1, "endId": 5, "text": "Header text here"}'. IMPORTANT: If editing an existing header, you MUST preserve its original startId and endId unless the user explicitly tells you to change them. Do not use plain text if it applies to multiple questions.
+            6. **Question Header**: If asked to edit the header or extract common context, use the 'questionHeader' field. To apply a header to a range of questions, format the 'questionHeader' string as a JSON object: '{"startId": 1, "endId": 5, "text": "Header text here"}'. When the header contains a reading passage or context story, wrap the passage text inside '<p>...</p>' or '<p name=\"Passage Title\">...</p>' tags (with directions placed before the tag). IMPORTANT: If editing an existing header, you MUST preserve its original startId and endId unless the user explicitly tells you to change them. Do not use plain text if it applies to multiple questions.
             7. **STRICT USER RULES**: The user command may contain specific rules, filters, or conditions (e.g. "only edit questions containing X", "keep original startId"). You MUST follow these instructions strictly and only modify the fields or questions that match the user's conditions.
             
             Input Questions:

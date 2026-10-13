@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
         // We will call this in onResume to ensure permissions are granted
         lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
             override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
+                viewModel.onAppForegrounded(appContext)
                 // Check permissions before initializing
                 val hasPerms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                     Environment.isExternalStorageManager()
@@ -86,7 +87,11 @@ class MainActivity : ComponentActivity() {
                     viewModel.syncBooks(appContext)
                 }
             }
+            override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
+                viewModel.onAppMinimized(appContext)
+            }
             override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
+                viewModel.onAppMinimized(appContext)
                 if (com.example.data.SecurePrefs.get(appContext).getBoolean("auto_save_enabled", true)) {
                     val hasPerms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                         Environment.isExternalStorageManager()

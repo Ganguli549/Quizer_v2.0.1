@@ -857,9 +857,12 @@ fun ReadBookScreen(
                             TextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
-                                placeholder = { Text("Search...") },
+                                placeholder = { Text("Search...", color = themeColors.text.copy(alpha = 0.6f)) },
                                 singleLine = true,
                                 colors = TextFieldDefaults.colors(
+                                    focusedTextColor = themeColors.text,
+                                    unfocusedTextColor = themeColors.text,
+                                    cursorColor = themeColors.primary,
                                     focusedContainerColor = Color.Transparent,
                                     unfocusedContainerColor = Color.Transparent,
                                     disabledContainerColor = Color.Transparent,
@@ -874,19 +877,19 @@ fun ReadBookScreen(
                                 isSearchActive = false
                                 searchQuery = ""
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
                             }
                         },
                         actions = {
                             if (searchMatches.isNotEmpty()) {
-                                Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge)
+                                Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge, color = themeColors.text)
                                 IconButton(onClick = { 
                                     if (currentMatchIndex > 0) {
                                         currentMatchIndex--
                                         coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
                                     }
                                 }) {
-                                    Icon(Icons.Default.KeyboardArrowUp, "Previous")
+                                    Icon(Icons.Default.KeyboardArrowUp, "Previous", tint = themeColors.text)
                                 }
                                 IconButton(onClick = { 
                                     if (currentMatchIndex < searchMatches.size - 1) {
@@ -894,26 +897,29 @@ fun ReadBookScreen(
                                         coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
                                     }
                                 }) {
-                                    Icon(Icons.Default.KeyboardArrowDown, "Next")
+                                    Icon(Icons.Default.KeyboardArrowDown, "Next", tint = themeColors.text)
                                 }
                             }
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, "Clear")
+                                    Icon(Icons.Default.Close, "Clear", tint = themeColors.text)
                                 }
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
-                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
+                            containerColor = themeColors.background.copy(alpha = 0.95f),
+                            scrolledContainerColor = themeColors.background.copy(alpha = 0.95f),
+                            titleContentColor = themeColors.text,
+                            navigationIconContentColor = themeColors.text,
+                            actionIconContentColor = themeColors.text
                         )
                     )
                 } else {
                     TopAppBar(
-                        title = { Text(currentBook?.name ?: "Read Book", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                        title = { Text(currentBook?.name ?: "Read Book", color = themeColors.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                         navigationIcon = {
                             IconButton(onClick = onHome) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
                             }
                         },
                         actions = {
@@ -921,39 +927,53 @@ fun ReadBookScreen(
                                 chapterSheetOpenCount++
                                 showChapterIndex = true
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.List, "Index")
+                                Icon(Icons.AutoMirrored.Filled.List, "Index", tint = themeColors.text)
                             }
                             IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
-                                Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode")
+                                Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode", tint = themeColors.text)
                             }
                             IconButton(onClick = { showMenu = true }) {
-                                Icon(Icons.Default.MoreVert, "More Options")
+                                Icon(Icons.Default.MoreVert, "More Options", tint = themeColors.text)
                             }
                             DropdownMenu(
                                 expanded = showMenu,
                                 onDismissRequest = { showMenu = false },
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                                containerColor = themeColors.background,
+                                modifier = Modifier.background(themeColors.background),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.text.copy(alpha = 0.15f))
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Search") },
+                                    text = { Text("Search", color = themeColors.text) },
                                     onClick = { showMenu = false; isSearchActive = true; isBarsVisible = true },
-                                    leadingIcon = { Icon(Icons.Default.Search, null) }
+                                    leadingIcon = { Icon(Icons.Default.Search, null, tint = themeColors.text) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = themeColors.text,
+                                        leadingIconColor = themeColors.text
+                                    )
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Theme") },
+                                    text = { Text("Theme", color = themeColors.text) },
                                     onClick = { showMenu = false; showThemeMenu = true },
-                                    leadingIcon = { Icon(Icons.Default.Palette, null) }
+                                    leadingIcon = { Icon(Icons.Default.Palette, null, tint = themeColors.text) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = themeColors.text,
+                                        leadingIconColor = themeColors.text
+                                    )
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Edit Book") },
+                                    text = { Text("Edit Book", color = themeColors.text) },
                                     onClick = { 
                                         showMenu = false
                                         openEditBookWithQuestion(currentReadingQuestion)
                                     },
-                                    leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                    leadingIcon = { Icon(Icons.Default.Edit, null, tint = themeColors.text) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = themeColors.text,
+                                        leadingIconColor = themeColors.text
+                                    )
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(if (showBookmarks) "Hide bookmarks" else "Show bookmarks") },
+                                    text = { Text(if (showBookmarks) "Hide bookmarks" else "Show bookmarks", color = themeColors.text) },
                                     onClick = {
                                         showMenu = false
                                         val newShow = !showBookmarks
@@ -972,20 +992,32 @@ fun ReadBookScreen(
                                     leadingIcon = {
                                         Icon(
                                             if (showBookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                            null
+                                            null,
+                                            tint = themeColors.text
                                         )
-                                    }
+                                    },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = themeColors.text,
+                                        leadingIconColor = themeColors.text
+                                    )
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Brief Explanation") },
+                                    text = { Text("Brief Explanation", color = themeColors.text) },
                                     onClick = { showMenu = false; showBriefExplanation = !showBriefExplanation },
-                                    leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null) }
+                                    leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null, tint = themeColors.text) },
+                                    colors = MenuDefaults.itemColors(
+                                        textColor = themeColors.text,
+                                        leadingIconColor = themeColors.text
+                                    )
                                 )
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
-                            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f)
+                            containerColor = themeColors.background.copy(alpha = 0.95f),
+                            scrolledContainerColor = themeColors.background.copy(alpha = 0.95f),
+                            titleContentColor = themeColors.text,
+                            navigationIconContentColor = themeColors.text,
+                            actionIconContentColor = themeColors.text
                         )
                     )
                 }
