@@ -1,8 +1,20 @@
 package com.example.data
 
+import android.content.Context
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 
-class QuizRepository(private val db: AppDatabase) {
+@OptIn(ExperimentalCoroutinesApi::class)
+class QuizRepository(context: Context) {
+    private val appContext = context.applicationContext
+    val db: AppDatabase get() = AppDatabase.getDatabase(appContext)
+
+    private val dbVersion = MutableStateFlow(0)
+    fun notifyDatabaseReplaced() {
+        dbVersion.value++
+    }
 
     suspend fun getChatsForBook(bookId: String): List<ChatMessageEntity> {
         return db.chatDao().getChatsForBook(bookId)
@@ -20,23 +32,23 @@ class QuizRepository(private val db: AppDatabase) {
         db.chatDao().deleteChatById(id)
     }
 
-    val books: Flow<List<BookEntity>> = db.bookDao().getAllBooks()
-    val allStats: Flow<List<QuestionStatEntity>> = db.statDao().getAllStats()
-    val history: Flow<List<QuizHistoryEntity>> = db.historyDao().getAllHistory()
-    val bookmarks: Flow<List<BookmarkEntity>> = db.bookmarkDao().getAllBookmarks()
+    val books: Flow<List<BookEntity>> = dbVersion.flatMapLatest { db.bookDao().getAllBooks() }
+    val allStats: Flow<List<QuestionStatEntity>> = dbVersion.flatMapLatest { db.statDao().getAllStats() }
+    val history: Flow<List<QuizHistoryEntity>> = dbVersion.flatMapLatest { db.historyDao().getAllHistory() }
+    val bookmarks: Flow<List<BookmarkEntity>> = dbVersion.flatMapLatest { db.bookmarkDao().getAllBookmarks() }
 
-    fun getStatsForBook(bookId: String): Flow<List<QuestionStatEntity>> = db.statDao().getStatsForBook(bookId)
+    fun getStatsForBook(bookId: String): Flow<List<QuestionStatEntity>> = dbVersion.flatMapLatest { db.statDao().getStatsForBook(bookId) }
     
-    fun getBookmarksForBook(bookId: String): Flow<List<BookmarkEntity>> = db.bookmarkDao().getBookmarksForBook(bookId)
+    fun getBookmarksForBook(bookId: String): Flow<List<BookmarkEntity>> = dbVersion.flatMapLatest { db.bookmarkDao().getBookmarksForBook(bookId) }
     
-    fun getBookmarkedQuestionsForBook(bookId: String): Flow<List<QuestionEntity>> = db.bookmarkDao().getBookmarkedQuestionsForBook(bookId)
+    fun getBookmarkedQuestionsForBook(bookId: String): Flow<List<QuestionEntity>> = dbVersion.flatMapLatest { db.bookmarkDao().getBookmarkedQuestionsForBook(bookId) }
     
     fun getQuestionsForBook(bookId: String): Flow<List<QuestionEntity>> {
-        return db.questionDao().getQuestionsForBook(bookId)
+        return dbVersion.flatMapLatest { db.questionDao().getQuestionsForBook(bookId) }
     }
     
     fun getQuestionSummariesForBook(bookId: String): Flow<List<QuestionSummary>> {
-        return db.questionDao().getQuestionSummariesForBook(bookId)
+        return dbVersion.flatMapLatest { db.questionDao().getQuestionSummariesForBook(bookId) }
     }
     
     suspend fun getQuestionsByBookAndIds(bookId: String, ids: List<Long>): List<QuestionEntity> {
@@ -91,9 +103,10 @@ class QuizRepository(private val db: AppDatabase) {
 
     suspend fun insertQuestions(questions: List<QuestionEntity>) {
         db.questionDao().insertQuestions(questions)
-        if (questions.isNotEmpty()) {
-            db.bookDao().updateBookStats(questions.first().bookId)
-        }
+    }
+
+    suspend fun updateBookStats(bookId: String) {
+        db.bookDao().updateBookStats(bookId)
     }
 
     suspend fun updateQuestion(question: QuestionEntity) {
@@ -123,7 +136,7 @@ class QuizRepository(private val db: AppDatabase) {
     }
     
     fun getLearningPlan(bookId: String): Flow<LearningPlanEntity?> {
-        return db.learningPlanDao().getPlan(bookId)
+        return dbVersion.flatMapLatest { db.learningPlanDao().getPlan(bookId) }
     }
     
     suspend fun insertLearningPlan(plan: LearningPlanEntity) {

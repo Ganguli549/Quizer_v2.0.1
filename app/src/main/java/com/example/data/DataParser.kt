@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
+import androidx.room.withTransaction
+import kotlinx.coroutines.sync.withLock
 
 object SharedGson {
     val lenient: com.google.gson.Gson = com.google.gson.Gson().newBuilder().setLenient().create()
@@ -55,6 +57,88 @@ data class RawHeader(val startId: Long?, val endId: Long?, val text: String?)
 
 
 data class HeaderRange(val startId: Long, val endId: Long, val headerText: String)
+
+class JsonSanitizingReader(source: java.io.Reader) : java.io.Reader() {
+    private val bufferedReader = if (source is java.io.BufferedReader) source else java.io.BufferedReader(source, 65536)
+    private val buffer = java.lang.StringBuilder(131072)
+    private var readPos = 0
+    private var inString = false
+    private var isEscaped = false
+
+    override fun read(cbuf: CharArray, off: Int, len: Int): Int {
+        if (len == 0) return 0
+        if (readPos >= buffer.length) {
+            buffer.setLength(0)
+            readPos = 0
+            fillBuffer(maxOf(len, 32768))
+        }
+        if (readPos >= buffer.length) return -1
+        val toRead = minOf(len, buffer.length - readPos)
+        buffer.getChars(readPos, readPos + toRead, cbuf, off)
+        readPos += toRead
+        return toRead
+    }
+
+    private fun fillBuffer(targetLen: Int) {
+        while (buffer.length < targetLen) {
+            val cInt = bufferedReader.read()
+            if (cInt == -1) break
+            val c = cInt.toChar()
+
+            if (inString) {
+                if (isEscaped) {
+                    isEscaped = false
+                    val isValidEscape = c == '"' || c == '\\' || c == '/' || c == 'b' ||
+                            c == 'f' || c == 'n' || c == 'r' || c == 't' || c == 'u'
+                    if (isValidEscape) {
+                        buffer.append(c)
+                    } else {
+                        buffer.append('\\').append(c)
+                    }
+                } else {
+                    if (c == '\\') {
+                        isEscaped = true
+                        buffer.append('\\')
+                    } else {
+                        if (c == '"') {
+                            inString = false
+                        }
+                        buffer.append(c)
+                    }
+                }
+            } else {
+                if (c == '"') {
+                    inString = true
+                    buffer.append(c)
+                } else if (c == ',') {
+                    bufferedReader.mark(64)
+                    var nextNonWs: Char? = null
+                    var peekInt = bufferedReader.read()
+                    while (peekInt != -1) {
+                        val peekChar = peekInt.toChar()
+                        if (!peekChar.isWhitespace()) {
+                            nextNonWs = peekChar
+                            break
+                        }
+                        peekInt = bufferedReader.read()
+                    }
+                    if (nextNonWs == '}' || nextNonWs == ']') {
+                        bufferedReader.reset()
+                    } else {
+                        bufferedReader.reset()
+                        buffer.append(c)
+                    }
+                } else {
+                    buffer.append(c)
+                }
+            }
+        }
+    }
+
+    override fun close() {
+        bufferedReader.close()
+    }
+}
 
 class DataParser {
 
@@ -132,10 +216,47 @@ class DataParser {
             }
         }
 
+        private val syncMutex = kotlinx.coroutines.sync.Mutex()
+
+        fun extractImagesFromQBook(file: File, destDir: File) {
+            try {
+                if (!destDir.exists()) destDir.mkdirs()
+                java.util.zip.ZipFile(file).use { zip ->
+                    val entries = zip.entries()
+                    val buffer = ByteArray(65536)
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        if (entry.isDirectory) continue
+                        val name = entry.name
+                        val isImage = name.endsWith(".png", true) || name.endsWith(".jpg", true) ||
+                                      name.endsWith(".jpeg", true) || name.endsWith(".webp", true) ||
+                                      name.endsWith(".gif", true) || name.endsWith(".svg", true)
+                        if (isImage) {
+                            val fileName = name.substringAfterLast("/")
+                            val destFile = File(destDir, fileName)
+                            if (!destFile.exists() || destFile.length() == 0L) {
+                                zip.getInputStream(entry).use { input ->
+                                    FileOutputStream(destFile).use { output ->
+                                        var bytesRead: Int
+                                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                                            output.write(buffer, 0, bytesRead)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
         suspend fun syncBooksFromDirectory(context: Context, repository: QuizRepository) {
             withContext(Dispatchers.IO) {
-                try {
-                    val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                syncMutex.withLock {
+                    try {
+                        val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
                     
                     // Cleanup stale temporary cache files
                     try {
@@ -201,20 +322,6 @@ class DataParser {
                     }
                     settingsManager.removedBooks = updatedRemoved
                     
-                    val existingBooks = repository.getAllBooksSync()
-                    
-                    // Cleanup books deleted from the folder and their image cache
-                    for (book in existingBooks) {
-                        if (!folderBookIds.contains(book.id)) {
-                            repository.deleteBook(book.id)
-                            repository.deleteQuestionsForBook(book.id)
-                            repository.deleteAssociatedDataForBook(book.id)
-                            val bookImagesDir = File(quizerDir, "${book.id}/images")
-                            if (bookImagesDir.exists()) bookImagesDir.deleteRecursively()
-                        }
-                    }
-                    
-                    // Re-query existing books after deletions
                     val currentBooksInDb = repository.getAllBooksSync().associateBy { it.id }
                     
                     for (file in files) {
@@ -226,6 +333,12 @@ class DataParser {
                         // Parse if not in DB, has 0 questions, or version changed
                         if (existingBook == null || existingBook.totalQuestions == 0 || fileVersionStr != dbVersionStr) {
                             parseAndInsertFromQBook(context, repository, file, allowAutoFix = true)
+                        } else {
+                            // Ensure image assets exist even if questions already parsed
+                            val bookImagesDir = File(quizerDir, "$bookId/images")
+                            if (!bookImagesDir.exists() || bookImagesDir.listFiles().isNullOrEmpty()) {
+                                extractImagesFromQBook(file, bookImagesDir)
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -233,6 +346,7 @@ class DataParser {
                 }
             }
         }
+    }
 
         @Suppress("SENSELESS_COMPARISON")
         suspend fun processFileContent(context: Context, repository: QuizRepository, fileContent: String, isExplicitUserImport: Boolean = false, allowAutoFix: Boolean = false, onProgress: ((String) -> Unit)? = null): Pair<String?, String?> {
@@ -536,6 +650,7 @@ class DataParser {
                     var qIdEnd = -1L
                     val categorySet = mutableSetOf<String>()
                     val headerRanges = mutableListOf<HeaderRange>()
+                    val parsedQuestions = ArrayList<QuestionEntity>()
                     
                     java.util.zip.ZipFile(file).use { zip ->
                         var metaEntry = zip.getEntry("book_meta.json")
@@ -574,66 +689,48 @@ class DataParser {
                             }
                         }
                         if (qEntry != null) {
-                            // First, extract to backup file
-                            var backupFile: File? = null
+                            val isUpdate = meta?.type == "UPDATE" || meta?.type == "update"
+                            
+                            // Ensure backup_questions.json exists on disk for potential editing
                             if (bookIdStr.isNotEmpty()) {
                                 val bookDir = File(quizerDir, bookIdStr)
                                 if (!bookDir.exists()) bookDir.mkdirs()
-                                backupFile = File(bookDir, "backup_questions.json")
-                                zip.getInputStream(qEntry).use { input ->
-                                    java.io.FileOutputStream(backupFile).use { output ->
-                                        input.copyTo(output)
+                                val backupFile = File(bookDir, "backup_questions.json")
+                                if (!backupFile.exists() || backupFile.length() == 0L) {
+                                    try {
+                                        zip.getInputStream(qEntry).use { input ->
+                                            java.io.FileOutputStream(backupFile).use { output ->
+                                                input.copyTo(output)
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
                                     }
                                 }
                             }
                             
-                            val isUpdate = meta?.type == "UPDATE" || meta?.type == "update"
-                            val existingBook = repository.getBookSync(bookIdStr)
-                            
-                            // Let's stream from backupFile if available, or directly from zip
                             var parseSuccess = false
                             try {
-                                val inputStream = backupFile?.inputStream() ?: zip.getInputStream(qEntry)
-                                inputStream.use { stream ->
-                                    val jsonReader = com.google.gson.stream.JsonReader(stream.bufferedReader())
+                                zip.getInputStream(qEntry).use { stream ->
+                                    val sanitizingReader = JsonSanitizingReader(stream.bufferedReader())
+                                    val jsonReader = com.google.gson.stream.JsonReader(sanitizingReader)
                                     jsonReader.isLenient = true
                                     jsonReader.beginArray()
                                     
-                                    val chunk = mutableListOf<QuestionEntity>()
-                                    
-                                    // Insert book first with 0 questions so we don't violate DB constraints if any, or just because it's safer
-                                    if (existingBook == null) {
-                                        repository.insertBook(BookEntity(
-                                            id = bookIdStr,
-                                            name = if (!meta?.name.isNullOrBlank() && meta?.name != "Unknown Book") meta!!.name else file.nameWithoutExtension.replace("_", " "),
-                                            totalQuestions = 0,
-                                            totalCategories = 0,
-                                            dataVariable = "QBOOK",
-                                            updateId = "QBOOK_INITIAL",
-                                            bookVersion = meta?.version,
-                                            updateVersions = "[]",
-                                            hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else "[]",
-                                            roadmapLeafLevel = 3
-                                        ))
-                                    } else if (!isUpdate) {
-                                        repository.deleteQuestionsForBook(bookIdStr)
-                                        repository.deleteAssociatedDataForBook(bookIdStr)
-                                    }
-
                                     while (jsonReader.hasNext()) {
                                         val q = gson.fromJson<QBookQuestion>(jsonReader, QBookQuestion::class.java)
                                         totalQuestions++
                                         if (qIdStart == -1L) qIdStart = q.id
                                         qIdEnd = q.id
                                         
-                                        val cat = q.metadata.category
+                                        val cat = q.metadata?.category ?: ""
                                         categorySet.add(cat)
                                         
                                         var selfHeader: String? = null
                                         if (q.header != null) {
                                             val startId = q.header.startId ?: q.id
                                             val endId = q.header.endId ?: q.id
-                                            val text = q.header.text
+                                            val text = q.header.text ?: ""
                                             if (text.isNotEmpty()) {
                                                 headerRanges.add(HeaderRange(startId, endId, text))
                                                 if (startId == endId && startId == q.id) {
@@ -651,11 +748,11 @@ class DataParser {
                                             if (idx != -1) idx else 0
                                         } else 0
                                         
-                                        chunk.add(
+                                        parsedQuestions.add(
                                             QuestionEntity(
                                                 id = q.id,
                                                 bookId = bookIdStr,
-                                                path = q.metadata.path,
+                                                path = q.metadata?.path ?: "",
                                                 category = cat,
                                                 question = q.question.text,
                                                 options = gson.toJson(q.options.map { it.text }),
@@ -663,10 +760,10 @@ class DataParser {
                                                 explanation = q.explanation?.brief ?: "",
                                                 section = "",
                                                 extraOptions = gson.toJson(q.extraOptions?.map { it.text } ?: emptyList<String>()),
-                                                exam = q.metadata.exam ?: "",
-                                                exams = q.metadata.exams?.let { gson.toJson(it) },
+                                                exam = q.metadata?.exam ?: "",
+                                                exams = q.metadata?.exams?.let { gson.toJson(it) },
                                                 explanationTable = q.explanation?.table?.let { gson.toJson(it) },
-                                                year = q.metadata.year ?: "",
+                                                year = q.metadata?.year ?: "",
                                                 img = q.question.image,
                                                 questionHeader = resolvedHeader,
                                                 advancedOptions = gson.toJson(q.options),
@@ -679,128 +776,20 @@ class DataParser {
                                                 bottomText = q.question.bottomText
                                             )
                                         )
-                                        
-                                        if (chunk.size >= 500) {
-                                            repository.insertQuestions(chunk)
-                                            chunk.clear()
-                                        }
-                                    }
-                                    if (chunk.isNotEmpty()) {
-                                        repository.insertQuestions(chunk)
                                     }
                                     jsonReader.endArray()
                                     parseSuccess = true
                                 }
                             } catch (e: Exception) {
-                                // If streamed parse failed and allowAutoFix is true, try memory-heavy approach
-                                if (allowAutoFix) {
-                                    val inputStream = backupFile?.inputStream() ?: zip.getInputStream(qEntry)
-                                    val originalJson = inputStream.bufferedReader().readText()
-                                    val jsonStr = autoFixJson(originalJson)
-                                    if (backupFile != null) {
-                                        java.io.FileOutputStream(backupFile).use { it.write(jsonStr.toByteArray()) }
-                                    }
-                                    val qType = object : TypeToken<List<QBookQuestion>>() {}.type
-                                    val questionsList = gson.fromJson<List<QBookQuestion>>(jsonStr, qType)
-                                    
-                                    // Memory-heavy insert
-                                    val memoryChunk = mutableListOf<QuestionEntity>()
-                                    for (q in questionsList) {
-                                        totalQuestions++
-                                        if (qIdStart == -1L) qIdStart = q.id
-                                        qIdEnd = q.id
-                                        
-                                        val cat = q.metadata.category
-                                        categorySet.add(cat)
-                                        
-                                        var selfHeader: String? = null
-                                        if (q.header != null) {
-                                            val startId = q.header.startId ?: q.id
-                                            val endId = q.header.endId ?: q.id
-                                            val text = q.header.text
-                                            if (text.isNotEmpty()) {
-                                                headerRanges.add(HeaderRange(startId, endId, text))
-                                                if (startId == endId && startId == q.id) {
-                                                    selfHeader = text
-                                                }
-                                            }
-                                        }
-                                        val resolvedHeaderRange = headerRanges.lastOrNull { q.id in it.startId..it.endId }
-                                        val resolvedHeader = if (selfHeader != null) "{\"startId\": ${q.id}, \"endId\": ${q.id}, \"text\": \"${selfHeader.replace("\"", "\\\"").replace("\n", "\\n")}\"}" else if (resolvedHeaderRange != null) "{\"startId\": ${resolvedHeaderRange.startId}, \"endId\": ${resolvedHeaderRange.endId}, \"text\": \"${resolvedHeaderRange.headerText.replace("\"", "\\\"").replace("\n", "\\n")}\"}" else null
-                                        headerRanges.removeAll { it.endId < q.id }
-                                        
-                                        val correctIndexStr = if (q.correctOptionIds.isNotEmpty()) {
-                                            val firstCorrectId = q.correctOptionIds[0]
-                                            val idx = q.options.indexOfFirst { it.id == firstCorrectId }
-                                            if (idx != -1) idx else 0
-                                        } else 0
-                                        
-                                        memoryChunk.add(
-                                            QuestionEntity(
-                                                id = q.id,
-                                                bookId = bookIdStr,
-                                                path = q.metadata.path,
-                                                category = cat,
-                                                question = q.question.text,
-                                                options = gson.toJson(q.options.map { it.text }),
-                                                correctIndex = correctIndexStr,
-                                                explanation = q.explanation?.brief ?: "",
-                                                section = "",
-                                                extraOptions = gson.toJson(q.extraOptions?.map { it.text } ?: emptyList<String>()),
-                                                exam = q.metadata.exam ?: "",
-                                                exams = q.metadata.exams?.let { gson.toJson(it) },
-                                                explanationTable = q.explanation?.table?.let { gson.toJson(it) },
-                                                year = q.metadata.year ?: "",
-                                                img = q.question.image,
-                                                questionHeader = resolvedHeader,
-                                                advancedOptions = gson.toJson(q.options),
-                                                advancedCorrectIds = gson.toJson(q.correctOptionIds),
-                                                detailedExplanation = q.explanation?.detailed,
-                                                explanationImage = q.explanation?.image,
-                                                multipleCorrect = q.correctOptionIds.size > 1,
-                                                format = q.question.format,
-                                                tableData = if (q.question.table != null) gson.toJson(q.question.table) else null,
-                                                bottomText = q.question.bottomText
-                                            )
-                                        )
-                                        if (memoryChunk.size >= 500) {
-                                            repository.insertQuestions(memoryChunk)
-                                            memoryChunk.clear()
-                                        }
-                                    }
-                                    if (memoryChunk.isNotEmpty()) {
-                                        repository.insertQuestions(memoryChunk)
-                                    }
-                                    parseSuccess = true
-                                } else {
-                                    return@withContext "FIX_REQUIRED|Syntax errors found (e.g. trailing commas). Try enabling Auto-Fix."
-                                }
+                                Log.e("DataParser", "Error streaming questions for $bookIdStr", e)
+                                return@withContext "Error reading questions from $bookIdStr: ${e.message}"
                             }
                         }
                         
                         // Extract images
                         if (bookIdStr.isNotEmpty()) {
                             val bookImagesDir = File(quizerDir, "$bookIdStr/images")
-                            
-                            val existingCheck = repository.getBookSync(bookIdStr)
-                            val isUpdateMeta = meta?.type == "UPDATE" || meta?.type == "update"
-                            if (!isUpdateMeta && existingCheck != null && bookImagesDir.exists()) {
-                                bookImagesDir.deleteRecursively()
-                            }
-                            
-                            if (!bookImagesDir.exists()) bookImagesDir.mkdirs()
-                            
-                            zip.entries().asSequence().forEach { entry ->
-                                if (!entry.isDirectory && entry.name.startsWith("images/")) {
-                                    val fileName = entry.name.substringAfterLast("/")
-                                    val outFile = File(bookImagesDir, fileName)
-                                    zip.getInputStream(entry).use { input ->
-                                        java.io.FileOutputStream(outFile).use { output ->
-                                            input.copyTo(output)
-                                        }
-                                    }
-                                }
-                            }
+                            extractImagesFromQBook(file, bookImagesDir)
                         }
                     } // end zip
                     
@@ -848,7 +837,13 @@ class DataParser {
                             questionIdEnd = meta?.questionIdEnd ?: existingBook.questionIdEnd,
                             hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else existingBook.hierarchyLabels
                         )
-                        repository.insertBook(updatedBook)
+
+                        AppDatabase.getDatabase(context).withTransaction {
+                            for (chunk in parsedQuestions.chunked(1000)) {
+                                repository.insertQuestions(chunk)
+                            }
+                            repository.insertBook(updatedBook)
+                        }
                         return@withContext bookIdStr
                     } else {
                         val bookEntity = BookEntity(
@@ -865,7 +860,16 @@ class DataParser {
                             hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else "[]",
                             roadmapLeafLevel = 3
                         )
-                        repository.insertBook(bookEntity)
+
+                        AppDatabase.getDatabase(context).withTransaction {
+                            if (!isUpdate) {
+                                repository.deleteQuestionsForBook(bookIdStr)
+                            }
+                            for (chunk in parsedQuestions.chunked(1000)) {
+                                repository.insertQuestions(chunk)
+                            }
+                            repository.insertBook(bookEntity)
+                        }
                         return@withContext bookIdStr
                     }
                 } catch (e: Exception) {

@@ -52,12 +52,19 @@ class MainViewModel(
     }
 
     private var activeChatContextId: String? = null
-    fun setChatVisible(chatContextId: String?) {
+    fun setChatVisible(chatContextId: String?, context: android.content.Context? = null) {
         activeChatContextId = chatContextId
+        if (chatContextId == null && context != null) {
+            postActiveTaskNotifications(context)
+        }
     }
 
+    private var syncJob: kotlinx.coroutines.Job? = null
+    private var isInitializing = false
+
     fun syncBooks(context: android.content.Context) {
-        viewModelScope.launch(Dispatchers.IO) {
+        if (!_isAppReady.value || isInitializing || syncJob?.isActive == true) return
+        syncJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val hasPerms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                     android.os.Environment.isExternalStorageManager()
@@ -85,10 +92,10 @@ class MainViewModel(
     }
 
     fun initializeApp(context: android.content.Context) {
-        if (_isAppReady.value) {
-            syncBooks(context)
+        if (_isAppReady.value || isInitializing) {
             return
         }
+        isInitializing = true
         viewModelScope.launch {
             val prefs = com.example.data.SecurePrefs.get(context)
             val isFirstLaunch = prefs.getBoolean("is_first_launch", true)
@@ -102,39 +109,52 @@ class MainViewModel(
     }
 
     private suspend fun finishInitialization(context: android.content.Context) {
-        val startTime = System.currentTimeMillis()
-        com.example.data.DataParser.loadInitialData(context, repository)
-        val allBooks = repository.getAllBooksSync()
-        if (allBooks.isNotEmpty()) {
-            val preferred = allBooks.find { it.id == settingsManager.lastSelectedBookId } ?: allBooks.first()
-            kotlinx.coroutines.withContext(Dispatchers.Main) {
-                selectBook(preferred.id)
+        try {
+            val startTime = System.currentTimeMillis()
+            com.example.data.DataParser.loadInitialData(context, repository)
+            val allBooks = repository.getAllBooksSync()
+            if (allBooks.isNotEmpty()) {
+                val preferred = allBooks.find { it.id == settingsManager.lastSelectedBookId } ?: allBooks.first()
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    selectBook(preferred.id)
+                }
             }
+            val elapsedTime = System.currentTimeMillis() - startTime
+            val minSplashTime = 300L
+            val remainingTime = minSplashTime - elapsedTime
+            if (remainingTime > 0) {
+                kotlinx.coroutines.delay(remainingTime)
+            }
+            val prefs = com.example.data.SecurePrefs.get(context)
+            prefs.edit().putBoolean("is_first_launch", false).apply()
+            _isAppReady.value = true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            _isAppReady.value = true
+        } finally {
+            isInitializing = false
         }
-        val elapsedTime = System.currentTimeMillis() - startTime
-        val remainingTime = 3000L - elapsedTime
-        if (remainingTime > 0) {
-            kotlinx.coroutines.delay(remainingTime)
-        }
-        val prefs = com.example.data.SecurePrefs.get(context)
-        prefs.edit().putBoolean("is_first_launch", false).apply()
-        _isAppReady.value = true
     }
     
     fun onRestoreBackupDecision(context: android.content.Context, restore: Boolean) {
         _showBackupRestoreDialog.value = false
         viewModelScope.launch {
             if (restore) {
-                val success = com.example.data.BackupManager.restoreBackup(context)
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                val success = withContext(Dispatchers.IO) {
+                    com.example.data.BackupManager.restoreBackup(context)
+                }
+                withContext(Dispatchers.Main) {
                     if (success) {
+                        repository.notifyDatabaseReplaced()
                         android.widget.Toast.makeText(context, "Backup restored successfully", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         android.widget.Toast.makeText(context, "Failed to restore backup", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             } else {
-                com.example.data.BackupManager.clearBackup()
+                withContext(Dispatchers.IO) {
+                    com.example.data.BackupManager.clearBackup()
+                }
             }
             finishInitialization(context)
         }
@@ -209,7 +229,46 @@ class MainViewModel(
         _aiProcessingProgress.value = currentProgress
     }
     
+    data class ActiveAiTask(
+        val chatContextId: String,
+        val notificationId: Int,
+        var title: String = "AI Assistant",
+        var status: String = "Analyzing request...",
+        val isExtraction: Boolean = true
+    )
+    private val activeAiTasks = java.util.concurrent.ConcurrentHashMap<String, ActiveAiTask>()
+    private var isAppInForeground: Boolean = true
+    private var appContext: android.content.Context? = null
+
+    fun onAppMinimized(context: android.content.Context? = null) {
+        val ctx = context?.applicationContext ?: appContext ?: return
+        appContext = ctx
+        isAppInForeground = false
+        postActiveTaskNotifications(ctx)
+    }
+
+    fun onAppForegrounded(context: android.content.Context? = null) {
+        context?.let { appContext = it.applicationContext }
+        isAppInForeground = true
+    }
+
+    fun postActiveTaskNotifications(context: android.content.Context) {
+        for ((_, task) in activeAiTasks) {
+            updateNotification(
+                context = context,
+                id = task.notificationId,
+                title = task.title,
+                content = task.status,
+                isOngoing = true,
+                chatContextId = task.chatContextId,
+                isExtraction = task.isExtraction,
+                force = true
+            )
+        }
+    }
+
     fun cancelAiProcessing(context: android.content.Context, chatContextId: String) {
+        activeAiTasks.remove(chatContextId)
         cancelNotification(context, chatContextId.hashCode())
         aiProcessingJobs[chatContextId]?.cancel()
         aiProcessingJobs.remove(chatContextId)
@@ -223,9 +282,19 @@ class MainViewModel(
         androidx.core.app.NotificationManagerCompat.from(context).cancel(id)
     }
 
-    private fun updateNotification(context: android.content.Context, id: Int, title: String, content: String, isOngoing: Boolean, chatContextId: String? = null, isExtraction: Boolean = true) {
+    private fun updateNotification(
+        context: android.content.Context, 
+        id: Int, 
+        title: String, 
+        content: String, 
+        isOngoing: Boolean, 
+        chatContextId: String? = null, 
+        isExtraction: Boolean = true,
+        force: Boolean = false
+    ) {
         if (!isExtraction) return
-        if (chatContextId != null && activeChatContextId == chatContextId) return
+        appContext = context.applicationContext
+        if (!force && isAppInForeground && chatContextId != null && activeChatContextId == chatContextId) return
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 return
@@ -236,26 +305,26 @@ class MainViewModel(
             val channel = android.app.NotificationChannel(
                 "ai_extraction_channel",
                 "AI Extraction",
-                android.app.NotificationManager.IMPORTANCE_LOW
+                android.app.NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Notifications for AI question extraction progress" }
             val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
 
         val builder = androidx.core.app.NotificationCompat.Builder(context, "ai_extraction_channel")
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(com.example.R.drawable.ic_sparkle)
             .setContentTitle(title)
             .setContentText(content)
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .setPriority(if (isOngoing) androidx.core.app.NotificationCompat.PRIORITY_DEFAULT else androidx.core.app.NotificationCompat.PRIORITY_HIGH)
             .setOngoing(isOngoing)
             .setAutoCancel(!isOngoing)
+            .setOnlyAlertOnce(isOngoing)
 
         if (chatContextId != null) {
             val intent = android.content.Intent(context, com.example.MainActivity::class.java).apply {
                 flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("OPEN_AI_ASSISTANT", true)
                 putExtra("BOOK_ID", chatContextId.removeSuffix("_edit").removeSuffix("_read"))
-                putExtra("CHAT_CONTEXT_ID", chatContextId)
                 putExtra("CHAT_CONTEXT_ID", chatContextId)
             }
             val pendingIntent = android.app.PendingIntent.getActivity(
@@ -267,7 +336,11 @@ class MainViewModel(
             builder.setContentIntent(pendingIntent)
         }
             
-        androidx.core.app.NotificationManagerCompat.from(context).notify(id, builder.build())
+        try {
+            androidx.core.app.NotificationManagerCompat.from(context).notify(id, builder.build())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
     
     fun startAiProcessing(
@@ -280,8 +353,17 @@ class MainViewModel(
         pdfUri: android.net.Uri? = null,
         isRetry: Boolean = false
     ) {
+        appContext = context.applicationContext
         val notificationId = chatContextId.hashCode()
         val isExtractionTask = pdfUri != null || mode != com.example.ui.components.AiChatMode.READ_BOOK
+        
+        activeAiTasks[chatContextId] = ActiveAiTask(
+            chatContextId = chatContextId,
+            notificationId = notificationId,
+            title = "AI Assistant",
+            status = "Analyzing request...",
+            isExtraction = isExtractionTask
+        )
         updateNotification(context, notificationId, "AI Assistant", "Analyzing request...", true, chatContextId, isExtractionTask)
         
         if (!isRetry) {
@@ -307,6 +389,7 @@ class MainViewModel(
                     val isImage = mimeType.startsWith("image/")
                     
                     if (isZip) {
+                        activeAiTasks[chatContextId]?.status = "Extracting ZIP..."
                         setAiProcessingStatus(chatContextId, "Extracting ZIP...", 0.1f)
                         updateNotification(context, notificationId, "AI Assistant", "Extracting ZIP...", true, chatContextId, isExtractionTask)
                         val zis = java.util.zip.ZipInputStream(contentResolver.openInputStream(pdfUri))
@@ -342,15 +425,18 @@ class MainViewModel(
                             }
                         }
                     } else if (isText) {
+                        activeAiTasks[chatContextId]?.status = "Reading Text File..."
                         setAiProcessingStatus(chatContextId, "Reading Text File...", 0.1f)
                         updateNotification(context, notificationId, "AI Assistant", "Reading Text File...", true, chatContextId, isExtractionTask)
                         extractedTextFromFile = contentResolver.openInputStream(pdfUri)?.use { String(it.readBytes()) }
                     } else if (isImage) {
+                        activeAiTasks[chatContextId]?.status = "Reading Image..."
                         setAiProcessingStatus(chatContextId, "Reading Image...", 0.1f)
                         updateNotification(context, notificationId, "AI Assistant", "Reading Image...", true, chatContextId, isExtractionTask)
                         val bytes = contentResolver.openInputStream(pdfUri)?.use { it.readBytes() }
                         if (bytes != null) attachments.add(com.example.data.AiFileAttachment(bytes, mimeType))
                     } else {
+                        activeAiTasks[chatContextId]?.status = "Reading PDF..."
                         setAiProcessingStatus(chatContextId, "Reading PDF...", 0.1f)
                         updateNotification(context, notificationId, "AI Assistant", "Reading PDF...", true, chatContextId, isExtractionTask)
                         pdfBytes = contentResolver.openInputStream(pdfUri)?.use { it.readBytes() }
@@ -368,6 +454,7 @@ class MainViewModel(
                     extractedText = extractedTextFromFile,
                     attachments = attachments,
                     onStatusUpdate = { status, progress ->
+                        activeAiTasks[chatContextId]?.status = status
                         setAiProcessingStatus(chatContextId, status, progress)
                         updateNotification(context, notificationId, "AI Assistant", status, true, chatContextId, isExtractionTask)
                     },
@@ -377,26 +464,31 @@ class MainViewModel(
                 )
                 
                 if (updates.isNotEmpty()) {
+                    activeAiTasks.remove(chatContextId)
                     setPendingUpdates(context, chatContextId, updates)
                     updateNotification(context, notificationId, "AI Extraction", "Ready for Review", false, chatContextId, isExtractionTask)
                     addChatMessage(
                         ChatMessageEntity(bookId = chatContextId, role = "model", content = responseText + "\n\nPlease review the pending updates above.", timestamp = System.currentTimeMillis())
                     )
                 } else {
+                    activeAiTasks.remove(chatContextId)
                     updateNotification(context, notificationId, "AI Extraction", "Finished", false, chatContextId, isExtractionTask)
                     addChatMessage(
                         ChatMessageEntity(bookId = chatContextId, role = "model", content = responseText, timestamp = System.currentTimeMillis())
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
+                activeAiTasks.remove(chatContextId)
                 updateNotification(context, notificationId, "AI Extraction", "Cancelled", false, chatContextId, isExtractionTask)
                 throw e
             } catch (e: Exception) {
+                activeAiTasks.remove(chatContextId)
                 updateNotification(context, notificationId, "AI Extraction", "Error: ${e.message}", false, chatContextId, isExtractionTask)
                 addChatMessage(
                     ChatMessageEntity(bookId = chatContextId, role = "model", content = "Error: ${e.message}", timestamp = System.currentTimeMillis())
                 )
             } finally {
+                activeAiTasks.remove(chatContextId)
                 setAiProcessingStatus(chatContextId, null)
                 aiProcessingJobs.remove(chatContextId)
             }
@@ -482,9 +574,10 @@ class MainViewModel(
                     
                     Rules for Extraction:
                     1. Extract questions, options, correctIndex, explanation, detailedExplanation, path, format, and questionHeader from the source.
-                    2. **Question Header Extraction (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passage texts, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+                    2. **Question Header Extraction & Passage `<p>` Tag (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passage texts, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
                        - You MUST extract these instructions/headers into the 'questionHeader' field.
-                       - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
+                       - For reading comprehension passages or stories, wrap the passage content inside `<p>` or `<p name="Passage Title">` tags (e.g. `Directions (Q. 1 to 5): Read the passage:\n<p name="Passage Title">Passage body text here...</p>`). The app renders `<p>` tags as expandable passage cards and keeps related questions grouped together!
+                       - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction/passage text in the 'questionHeader' field for ALL questions belonging to that group/range.
                        - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
                        - If a question has no preceding instruction or group header, set 'questionHeader' to null.
                     3. **Math Expressions**: Wrap inline math in ${"$"}${'$'}...${'$'} and block math in ${"$"}${'$'}...${"$"}${'$'}. Properly double-escape all backslashes.

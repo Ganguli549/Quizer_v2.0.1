@@ -39,6 +39,7 @@ import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonVisitor
+import io.noties.markwon.core.MarkwonTheme
 import org.commonmark.node.SoftLineBreak
 
 class TextDrawable(private val text: String, private val textSize: Float, private val textColor: Int) : Drawable() {
@@ -241,6 +242,18 @@ object MarkwonCache {
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(TablePlugin.create(context))
                 .usePlugin(object : AbstractMarkwonPlugin() {
+                    override fun configureTheme(builder: MarkwonTheme.Builder) {
+                        builder.listItemColor(textColorArgb)
+                        val thematicAlpha = 70
+                        val thematicColor = android.graphics.Color.argb(
+                            thematicAlpha,
+                            android.graphics.Color.red(textColorArgb),
+                            android.graphics.Color.green(textColorArgb),
+                            android.graphics.Color.blue(textColorArgb)
+                        )
+                        builder.thematicBreakColor(thematicColor)
+                    }
+
                     override fun configureVisitor(builder: MarkwonVisitor.Builder) {
                         builder.on(SoftLineBreak::class.java) { visitor, _ ->
                             visitor.builder().append('\n')
@@ -507,31 +520,60 @@ fun formatRichTextLineBreaks(raw: String): String {
 private fun transformNonMathLineBreaks(text: String): String {
     if (text.isEmpty()) return text
 
-    // 1. Avoid doubling if <br> was already directly followed by \n or \r\n or \\n
+    // 1. Unescape literal backslash newlines from JSON or raw text strings
     var s = text
-        .replace(Regex("(?i)<br\\s*/?>\\s*\\\\r\\\\n"), "<br>")
-        .replace(Regex("(?i)<br\\s*/?>\\s*\\\\n"), "<br>")
-        .replace(Regex("(?i)<br\\s*/?>\\s*\\r?\\n"), "<br>")
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
 
-    // 2. Convert literal backslash-n strings: "\\r\\n", "\\n" into <br>
-    s = s.replace("\\r\\n", "<br>").replace("\\n", "<br>")
+    // 2. Convert <br> or <br/> tags to newlines so CommonMark recognizes line breaks and block boundaries
+    s = s.replace(Regex("(?i)<br\\s*/?>"), "\n")
 
-    // 3. For actual newlines: if text has table rows (| ... |), keep newline for table rows
-    val lines = s.split(Regex("\\r?\\n"))
+    // 3. Normalize CRLF to LF
+    s = s.replace("\r\n", "\n")
+
+    // 4. Ensure Markdown block boundaries (Headings, Horizontal Rules, Lists, Code Blocks, Blockquotes)
+    // are preceded by an empty line so CommonMark treats them as distinct blocks rather than inline text.
+    val lines = s.split("\n")
     val result = StringBuilder()
     for (i in lines.indices) {
         val line = lines[i]
-        result.append(line)
-        if (i < lines.size - 1) {
-            val isTableRow = line.trim().startsWith("|") && line.trim().endsWith("|")
-            val nextIsTableRow = lines.getOrNull(i + 1)?.trim()?.startsWith("|") == true
-            if (isTableRow && nextIsTableRow) {
-                result.append("\n")
-            } else if (line.trimEnd().endsWith("<br>", ignoreCase = true) || line.trimEnd().endsWith("<br/>", ignoreCase = true)) {
-                // Already ended with <br>, don't double
-            } else {
-                result.append("<br>")
+        val trimmed = line.trim()
+        val isHeading = trimmed.startsWith("#") && trimmed.matches(Regex("^#{1,6}\\s+.*"))
+        val isHorizontalRule = trimmed.matches(Regex("^[-*_]{3,}$"))
+        val isListItem = trimmed.matches(Regex("^([*+\\-]\\s+|\\d+\\.\\s+).*"))
+        val isCodeBlock = trimmed.startsWith("```")
+        val isBlockQuote = trimmed.startsWith(">")
+
+        if (i > 0) {
+            val prevTrimmed = lines[i - 1].trim()
+            val prevIsListItem = prevTrimmed.matches(Regex("^([*+\\-]\\s+|\\d+\\.\\s+).*"))
+            val prevIsBlockQuote = prevTrimmed.startsWith(">")
+
+            val needsBlankLineBefore = when {
+                isHeading -> prevTrimmed.isNotEmpty()
+                isHorizontalRule -> prevTrimmed.isNotEmpty()
+                isCodeBlock -> prevTrimmed.isNotEmpty()
+                isListItem -> prevTrimmed.isNotEmpty() && !prevIsListItem
+                isBlockQuote -> prevTrimmed.isNotEmpty() && !prevIsBlockQuote
+                else -> false
             }
+
+            if (needsBlankLineBefore) {
+                result.append("\n")
+            }
+        }
+
+        result.append(line)
+
+        if (isHorizontalRule && i < lines.size - 1) {
+            val nextTrimmed = lines[i + 1].trim()
+            if (nextTrimmed.isNotEmpty()) {
+                result.append("\n")
+            }
+        }
+
+        if (i < lines.size - 1) {
+            result.append("\n")
         }
     }
     return result.toString()

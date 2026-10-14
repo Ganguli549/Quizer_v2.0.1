@@ -53,5 +53,29 @@ abstract class AppDatabase : RoomDatabase() {
                 instance
             }
         }
+
+        fun closeAndReset() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                INSTANCE = null
+            }
+        }
+
+        fun checkpoint(context: Context? = null) {
+            synchronized(this) {
+                try {
+                    val db = INSTANCE ?: (context?.let { getDatabase(it) })
+                    db?.openHelper?.writableDatabase?.query("PRAGMA wal_checkpoint(TRUNCATE)")?.use { cursor ->
+                        cursor.moveToFirst()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
     }
 }
