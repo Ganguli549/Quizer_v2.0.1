@@ -133,9 +133,10 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
     }
     
     val submitQuiz = {
-        if (hapticEnabled) viewModel.soundHapticManager.hapticQuizComplete()
-        isSubmitted.value = true
-        val correctMark = viewModel.currentExamSettings?.customCorrectMarks ?: viewModel.settingsManager.correctMark
+        if (!isSubmitted.value) {
+            isSubmitted.value = true
+            if (hapticEnabled) viewModel.soundHapticManager.hapticQuizComplete()
+            val correctMark = viewModel.currentExamSettings?.customCorrectMarks ?: viewModel.settingsManager.correctMark
         val wrongMark = viewModel.currentExamSettings?.customWrongMarks ?: viewModel.settingsManager.wrongMark
         var rawScore = 0f
         var correct = 0
@@ -191,6 +192,7 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
         )
         viewModel.clearActiveQuizState()
         onFinish()
+        }
     }
     
     LaunchedEffect(isPracticeMode, timeRemainingMs) {
@@ -1246,7 +1248,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         kotlinx.coroutines.delay(400)
                                         aiExplanationStatus = "Reviewing answer context..."
                                         kotlinx.coroutines.delay(400)
-                                        aiExplanationStatus = "Generating AI Explanation..."
+                                        aiExplanationStatus = "Responding..."
                                     }
                                     
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

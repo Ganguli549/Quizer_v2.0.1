@@ -343,6 +343,18 @@ class MainViewModel(
         }
     }
     
+    private fun isZipArchiveUri(contentResolver: android.content.ContentResolver, uri: android.net.Uri): Boolean {
+        return try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val header = ByteArray(4)
+                val read = stream.read(header)
+                read >= 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() && header[2] == 0x03.toByte() && header[3] == 0x04.toByte()
+            } ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun startAiProcessing(
         context: android.content.Context,
         chatContextId: String,
@@ -384,14 +396,21 @@ class MainViewModel(
                     val mimeType = contentResolver.getType(pdfUri) ?: ""
                     val name = pdfUri.lastPathSegment ?: ""
                     
-                    val isZip = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || name.endsWith(".zip", true)
-                    val isText = mimeType.startsWith("text/") || name.endsWith(".txt", true) || name.endsWith(".md", true)
+                    val isZipArchive = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || 
+                                       name.endsWith(".zip", true) || 
+                                       (name.endsWith(".qbook", true) && isZipArchiveUri(contentResolver, pdfUri))
+                    val isText = mimeType.startsWith("text/") || 
+                                 name.endsWith(".txt", true) || 
+                                 name.endsWith(".md", true) || 
+                                 name.endsWith(".json", true) || 
+                                 name.endsWith(".js", true) || 
+                                 name.endsWith(".qbook", true)
                     val isImage = mimeType.startsWith("image/")
                     
-                    if (isZip) {
-                        activeAiTasks[chatContextId]?.status = "Extracting ZIP..."
-                        setAiProcessingStatus(chatContextId, "Extracting ZIP...", 0.1f)
-                        updateNotification(context, notificationId, "AI Assistant", "Extracting ZIP...", true, chatContextId, isExtractionTask)
+                    if (isZipArchive) {
+                        activeAiTasks[chatContextId]?.status = "Extracting ZIP / QBook Archive..."
+                        setAiProcessingStatus(chatContextId, "Extracting ZIP / QBook Archive...", 0.1f)
+                        updateNotification(context, notificationId, "AI Assistant", "Extracting ZIP / QBook Archive...", true, chatContextId, isExtractionTask)
                         val zis = java.util.zip.ZipInputStream(contentResolver.openInputStream(pdfUri))
                         val textBuilder = StringBuilder()
                         val availableImages = mutableListOf<String>()
@@ -402,10 +421,15 @@ class MainViewModel(
                         while (entry != null) {
                             if (!entry.isDirectory) {
                                 val entryName = entry.name.substringAfterLast("/")
-                                if (entryName.endsWith(".txt", true) || entryName.endsWith(".json", true) || entryName.endsWith(".md", true)) {
+                                val isEntryText = entryName.endsWith(".qbook", true) || 
+                                                  entryName.endsWith(".json", true) || 
+                                                  entryName.endsWith(".js", true) || 
+                                                  entryName.endsWith(".txt", true) || 
+                                                  entryName.endsWith(".md", true)
+                                if (isEntryText) {
                                     val bytes = zis.readBytes()
                                     textBuilder.append(String(bytes)).append("\n\n")
-                                } else if (entryName.endsWith(".png", true) || entryName.endsWith(".jpg", true) || entryName.endsWith(".jpeg", true)) {
+                                } else if (entryName.endsWith(".png", true) || entryName.endsWith(".jpg", true) || entryName.endsWith(".jpeg", true) || entryName.endsWith(".webp", true)) {
                                     val file = java.io.File(imagesDir, entryName)
                                     java.io.FileOutputStream(file).use { fos ->
                                         zis.copyTo(fos)
@@ -513,16 +537,23 @@ class MainViewModel(
                 val contentResolver = context.contentResolver
                 val mimeType = contentResolver.getType(uri) ?: ""
                 val name = uri.lastPathSegment ?: ""
-                val isZip = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || name.endsWith(".zip", true)
-                val isText = mimeType.startsWith("text/") || name.endsWith(".txt", true) || name.endsWith(".md", true)
+                val isZipArchive = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || 
+                                   name.endsWith(".zip", true) || 
+                                   (name.endsWith(".qbook", true) && isZipArchiveUri(contentResolver, uri))
+                val isText = mimeType.startsWith("text/") || 
+                             name.endsWith(".txt", true) || 
+                             name.endsWith(".md", true) || 
+                             name.endsWith(".json", true) || 
+                             name.endsWith(".js", true) || 
+                             name.endsWith(".qbook", true)
                 val isImage = mimeType.startsWith("image/")
                 
                 var bytes: ByteArray? = null
                 var extractedText: String? = null
                 val extractedAttachments = mutableListOf<com.example.data.AiFileAttachment>()
                 
-                if (isZip) {
-                    setAiProcessingStatus(chatContextId, "Extracting ZIP...", 0.1f)
+                if (isZipArchive) {
+                    setAiProcessingStatus(chatContextId, "Extracting ZIP / QBook Archive...", 0.1f)
                     val zis = java.util.zip.ZipInputStream(contentResolver.openInputStream(uri))
                     val textBuilder = StringBuilder()
                     val availableImages = mutableListOf<String>()
@@ -533,10 +564,15 @@ class MainViewModel(
                     while (entry != null) {
                         if (!entry.isDirectory) {
                             val entryName = entry.name.substringAfterLast("/")
-                            if (entryName.endsWith(".txt", true) || entryName.endsWith(".json", true) || entryName.endsWith(".md", true)) {
+                            val isEntryText = entryName.endsWith(".qbook", true) || 
+                                              entryName.endsWith(".json", true) || 
+                                              entryName.endsWith(".js", true) || 
+                                              entryName.endsWith(".txt", true) || 
+                                              entryName.endsWith(".md", true)
+                            if (isEntryText) {
                                 val b = zis.readBytes()
                                 textBuilder.append(String(b)).append("\n\n")
-                            } else if (entryName.endsWith(".png", true) || entryName.endsWith(".jpg", true) || entryName.endsWith(".jpeg", true)) {
+                            } else if (entryName.endsWith(".png", true) || entryName.endsWith(".jpg", true) || entryName.endsWith(".jpeg", true) || entryName.endsWith(".webp", true)) {
                                 val file = java.io.File(imagesDir, entryName)
                                 java.io.FileOutputStream(file).use { fos ->
                                     zis.copyTo(fos)
@@ -556,7 +592,7 @@ class MainViewModel(
                         }
                     }
                 } else if (isText) {
-                    setAiProcessingStatus(chatContextId, "Reading Text File...", 0.1f)
+                    setAiProcessingStatus(chatContextId, "Reading Document...", 0.1f)
                     extractedText = contentResolver.openInputStream(uri)?.use { String(it.readBytes()) }
                 } else if (isImage) {
                     val imageBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -567,7 +603,7 @@ class MainViewModel(
                 
                 setAiProcessingStatus(chatContextId, "Extracting questions via AI...", 0.3f)
                 
-                val sourcePromptStr = if (extractedText != null) "Analyze this uploaded text document:\n$extractedText\n\nExtract all educational questions you can find." else "Analyze this uploaded PDF. Extract all educational questions you can find."
+                val sourcePromptStr = if (extractedText != null) "Analyze this uploaded document/qbook:\n$extractedText\n\nExtract all educational questions you can find." else "Analyze this uploaded document/PDF. Extract all educational questions you can find."
                 
                 val prompt = """
                     $sourcePromptStr
@@ -580,7 +616,12 @@ class MainViewModel(
                        - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction/passage text in the 'questionHeader' field for ALL questions belonging to that group/range.
                        - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
                        - If a question has no preceding instruction or group header, set 'questionHeader' to null.
-                    3. **Math Expressions**: Wrap inline math in ${"$"}${'$'}...${'$'} and block math in ${"$"}${'$'}...${"$"}${'$'}. Properly double-escape all backslashes.
+                    3. **Math & Formula Formatting (STRICT MANDATE)**:
+                       - Wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`...${"$"}` (e.g. `${"$"}E = mc^2${"$"}` or `${"$"}x = 1${"$"}` or `${"$"}\frac{1}{2}${"$"}`).
+                       - Block equations MUST use double dollar signs `${"$$"}`...${"$$"}`.
+                       - NEVER output bare LaTeX like `\frac{1}{2}` or `\sqrt{x}` without dollar sign wrappers!
+                       - Format exponents (`x^2`), subscripts (`a_n`), fractions (`\frac{a}{b}`), roots (`\sqrt{x}`), Greek symbols (`\alpha`, `\beta`, `\theta`, `\pi`), and operators cleanly.
+                       - **CRITICAL JSON ESCAPING RULE**: You MUST double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`).
                     
                     Format the output strictly as a JSON array containing objects matching this schema:
                     [
@@ -590,9 +631,9 @@ class MainViewModel(
                         "correctIndex": integer index of correct option,
                         "explanation": "brief explanation",
                         "detailedExplanation": "detailed explanation if present, or generate one",
-                        "path": "Topic/Subtopic based on PDF headers",
+                        "path": "Topic/Subtopic based on PDF/document headers",
                         "format": "text",
-                        "questionHeader": "Instruction / header / passage applying to this question or group (e.g., 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)'). Set for each question in the group. Null if none."
+                        "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Null if none."
                       }
                     ]
                     If explanations are missing, write them based on the text. If it is a textbook without explicit questions, generate good multiple choice questions from the content.
@@ -618,8 +659,8 @@ class MainViewModel(
                 
                 // Parse JSON array
                 val updates = mutableListOf<com.example.ui.components.PendingQuestionUpdate>()
-                val cleanedResult = result.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu])""")) { "\\\\" }
-                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(com.example.data.DataParser.autoFixJson(cleanedResult)).jsonArray
+                val cleanResult = com.example.data.DataParser.autoFixJson(result)
+                val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanResult).jsonArray
                 
                 val gson = com.example.data.SharedGson.normal
                 val baseBookId = allQuestions.firstOrNull()?.bookId ?: chatContextId.removeSuffix("_edit").removeSuffix("_read")
@@ -627,7 +668,8 @@ class MainViewModel(
                 
                 for (item in jsonArray) {
                     val obj = item.jsonObject
-                    val qOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                    val rawOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                    val qOptions = rawOptions.map { com.example.ui.components.cleanExtractedMathText(it) }
                     val rawHeader = when (val el = obj["questionHeader"] ?: obj["section"] ?: obj["header"]) {
                         is kotlinx.serialization.json.JsonObject -> el.toString()
                         is kotlinx.serialization.json.JsonPrimitive -> {
@@ -638,23 +680,31 @@ class MainViewModel(
                         }
                         else -> null
                     }
+                    val rawQuestion = obj["question"]?.jsonPrimitive?.content ?: ""
+                    val questionText = com.example.ui.components.cleanExtractedMathText(rawQuestion)
+                    val rawExplanation = obj["explanation"]?.jsonPrimitive?.content ?: ""
+                    val explanation = com.example.ui.components.cleanExtractedMathText(rawExplanation)
+                    val rawDetailed = obj["detailedExplanation"]?.jsonPrimitive?.content
+                    val detailedExplanation = rawDetailed?.let { com.example.ui.components.cleanExtractedMathText(it) }
+                    val cleanedHeader = rawHeader?.let { com.example.ui.components.cleanExtractedMathText(it) }
+
                     val updatedQ = com.example.data.QuestionEntity(
                         globalId = java.util.UUID.randomUUID().toString(),
                         id = maxPossibleId + 1 + updates.size.toLong(),
                         bookId = baseBookId,
                         category = "AI Extracted",
-                        question = obj["question"]?.jsonPrimitive?.content ?: "",
+                        question = questionText,
                         options = gson.toJson(qOptions),
                         extraOptions = "[]",
                         correctIndex = obj["correctIndex"]?.jsonPrimitive?.int ?: 0,
-                        explanation = obj["explanation"]?.jsonPrimitive?.content ?: "",
-                        detailedExplanation = obj["detailedExplanation"]?.jsonPrimitive?.content,
+                        explanation = explanation,
+                        detailedExplanation = detailedExplanation,
                         format = obj["format"]?.jsonPrimitive?.content ?: "text",
-                        section = rawHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
+                        section = cleanedHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
                         exam = "",
                         year = "",
                         path = obj["path"]?.jsonPrimitive?.content ?: "",
-                        questionHeader = rawHeader
+                        questionHeader = cleanedHeader
                     )
                     
                     updates.add(com.example.ui.components.PendingQuestionUpdate(-1L, updatedQ))

@@ -194,7 +194,7 @@ object GeminiHelper {
     ): String = withContext(Dispatchers.IO) {
         val prefs = com.example.data.SecurePrefs.get(context)
         val customKey = prefs.getString("gemini_api_keys", "") ?: ""
-        var selectedModel = prefs.getString("gemini_model", "gemini-1.5-flash") ?: "gemini-1.5-flash"
+        var selectedModel = prefs.getString("gemini_model", "gemini-flash-lite-latest") ?: "gemini-flash-lite-latest"
         if (selectedModel.contains("3.5")) selectedModel = selectedModel.replace("3.5", "1.5")
         
         val apiKeys = mutableListOf<String>()
@@ -252,7 +252,12 @@ object GeminiHelper {
                     e.printStackTrace()
                 }
 
-                return@withContext response.candidates.firstOrNull()?.content?.parts?.lastOrNull()?.text ?: "No response from AI."
+                val candidate = response.candidates.firstOrNull()
+                val candidateText = candidate?.content?.parts?.mapNotNull { it.text }?.joinToString("") { it }
+                if (!candidateText.isNullOrEmpty()) {
+                    return@withContext candidateText
+                }
+                return@withContext "No response from AI."
             } catch (e: Exception) {
                 lastError = e.message
                 if (e is retrofit2.HttpException && e.code() == 429) {

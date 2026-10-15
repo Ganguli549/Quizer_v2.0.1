@@ -35,11 +35,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        Thread.setDefaultUncaughtExceptionHandler { _, e ->
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val f = File(cacheDir, "crash.txt")
-                f.writeText(android.util.Log.getStackTraceString(e))
-            } catch (ex: Exception) {}
+                f.writeText(android.util.Log.getStackTraceString(throwable))
+            } catch (ex: Exception) {
+                // Ignore write failures
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
         }
         
         enableEdgeToEdge(
@@ -83,6 +87,7 @@ class MainActivity : ComponentActivity() {
                 
                 if (hasPerms) {
                     viewModel.initializeApp(appContext)
+                    com.example.data.MediaScannerHelper.scanAllQuizerFolderImages(appContext)
                 }
             }
             override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
@@ -167,7 +172,8 @@ class MainActivity : ComponentActivity() {
                                     androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                 } else true
                                 
-                                hasPermissions = storageGranted && notificationsGranted
+                                // Core offline quiz functionality requires storage access; notifications are optional for background tasks
+                                hasPermissions = storageGranted
                             }
                         }
                         lifecycleOwner.lifecycle.addObserver(observer)

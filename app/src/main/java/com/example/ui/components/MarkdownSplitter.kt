@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -13,6 +14,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+private val BLOCK_MATH_REGEX = Regex(
+    "(?s)```(?:math|latex)\\s*[\\s\\S]*?```" +
+    "|\\\\\\[[\\s\\S]*?\\\\\\]" +
+    "|\\\\begin\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}[\\s\\S]*?\\\\end\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}" +
+    "|\\$\\$[\\s\\S]+?\\$\\$" +
+    "|(?<![\\$\\w\\\\])\\$(?!\\$)(?:[^\\$\\n\\\\]|\\\\.)+?\\$(?![\\$0-9])"
+)
+
+private val TABLE_REGEX = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
+
+private fun isScrollableMathFormula(matchStr: String): Boolean {
+    if (matchStr.startsWith("```") || matchStr.startsWith("\\[") || matchStr.startsWith("\\begin") || matchStr.startsWith("$$")) {
+        return true
+    }
+    val inner = matchStr.trim('$').trim()
+    if (inner.length >= 25) return true
+    val complexKeywords = listOf("\\int", "\\iiint", "\\sum", "\\frac", "\\sqrt", "\\lim", "\\oint", "\\prod", "\\matrix", "\\begin", "\\align", "\\partial", "\\nabla")
+    return complexKeywords.any { inner.contains(it) }
+}
 
 @Composable
 fun MathSplitterRichText(
@@ -29,17 +50,8 @@ fun MathSplitterRichText(
     onClick: (() -> Unit)? = null,
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
-    val mathRegex = Regex(
-        "(?s)(?:" +
-        "```(?:math|latex)\\s*(.*?)\\s*```|" +
-        "\\$\\$(.+?)\\$\\$|" +
-        "\\\\\\[(.+?)\\\\\\]|" +
-        "\\\\begin\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}(.*?)\\\\end\\{(?:equation|align|aligned|gather|matrix|pmatrix|bmatrix)\\*?\\}|" +
-        "(?:^|\\r?\\n)[ \\t]*\\$([^\\n$]+?)\\$[ \\t]*(?=\\r?\\n|$)|" +
-        "(?<!\\$)\\$([^\\n$]*?(?:\\\\frac|\\\\sqrt|\\\\sum|\\\\int|\\\\left|\\\\right|\\\\over|\\\\times|\\\\div)[^\\n$]*?)\\$(?!\\$)" +
-        ")"
-    )
-    val matches = mathRegex.findAll(text).toList()
+    val allMatches = BLOCK_MATH_REGEX.findAll(text).toList()
+    val matches = allMatches.filter { isScrollableMathFormula(it.value) }
 
     if (matches.isEmpty()) {
         RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
@@ -56,13 +68,13 @@ fun MathSplitterRichText(
             
             val rawFormula = match.value.trim()
             val cleanMathStr = when {
-                rawFormula.startsWith("```math") -> rawFormula.removePrefix("```math").removeSuffix("```").trim().let { "$$${sanitizeLatex(it)}$$" }
-                rawFormula.startsWith("```latex") -> rawFormula.removePrefix("```latex").removeSuffix("```").trim().let { "$$${sanitizeLatex(it)}$$" }
-                rawFormula.startsWith("\\[") && rawFormula.endsWith("\\]") -> rawFormula.removePrefix("\\[").removeSuffix("\\]").trim().let { "$$${sanitizeLatex(it)}$$" }
-                rawFormula.startsWith("\\begin") -> "$$${sanitizeLatex(rawFormula)}$$"
-                rawFormula.startsWith("$$") && rawFormula.endsWith("$$") -> "$$${sanitizeLatex(rawFormula.removePrefix("$$").removeSuffix("$$"))}$$"
-                rawFormula.startsWith("$") && rawFormula.endsWith("$") -> "$$" + sanitizeLatex(rawFormula.removePrefix("$").removeSuffix("$").trim()) + "$$"
-                else -> if (rawFormula.startsWith("$$")) "$$${sanitizeLatex(rawFormula.removePrefix("$$").removeSuffix("$$"))}$$" else "$$${sanitizeLatex(rawFormula)}$$"
+                rawFormula.startsWith("```math") -> rawFormula.removePrefix("```math").removeSuffix("```").trim().let { "$$${it}$$" }
+                rawFormula.startsWith("```latex") -> rawFormula.removePrefix("```latex").removeSuffix("```").trim().let { "$$${it}$$" }
+                rawFormula.startsWith("\\[") && rawFormula.endsWith("\\]") -> rawFormula.removePrefix("\\[").removeSuffix("\\]").trim().let { "$$${it}$$" }
+                rawFormula.startsWith("$$") && rawFormula.endsWith("$$") -> rawFormula
+                rawFormula.startsWith("\\begin") -> "$$${rawFormula}$$"
+                rawFormula.startsWith("$") && rawFormula.endsWith("$") -> "$$${rawFormula.removePrefix("$").removeSuffix("$")}$$"
+                else -> if (rawFormula.startsWith("$$")) rawFormula else "$$${rawFormula}$$"
             }
             
             Box(
@@ -73,12 +85,12 @@ fun MathSplitterRichText(
             ) {
                 RichText(
                     text = cleanMathStr, 
-                    modifier = Modifier.wrapContentSize(), 
+                    modifier = Modifier.wrapContentWidth(unbounded = true), 
                     color = color, 
                     fontSize = fontSize, 
                     searchQuery = searchQuery, 
                     highlightColor = highlightColor, 
-                    isSelectable = isSelectable, 
+                    isSelectable = false, 
                     isBookmarked = isBookmarked,
                     onBookmarkToggle = onBookmarkToggle,
                     customMenuItems = customMenuItems,
@@ -112,8 +124,7 @@ fun SmartRichText(
     onClick: (() -> Unit)? = null,
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
-    val tableRegex = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
-    val matches = tableRegex.findAll(text).toList()
+    val matches = TABLE_REGEX.findAll(text).toList()
     
     if (matches.isEmpty()) {
         MathSplitterRichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)

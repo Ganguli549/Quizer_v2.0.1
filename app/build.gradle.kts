@@ -15,8 +15,8 @@ android {
     applicationId = "com.aistudio.bmwquiz.xyza"
     minSdk = 24
     targetSdk = 36
-    versionCode = 6
-    versionName = "2.1.4"
+    versionCode = 7
+    versionName = "2.1.5"
   }
 
   signingConfigs {
@@ -61,6 +61,12 @@ android {
       keepDebugSymbols += "**/libandroidx.graphics.path.so"
     }
   }
+
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+    }
+  }
 }
 
 secrets {
@@ -94,6 +100,9 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
+  implementation("io.coil-kt:coil-gif:2.7.0")
+  implementation("io.coil-kt:coil-svg:2.7.0")
+  implementation("io.coil-kt:coil-video:2.7.0")
   implementation(libs.gson)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.android)

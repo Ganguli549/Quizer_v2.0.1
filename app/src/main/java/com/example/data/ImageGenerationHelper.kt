@@ -45,14 +45,15 @@ object ImageGenerationHelper {
                 .post(body)
                 .build()
 
-            val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val resBody = response.body?.string()
-                if (resBody != null) {
-                    val resJson = JSONObject(resBody)
-                    val data = resJson.optJSONArray("data")
-                    if (data != null && data.length() > 0) {
-                        return@withContext data.getJSONObject(0).optString("url")
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val resBody = response.body?.string()
+                    if (resBody != null) {
+                        val resJson = JSONObject(resBody)
+                        val data = resJson.optJSONArray("data")
+                        if (data != null && data.length() > 0) {
+                            return@withContext data.getJSONObject(0).optString("url")
+                        }
                     }
                 }
             }

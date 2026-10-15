@@ -17,28 +17,29 @@ object ImageDownloader {
             if (!imageUrl.startsWith("http")) return@withContext imageUrl // Already local or path
 
             val request = Request.Builder().url(imageUrl).build()
-            val response = client.newCall(request).execute()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
 
-            if (!response.isSuccessful) return@withContext null
-
-            val bytes = response.body?.bytes() ?: return@withContext null
-            
-            val imagesDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$bookId/images")
-            if (!imagesDir.exists()) {
-                imagesDir.mkdirs()
-            }
-
-            val hash = MessageDigest.getInstance("SHA-256").digest(imageUrl.toByteArray()).joinToString("") { "%02x".format(it) }
-            val fileName = "img_$hash.jpg"
-            val file = File(imagesDir, fileName)
-            
-            if (!file.exists()) {
-                FileOutputStream(file).use { fos ->
-                    fos.write(bytes)
+                val bytes = response.body?.bytes() ?: return@withContext null
+                
+                val imagesDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$bookId/images")
+                if (!imagesDir.exists()) {
+                    imagesDir.mkdirs()
                 }
-            }
 
-            return@withContext "images/$fileName"
+                val hash = MessageDigest.getInstance("SHA-256").digest(imageUrl.toByteArray()).joinToString("") { "%02x".format(it) }
+                val fileName = "img_$hash.jpg"
+                val file = File(imagesDir, fileName)
+                
+                if (!file.exists()) {
+                    FileOutputStream(file).use { fos ->
+                        fos.write(bytes)
+                    }
+                }
+                MediaScannerHelper.scanFile(context, file)
+
+                return@withContext "images/$fileName"
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             return@withContext null

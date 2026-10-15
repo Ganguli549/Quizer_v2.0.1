@@ -37,14 +37,11 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          ALIAS="${KEY_ALIAS:-upload}"
-          STORE_PASS="${KEYSTORE_PASSWORD:-android}"
-          KEY_PASS="${KEY_PASSWORD:-android}"
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 --decode --ignore-garbage > release.keystore
           else
-            echo "No custom KEYSTORE_BASE64 secret provided; generating a release keystore for build..."
-            keytool -genkey -v -keystore release.keystore -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$STORE_PASS" -keypass "$KEY_PASS" -dname "CN=Quizer, OU=App, O=AIStudio, L=Mountain View, S=CA, C=US"
+            echo "::error::KEYSTORE_BASE64 secret is missing! Release builds require a stable release signing key."
+            exit 1
           fi
 
       - name: Build Release APK

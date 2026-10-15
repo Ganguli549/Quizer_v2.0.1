@@ -188,7 +188,7 @@ fun PermissionScreen() {
                 PermissionItem(
                     icon = Icons.Default.Notifications,
                     title = "Notifications",
-                    description = "Required to keep you updated on background AI extractions.",
+                    description = "Optional: keep you updated on background AI extractions.",
                     isGranted = notificationsGranted,
                     onClick = {
                         val activity = context as? android.app.Activity
@@ -211,18 +211,18 @@ fun PermissionScreen() {
             
             Button(
                 onClick = {
-                    if (storageGranted && notificationsGranted) {
+                    if (storageGranted) {
                         (context as? android.app.Activity)?.recreate()
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
-                enabled = storageGranted && notificationsGranted,
+                enabled = storageGranted,
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    text = if (storageGranted && notificationsGranted) "Continue" else "Waiting for permissions...",
+                    text = if (storageGranted) "Continue" else "Waiting for storage permission...",
                     style = MaterialTheme.typography.titleMedium
                 )
             }

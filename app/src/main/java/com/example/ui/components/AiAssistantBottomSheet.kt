@@ -29,6 +29,21 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.ui.viewinterop.AndroidView
+import java.net.URLDecoder
+import java.net.URLEncoder
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -167,7 +182,8 @@ fun AiAssistantBottomSheet(
     currentContextInfo: String = "",
     visibleQuestionNumbers: List<Int> = emptyList(),
     onNavigateToAiSettings: () -> Unit = {},
-    onNavigateToUsage: () -> Unit = {}
+    onNavigateToUsage: () -> Unit = {},
+    autoSend: Boolean = false
 ) {
     val chatContextId = remember(currentBookId, mode) {
         when (mode) {
@@ -224,9 +240,26 @@ fun AiAssistantBottomSheet(
         }
     }
 
-    
+    var hasAutoSent by remember(chatContextId, prompt) { mutableStateOf(false) }
     val sessionAttachments by viewModel.sessionAttachments.collectAsState()
     val attachedPdfUri = sessionAttachments[chatContextId]
+
+    LaunchedEffect(autoSend, prompt, isProcessing) {
+        if (autoSend && !hasAutoSent && prompt.isNotBlank() && !isProcessing) {
+            hasAutoSent = true
+            val currentPrompt = prompt
+            viewModel.setAiPromptText(chatContextId, "")
+            viewModel.startAiProcessing(
+                context = context.applicationContext,
+                chatContextId = chatContextId,
+                prompt = currentPrompt,
+                allQuestions = questions,
+                mode = mode,
+                currentContextInfo = currentContextInfo,
+                pdfUri = attachedPdfUri
+            )
+        }
+    }
     
     val pdfLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
@@ -318,11 +351,66 @@ fun AiAssistantBottomSheet(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     var menuExpanded by remember { mutableStateOf(false) }
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(Icons.Default.MoreVert, "More Options", modifier = Modifier.size(20.dp))
+                    Box {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.MoreVert, "More Options", modifier = Modifier.size(20.dp))
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("AI Settings") },
+                                onClick = { 
+                                    menuExpanded = false
+                                    coroutineScope.launch {
+                                        try {
+                                            sheetState.hide()
+                                        } catch (e: Exception) {
+                                        } finally {
+                                            onDismiss()
+                                            onNavigateToAiSettings()
+                                        }
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Default.Settings, "Settings") }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("API Usages") },
+                                onClick = { 
+                                    menuExpanded = false
+                                    coroutineScope.launch {
+                                        try {
+                                            sheetState.hide()
+                                        } catch (e: Exception) {
+                                        } finally {
+                                            onDismiss()
+                                            onNavigateToUsage()
+                                        }
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Default.Info, "API Usages") }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Clear Chat") },
+                                onClick = { 
+                                    menuExpanded = false
+                                    viewModel.clearChatHistory(chatContextId) 
+                                },
+                                leadingIcon = { Icon(Icons.Default.Delete, "Clear Chat") }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (showDevLogs) "Hide Dev Logs" else "Show Dev Logs") },
+                                onClick = {
+                                    menuExpanded = false
+                                    showDevLogs = !showDevLogs
+                                },
+                                leadingIcon = { Icon(Icons.Default.BugReport, "Developer Logs") }
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Surface(
@@ -337,59 +425,6 @@ fun AiAssistantBottomSheet(
                         ) {
                             Icon(Icons.Default.Close, "Close", modifier = Modifier.size(16.dp))
                         }
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("AI Settings") },
-                            onClick = { 
-                                menuExpanded = false
-                                coroutineScope.launch {
-                                    try {
-                                        sheetState.hide()
-                                    } catch (e: Exception) {
-                                    } finally {
-                                        onDismiss()
-                                        onNavigateToAiSettings()
-                                    }
-                                }
-                            },
-                            leadingIcon = { Icon(Icons.Default.Settings, "Settings") }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("API Usages") },
-                            onClick = { 
-                                menuExpanded = false
-                                coroutineScope.launch {
-                                    try {
-                                        sheetState.hide()
-                                    } catch (e: Exception) {
-                                    } finally {
-                                        onDismiss()
-                                        onNavigateToUsage()
-                                    }
-                                }
-                            },
-                            leadingIcon = { Icon(Icons.Default.Info, "API Usages") }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Clear Chat") },
-                            onClick = { 
-                                menuExpanded = false
-                                viewModel.clearChatHistory(chatContextId) 
-                            },
-                            leadingIcon = { Icon(Icons.Default.Delete, "Clear Chat") }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (showDevLogs) "Hide Dev Logs" else "Show Dev Logs") },
-                            onClick = {
-                                menuExpanded = false
-                                showDevLogs = !showDevLogs
-                            },
-                            leadingIcon = { Icon(Icons.Default.BugReport, "Developer Logs") }
-                        )
                     }
                 }
             }
@@ -465,7 +500,7 @@ fun AiAssistantBottomSheet(
                     ) {
                         Column(
                             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-                            modifier = if (isUser) Modifier.widthIn(max = maxBubbleWidth) else Modifier.fillMaxWidth().padding(end = 8.dp)
+                            modifier = if (isUser) Modifier.widthIn(max = maxBubbleWidth).wrapContentWidth() else Modifier.fillMaxWidth().padding(end = 8.dp)
                         ) {
                             val sheetBg = MaterialTheme.colorScheme.surface
                             val onSurf = MaterialTheme.colorScheme.onSurface
@@ -826,16 +861,9 @@ fun AiAssistantBottomSheet(
             ) {
                 val suggestions = if (mode == AiChatMode.READ_BOOK) {
                     if (visibleQuestionNumbers.isNotEmpty()) {
-                        val list = mutableListOf<String>()
-                        for (num in visibleQuestionNumbers.take(3)) {
-                            list.add("Explain question $num")
-                        }
-                        if (list.isEmpty()) {
-                            list.add("Explain this in detail")
-                        }
-                        list
+                        visibleQuestionNumbers.map { "Explain $it" }
                     } else {
-                        listOf("Explain this in detail", "Give an example")
+                        listOf("Explain 1", "Explain 2", "Explain 3", "Explain 4")
                     }
                 } else {
                     listOf("Add distractors to question 1", "Fix typos", "Make it harder", "Generate image for question")
@@ -1110,7 +1138,7 @@ suspend fun processAiChatCommand(
         return Pair(emptyList(), "Failed to parse command intent. AI said: $parseRes")
     }
     
-    onStatusUpdate(if (intent == "chat") "Generating response..." else actionText, 0f)
+    onStatusUpdate(if (intent == "chat") "Responding..." else actionText, 0f)
     
 
     if (intent == "extract_questions") {
@@ -1132,7 +1160,7 @@ suspend fun processAiChatCommand(
             5. **Images from Source**: If the user provides a ZIP file with images, or explicitly references extracting existing images, map the image filenames provided in the System Note to the appropriate fields (e.g. 'img', 'explanationImageOptions'). Follow the user's exact instructions for how to map them.
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math.  Use HTML for bold/italics if necessary.
-            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`, and `\\\\alpha` instead of `\\alpha`.
+            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. output `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`). In valid JSON source, two backslashes represent one literal LaTeX backslash. DO NOT output quad backslashes.
             8. **Question Header Extraction & Passage `<p>` Tag (CRITICAL)**: Documents often contain question headers, which are instructions, directions, reading passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
                - You MUST extract these instructions/headers into the 'questionHeader' field.
                - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
@@ -1194,8 +1222,10 @@ suspend fun processAiChatCommand(
             
             for (item in jsonArray) {
                 val obj = item.jsonObject
-                val qOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-                val qExtraOptions = obj["extraOptions"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                val rawOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                val qOptions = rawOptions.map { cleanExtractedMathText(it) }
+                val rawExtraOptions = obj["extraOptions"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                val qExtraOptions = rawExtraOptions.map { cleanExtractedMathText(it) }
                 
                 val imgOptions = mutableListOf<String>()
                 val imgOptionsElement = obj["explanationImageOptions"]
@@ -1241,26 +1271,34 @@ suspend fun processAiChatCommand(
                     }
                     else -> null
                 }
+                val rawQuestion = obj["question"]?.jsonPrimitive?.content ?: ""
+                val questionText = cleanExtractedMathText(rawQuestion)
+                val rawExplanation = obj["explanation"]?.jsonPrimitive?.content ?: ""
+                val explanation = cleanExtractedMathText(rawExplanation)
+                val rawDetailed = obj["detailedExplanation"]?.jsonPrimitive?.content
+                val detailedExplanation = rawDetailed?.let { cleanExtractedMathText(it) }
+                val cleanedHeader = rawHeader?.let { cleanExtractedMathText(it) }
+
                 val updatedQ = com.example.data.QuestionEntity(
                     globalId = java.util.UUID.randomUUID().toString(),
                     id = maxPossibleId + 1 + updates.size.toLong(),
                     bookId = baseBookId,
                     category = "AI Extracted",
-                    question = obj["question"]?.jsonPrimitive?.content ?: "",
+                    question = questionText,
                     options = gson.toJson(qOptions),
                     advancedOptions = gson.toJson(generatedOptions1),
                     advancedCorrectIds = gson.toJson(listOfNotNull(generatedOptions1.getOrNull(cIndex1)?.id)),
                     extraOptions = gson.toJson(qExtraOptions),
                     correctIndex = cIndex1,
-                    explanation = obj["explanation"]?.jsonPrimitive?.content ?: "",
-                    detailedExplanation = obj["detailedExplanation"]?.jsonPrimitive?.content,
+                    explanation = explanation,
+                    detailedExplanation = detailedExplanation,
                     format = obj["format"]?.jsonPrimitive?.content ?: "text",
                     tableData = obj["tableData"]?.jsonPrimitive?.content,
-                    section = rawHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
+                    section = cleanedHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
                     exam = obj["exam"]?.jsonPrimitive?.content ?: "",
                     year = "",
                     path = obj["path"]?.jsonPrimitive?.content ?: "",
-                    questionHeader = rawHeader
+                    questionHeader = cleanedHeader
                 )
                 updates.add(PendingQuestionUpdate(
                     originalId = -1L, 
@@ -1292,7 +1330,8 @@ suspend fun processAiChatCommand(
         val contextInfoString = if (currentContextInfo.isNotBlank()) "Current User Context:\n$currentContextInfo" else ""
         
         val chatPrompt = """
-            You are Sparkle, a helpful educational AI Co-Pilot for the Quizer app.\n\nCRITICAL INSTRUCTION: You are also a versatile, unrestricted conversational AI just like ChatGPT or Gemini. You MUST answer ANY question the user asks, whether it is about the book, general knowledge, coding, logic, or casual chat. DO NOT restrict yourself to only discussing the Quizer app or the book's content. If they ask a general question, answer it fully and naturally!
+            You are Sparkle, an intelligent, inspiring educational study companion and co-pilot (similar to the Gemini app).
+            You are versatile and knowledgeable: answer any question the user asks, whether it is about the book, curriculum, science, history, coding, logic, or casual conversation.
             
             $contextInfoString
             
@@ -1303,36 +1342,175 @@ suspend fun processAiChatCommand(
             
             User: $command
             
-            Respond helpfully, politely, and concisely. You can explain questions, provide examples, and chat freely. 
-            Note: The user might ask to explain a question by its local number in their current topic. Use the 'Current User Context' and 'All Book Questions' to find the exact question they mean.
-            FORMATTING RULES:
-            - Options: When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B, Option C, Option D) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1.
-            - Correctness Verification: When explaining a question from the book, you MUST independently verify if the 'correctIndex' or indicated correct option is actually correct. If the book's stated correct option is WRONG, and you are 100% sure it is wrong, clearly point out the error to the user and explain what the actual correct answer should be. If it is correct, proceed normally.
-            - Use Markdown for bold (**text**), italics (*text*), and lists.
-            - Use Markdown code blocks (`code` or ```language\n code \n```) for code snippets.
-            - You can use Markdown tables if you need to present tabular data.
-            - MATH FORMATTING (STRICT MANDATE): All inline math, variables, and formulas MUST be wrapped in single dollar signs `${"$"}`. Block equations must use double dollar signs `${"$$"}`.
-              Examples: `${"$"}E = mc^2${"$"}` or `${"$$"}\int x dx${"$$"}`. 
-              NEVER output naked equations like `x=1` or `a^2+b^2=c^2`. You MUST wrap them: `${"$"}x=1${"$"}`.
-              NEVER use `\(` or `\[`.
-            - IMAGES: If illustrating a spatial, structural, or complex visual concept would significantly help understanding, you can include an AI-generated image by using this exact tag: [AI_IMAGE: <detailed prompt for image generation here>]. Use this sparingly and ONLY when a visual aid adds real value. Do NOT use standard Markdown image syntax.
+            GUIDELINES FOR BEAUTIFUL EXPLANATIONS:
+            - When explaining a question, concept, or topic:
+              1. Structure the explanation beautifully with clear sections:
+                 • **Quick Answer / Core Concept**: A clear, concise statement of the correct option (e.g. Option B) and the core principle.
+                 • **Step-by-Step Breakdown**: Walk through the reasoning clearly. Explain why the correct option is right, and why the other options (Option A, C, D, etc.) are incorrect or distractors.
+                 • **Key Takeaways & Memory Tips**: An intuitive summary, practical analogy, or mnemonic to help remember the concept.
+              2. Always refer to options with letter designations (Option A, Option B, Option C, Option D).
+              3. If a question in the book has an incorrect answer key or typo, clarify what the correct answer should be.
+            - ILLUSTRATIONS & VISUAL AIDS (SMART & SELECTIVE RELEVANCE):
+              First, evaluate whether the question or concept genuinely benefits from a visual illustration:
+              • STRICT RULE: DO NOT include an illustration for vocabulary words, word meanings, synonyms, antonyms, idioms, grammar rules, spelling, parts of speech, abstract words, or linguistic concepts (e.g. words like "amble", "abate", "benevolent", "metaphor", "noun", "clause"). A visual illustration for vocabulary or word meaning is NOT relevant, out of context, and distracting.
+              • STRICT RULE: DO NOT include an illustration for pure math calculations, formulas, or logic problems without physical or geometric figures.
+              • DO include an illustration ONLY when a visual aid genuinely helps the user understand or visualize the concept:
+                - Scientific diagrams, cycles, or processes (e.g., "seismic waves diagram", "nitrogen cycle", "human heart anatomy")
+                - Concrete physical objects, laboratory instruments, or specialized equipment (e.g., "stethoscope", "aquarium", "pendulum")
+                - Biological organisms, animals, plants, or cellular structures (e.g., "amoeba", "mitochondria", "platypus")
+                - Geographic maps, astronomical phenomena, or architectural monuments
+              • If an illustration is genuinely helpful, output:
+                [WEB_IMAGE: query="<concise subject with descriptive keyword e.g. 'seismic waves diagram' or 'stethoscope instrument'>", source="<wikipedia | commons | web>", caption="<friendly caption>"]
+                Choose the source that best suits the topic:
+                • "wikipedia": Best for encyclopedic subjects, concrete objects, animals, places, history, and science.
+                • "commons": Best for scientific diagrams, schematics, cycles, animated GIFs, and educational short videos.
+                • "web": Best for real-world photos, charts, and modern examples.
+              • If the question is about word meanings, definitions, grammar, or does not need a visual, DO NOT include any [WEB_IMAGE] tag.
+            - Math & formulas: format equations cleanly with standard notation (${'$'}`formula`${'$'}).
+            - Use Markdown (bold, bullet points, headers, tables, code blocks) to make the text clean, scannable, and engaging. Keep the tone encouraging, clear, and friendly.
         """.trimIndent()
         
+        onStatusUpdate("Responding...", 0.25f)
         val chatResponse = GeminiHelper.generateContent(context, chatPrompt, pdfBytes = pdfBytes, attachments = attachments, onDevLog = onDevLog)
         
-        // Extract AI_IMAGE prompts if any
-        val imagePromptRegex = Regex("\\[AI_IMAGE:(.*?)\\]")
         var finalResponse = chatResponse
-        val matches = imagePromptRegex.findAll(chatResponse).toList()
-        for (match in matches) {
+
+        // 1. Process WEB_IMAGE tags for Web & Wikipedia illustrations (AI source selection + live status + verification)
+        val webImageRegex = Regex("\\[WEB_IMAGE:(.*?)\\]", RegexOption.IGNORE_CASE)
+        val webMatches = webImageRegex.findAll(chatResponse).toList()
+        for (match in webMatches) {
+            val rawContent = match.groupValues[1].trim()
+            var query = rawContent
+            var source: String? = null
+            var caption: String? = null
+
+            val queryAttr = Regex("query\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE).find(rawContent)?.groupValues?.get(1)
+            val sourceAttr = Regex("source\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE).find(rawContent)?.groupValues?.get(1)
+            val captionAttr = Regex("caption\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE).find(rawContent)?.groupValues?.get(1)
+            if (queryAttr != null) {
+                query = queryAttr.trim()
+                source = sourceAttr?.trim()
+                caption = captionAttr?.trim()
+            } else if (rawContent.contains(",")) {
+                val parts = rawContent.split(",", limit = 3)
+                query = parts[0].trim().removeSurrounding("\"").removeSurrounding("'")
+                caption = parts.getOrNull(1)?.trim()?.removeSurrounding("\"")?.removeSurrounding("'")
+                source = parts.getOrNull(2)?.trim()?.removeSurrounding("\"")?.removeSurrounding("'")
+            } else {
+                query = rawContent.removeSurrounding("\"").removeSurrounding("'")
+            }
+
+            val conceptContext = "$command | $currentContextInfo | $query ${caption ?: ""}".trim()
+            if (!com.example.data.WikipediaImageHelper.isConceptSuitableForIllustration(query, conceptContext)) {
+                onDevLog?.invoke("Skipping illustration: '$query' is vocabulary or abstract concept not suitable for illustration.")
+                finalResponse = finalResponse.replace(match.value, "")
+                continue
+            }
+
+            val illustration = com.example.data.WikipediaImageHelper.searchIllustrationWithAiValidation(
+                context = context,
+                query = query,
+                preferredSource = source,
+                customCaption = caption,
+                conceptContext = conceptContext,
+                onStatusUpdate = onStatusUpdate,
+                onDevLog = onDevLog
+            )
+            if (illustration != null) {
+                val eUrl = java.net.URLEncoder.encode(illustration.imageUrl, "UTF-8")
+                val eTitle = java.net.URLEncoder.encode(illustration.title, "UTF-8")
+                val eCap = java.net.URLEncoder.encode(illustration.caption, "UTF-8")
+                val eSrc = java.net.URLEncoder.encode(illustration.sourceUrl, "UTF-8")
+                val eProv = java.net.URLEncoder.encode(illustration.provider, "UTF-8")
+                val eType = java.net.URLEncoder.encode(illustration.mediaType, "UTF-8")
+                val eVid = java.net.URLEncoder.encode(illustration.videoUrl ?: "", "UTF-8")
+                finalResponse = finalResponse.replace(
+                    match.value,
+                    "\n\n[WEB_ILLUSTRATION:url=$eUrl&title=$eTitle&caption=$eCap&source=$eSrc&provider=$eProv&type=$eType&video=$eVid]\n\n"
+                )
+            } else {
+                // If illustration is not found or not suitable, omit completely
+                finalResponse = finalResponse.replace(match.value, "")
+            }
+        }
+
+        // 2. Process [AI_IMAGE: ...] tags
+        val imagePromptRegex = Regex("\\[AI_IMAGE:(.*?)\\]")
+        val aiMatches = imagePromptRegex.findAll(finalResponse).toList()
+        for (match in aiMatches) {
             val imgPrompt = match.groupValues[1].trim()
             val imgUrl = com.example.data.ImageGenerationHelper.generateImage(context, imgPrompt)
             if (imgUrl != null) {
                 finalResponse = finalResponse.replace(match.value, "[IMG_URL:$imgUrl]")
             } else {
-                finalResponse = finalResponse.replace(match.value, "(Failed to generate image)")
+                finalResponse = finalResponse.replace(match.value, "")
             }
         }
+
+        // 3. Fallback: only if user explicitly asked for a diagram/visual illustration and no image was output yet
+        val userExplicitlyAskedForVisual = command.contains("illustrat", ignoreCase = true) ||
+                command.contains("diagram", ignoreCase = true) ||
+                command.contains("with picture", ignoreCase = true) ||
+                command.contains("with image", ignoreCase = true) ||
+                command.contains("chart", ignoreCase = true) ||
+                command.contains("video", ignoreCase = true) ||
+                command.contains("gif", ignoreCase = true)
+
+        if (userExplicitlyAskedForVisual && !finalResponse.contains("[WEB_ILLUSTRATION:") && !finalResponse.contains("[IMG_URL:")) {
+            var subjectCandidate = ""
+            val qNumMatch = Regex("question\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
+                ?: Regex("q\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
+            if (qNumMatch != null) {
+                val num = qNumMatch.groupValues[1].toIntOrNull()
+                val targetQ = allQuestions.find { it.id == num?.toLong() }
+                if (targetQ != null) {
+                    val correctOpt = try {
+                        val arr = org.json.JSONArray(targetQ.options)
+                        if (targetQ.correctIndex in 0 until arr.length()) arr.getString(targetQ.correctIndex) else ""
+                    } catch (e: Exception) { "" }
+                    subjectCandidate = correctOpt.ifBlank { targetQ.question }
+                }
+            }
+            if (subjectCandidate.isBlank() && currentContextInfo.contains("viewing the topic/path: '")) {
+                subjectCandidate = currentContextInfo.substringAfter("viewing the topic/path: '").substringBefore("'")
+            }
+            if (subjectCandidate.isBlank()) {
+                subjectCandidate = command.replace(Regex("explain|with|illustration|diagram|picture|image|for|please|about|the|chart|video|gif", RegexOption.IGNORE_CASE), "").trim()
+            }
+
+            val cleanQuery = subjectCandidate
+                .replace(Regex("<.*?>"), " ")
+                .replace(Regex("[^a-zA-Z0-9 ]"), " ")
+                .split(" ")
+                .filter { it.length > 2 && it.lowercase() !in listOf("what", "which", "following", "about", "statement", "correct", "incorrect", "option", "question", "where") }
+                .take(3)
+                .joinToString(" ")
+
+            if (cleanQuery.isNotBlank()) {
+                val conceptContext = "$command | $currentContextInfo | $cleanQuery"
+                val illustration = com.example.data.WikipediaImageHelper.searchIllustrationWithAiValidation(
+                    context = context,
+                    query = cleanQuery,
+                    preferredSource = "auto",
+                    customCaption = null,
+                    conceptContext = conceptContext,
+                    onStatusUpdate = onStatusUpdate,
+                    onDevLog = onDevLog
+                )
+                if (illustration != null) {
+                    val eUrl = java.net.URLEncoder.encode(illustration.imageUrl, "UTF-8")
+                    val eTitle = java.net.URLEncoder.encode(illustration.title, "UTF-8")
+                    val eCap = java.net.URLEncoder.encode(illustration.caption, "UTF-8")
+                    val eSrc = java.net.URLEncoder.encode(illustration.sourceUrl, "UTF-8")
+                    val eProv = java.net.URLEncoder.encode(illustration.provider, "UTF-8")
+                    val eType = java.net.URLEncoder.encode(illustration.mediaType, "UTF-8")
+                    val eVid = java.net.URLEncoder.encode(illustration.videoUrl ?: "", "UTF-8")
+                    finalResponse += "\n\n[WEB_ILLUSTRATION:url=$eUrl&title=$eTitle&caption=$eCap&source=$eSrc&provider=$eProv&type=$eType&video=$eVid]"
+                }
+            }
+        }
+        
+        onStatusUpdate("Finalizing response...", 0.98f)
         
         return Pair(emptyList(), finalResponse)
     }
@@ -1384,7 +1562,7 @@ suspend fun processAiChatCommand(
             Guidelines:
             1. **Distractors (extraOptions)**: If asked for distractors or extraOptions, generate highly plausible but incorrect options (at least 3-4). Format them as a JSON string array like '["Distractor 1", "Distractor 2"]'.
             2. **Explanations & MATH**: If asked for detailed explanations, use HTML or Markdown. When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1. Wrap mathematical expressions, formula, and variable in single dollar signs `${"$"}`. Examples: `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`. Block equations must use double dollar signs `${"$$"}`. NEVER write math in plain text like `\int` or `x=1` or `a^2+b^2=c^2` without the `${"$"}` wrapper! Do NOT use `\(` or `\[`. NEVER wrap math expressions in backticks (e.g. NEVER use backticks around the dollar signs).  Use ONLY dollar signs.
-            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing. For example, output `\\\\frac{1}{2}` instead of `\\frac{1}{2}`.
+            **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. output `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`). In valid JSON source, two backslashes represent one literal LaTeX backslash. DO NOT output quad backslashes.
             3. **Images**: If asked for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             4. **Expansion (Single to Multiple)**: If asked to expand a question into multiple questions, you should return the original question PLUS the newly generated questions. For new questions, assign them "id": -1.
             5. **Table Format**: If asked to convert tabular data to 'table' format, set 'format' to "table", and construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). Clean up the 'question' text to remove the table data.
@@ -1554,64 +1732,562 @@ suspend fun processAiChatCommand(
     return Pair(pendingUpdates, "I've successfully processed the request.")
 }
 
+private sealed class MessageChunk {
+    data class Text(val content: String) : MessageChunk()
+    data class WebImage(
+        val url: String,
+        val title: String,
+        val caption: String,
+        val source: String,
+        val provider: String,
+        val mediaType: String = "image", // "image", "gif", "chart", "video"
+        val videoUrl: String = ""
+    ) : MessageChunk()
+    data class SimpleImage(val url: String) : MessageChunk()
+}
+
 @Composable
 fun ChatMessageContent(content: String, isUser: Boolean = false) {
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-    val imageRegex = Regex("\\[IMG_URL:(.*?)\\]")
-    val matches = imageRegex.findAll(content).toList()
-    
-    androidx.compose.foundation.text.selection.SelectionContainer {
-        if (matches.isEmpty()) {
-            com.example.ui.components.SmartRichText(
+
+    if (isUser) {
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text(
                 text = content,
                 color = textColor,
-                fontSize = 16.sp
+                fontSize = 16.sp,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.wrapContentSize()
             )
-        } else {
-            Column {
-                var lastIndex = 0
-                for (match in matches) {
-                    val textPart = content.substring(lastIndex, match.range.first)
-                    if (textPart.isNotBlank()) {
+        }
+        return
+    }
+
+    val chunks = remember(content) {
+        val list = mutableListOf<MessageChunk>()
+        val webIllRegex = Regex("\\[WEB_ILLUSTRATION:(.*?)\\]")
+        val imgUrlRegex = Regex("\\[IMG_URL:(.*?)\\]")
+        val mdImageRegex = Regex("!\\[(.*?)\\]\\((https?://\\S+)\\)")
+
+        data class TagMatch(val range: IntRange, val chunk: MessageChunk)
+        val tagMatches = mutableListOf<TagMatch>()
+
+        for (m in webIllRegex.findAll(content)) {
+            val paramsStr = m.groupValues[1]
+            var url = ""
+            var title = ""
+            var caption = ""
+            var source = ""
+            var provider = "Wikipedia"
+            var mediaType = "image"
+            var videoUrl = ""
+
+            paramsStr.split("&").forEach { pair ->
+                val kv = pair.split("=", limit = 2)
+                if (kv.size == 2) {
+                    val key = kv[0]
+                    val value = try { URLDecoder.decode(kv[1], "UTF-8") } catch (e: Exception) { kv[1] }
+                    when (key) {
+                        "url" -> url = value
+                        "title" -> title = value
+                        "caption" -> caption = value
+                        "source" -> source = value
+                        "provider" -> provider = value
+                        "type" -> mediaType = value
+                        "video" -> videoUrl = value
+                    }
+                }
+            }
+            if (url.isNotBlank()) {
+                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(url, title, caption, source, provider, mediaType, videoUrl)))
+            }
+        }
+
+        for (m in imgUrlRegex.findAll(content)) {
+            val url = m.groupValues[1].trim()
+            if (url.isNotBlank()) {
+                tagMatches.add(TagMatch(m.range, MessageChunk.SimpleImage(url)))
+            }
+        }
+
+        for (m in mdImageRegex.findAll(content)) {
+            if (tagMatches.none { it.range.first <= m.range.first && it.range.last >= m.range.last }) {
+                val caption = m.groupValues[1].trim()
+                val url = m.groupValues[2].trim()
+                val mediaType = if (url.lowercase().endsWith(".gif")) "gif" else if (url.lowercase().endsWith(".svg")) "chart" else "image"
+                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(url, title = "", caption = caption, source = "", provider = "Web Image", mediaType = mediaType)))
+            }
+        }
+
+        tagMatches.sortBy { it.range.first }
+
+        var cursor = 0
+        for (tm in tagMatches) {
+            if (tm.range.first > cursor) {
+                val textPart = content.substring(cursor, tm.range.first)
+                if (textPart.isNotBlank()) {
+                    list.add(MessageChunk.Text(textPart))
+                }
+            }
+            list.add(tm.chunk)
+            cursor = tm.range.last + 1
+        }
+        if (cursor < content.length) {
+            val remainingText = content.substring(cursor)
+            if (remainingText.isNotBlank()) {
+                list.add(MessageChunk.Text(remainingText))
+            }
+        }
+
+        if (list.isEmpty() && content.isNotBlank()) {
+            list.add(MessageChunk.Text(content))
+        }
+        list
+    }
+
+    androidx.compose.foundation.text.selection.SelectionContainer {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            chunks.forEach { chunk ->
+                when (chunk) {
+                    is MessageChunk.Text -> {
                         com.example.ui.components.SmartRichText(
-                            text = textPart,
+                            text = chunk.content,
                             color = textColor,
                             fontSize = 16.sp
                         )
                     }
-                    
-                    val imgUrl = match.groupValues[1]
-                    coil.compose.SubcomposeAsyncImage(
-                model = imgUrl,
-                contentDescription = "AI Generated Image",
-                loading = {
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    is MessageChunk.WebImage -> {
+                        WebIllustrationCard(
+                            imageUrl = chunk.url,
+                            title = chunk.title,
+                            caption = chunk.caption,
+                            sourceUrl = chunk.source,
+                            provider = chunk.provider,
+                            mediaType = chunk.mediaType,
+                            videoUrl = chunk.videoUrl
+                        )
                     }
-                },
-                error = {
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Error", tint = MaterialTheme.colorScheme.error)
+                    is MessageChunk.SimpleImage -> {
+                        WebIllustrationCard(
+                            imageUrl = chunk.url,
+                            title = "Generated Illustration",
+                            caption = "",
+                            sourceUrl = "",
+                            provider = "AI Illustration",
+                            mediaType = "image",
+                            videoUrl = ""
+                        )
                     }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 100.dp, max = 300.dp)
-                    .padding(vertical = 8.dp)
-            )
-            
-            lastIndex = match.range.last + 1
-        }
-        
-        val remainingText = content.substring(lastIndex)
-        if (remainingText.isNotBlank()) {
-            com.example.ui.components.SmartRichText(
-                text = remainingText,
-                color = textColor,
-                fontSize = 16.sp
-            )
+                }
+            }
         }
     }
 }
+
+@Composable
+fun WebIllustrationCard(
+    imageUrl: String,
+    title: String,
+    caption: String,
+    sourceUrl: String,
+    provider: String,
+    mediaType: String = "image",
+    videoUrl: String = ""
+) {
+    var loadFailed by remember(imageUrl) { mutableStateOf(false) }
+
+    // When illustration is unavailable, wikipedia illustration section is NOT shown in chat bubble!
+    if (loadFailed || imageUrl.isBlank()) {
+        return
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    var showDialog by remember { mutableStateOf(false) }
+
+    val imageRequest = remember(imageUrl) {
+        coil.request.ImageRequest.Builder(context)
+            .data(imageUrl)
+            .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+            .crossfade(true)
+            .build()
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Source & Attribution Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val (typeLabel, typeIcon) = when (mediaType) {
+                    "video" -> Pair("Short Video", Icons.Default.Videocam)
+                    "gif" -> Pair("Animation (GIF)", Icons.Default.Animation)
+                    "chart" -> Pair("Chart & Diagram", Icons.Default.BarChart)
+                    else -> Pair(if (provider.isNotBlank()) provider else "Wikipedia", Icons.Default.Public)
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = typeIcon,
+                        contentDescription = typeLabel,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = typeLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (provider.isNotBlank() && mediaType != "image" && provider != typeLabel) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "• $provider",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (sourceUrl.isNotBlank()) {
+                    Surface(
+                        onClick = {
+                            try {
+                                uriHandler.openUri(sourceUrl)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Source",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open Source Link",
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Media Container
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 280.dp)
+                    .background(Color.Black.copy(alpha = 0.04f))
+                    .clickable { showDialog = true },
+                contentAlignment = Alignment.Center
+            ) {
+                coil.compose.SubcomposeAsyncImage(
+                    model = imageRequest,
+                    contentDescription = title.ifBlank { caption },
+                    contentScale = ContentScale.Fit,
+                    onError = {
+                        // Crucial: When image load fails, hide this card completely from the chat bubble
+                        loadFailed = true
+                    },
+                    loading = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp, max = 280.dp)
+                )
+
+                // Play Button overlay if it is a video
+                if (mediaType == "video" || videoUrl.isNotBlank()) {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = Color.Black.copy(alpha = 0.65f),
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play Video",
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Action / Interaction Badge in bottom right
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.Black.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                ) {
+                    val badgeText = when {
+                        mediaType == "video" || videoUrl.isNotBlank() -> "Play video"
+                        mediaType == "gif" -> "GIF animation"
+                        mediaType == "chart" -> "Zoom diagram"
+                        else -> "Tap to zoom"
+                    }
+                    val badgeIcon = when {
+                        mediaType == "video" || videoUrl.isNotBlank() -> Icons.Default.PlayArrow
+                        mediaType == "gif" -> Icons.Default.Animation
+                        else -> Icons.Default.ZoomIn
+                    }
+
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = badgeIcon,
+                            contentDescription = badgeText,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Description / Caption
+            if (title.isNotBlank() || caption.isNotBlank()) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    if (title.isNotBlank()) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (caption.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = caption,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDialog) {
+        FullMediaViewerDialog(
+            imageUrl = imageUrl,
+            title = title,
+            caption = caption,
+            mediaType = mediaType,
+            videoUrl = videoUrl,
+            sourceUrl = sourceUrl,
+            onDismiss = { showDialog = false }
+        )
+    }
 }
+
+@Composable
+fun FullMediaViewerDialog(
+    imageUrl: String,
+    title: String,
+    caption: String,
+    mediaType: String = "image",
+    videoUrl: String = "",
+    sourceUrl: String = "",
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        var scale by remember { mutableFloatStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+
+        val imageRequest = remember(imageUrl) {
+            coil.request.ImageRequest.Builder(context)
+                .data(imageUrl)
+                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+                .crossfade(true)
+                .build()
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.95f))
+        ) {
+            // Top Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 36.dp, start = 16.dp, end = 16.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title.ifBlank { if (mediaType == "video") "Short Video" else "Illustration" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (sourceUrl.isNotBlank()) {
+                        IconButton(onClick = {
+                            try { uriHandler.openUri(sourceUrl) } catch (e: Exception) { e.printStackTrace() }
+                        }) {
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open Source",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+
+            // Media View Area
+            if (mediaType == "video" && videoUrl.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 70.dp, horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            android.widget.VideoView(ctx).apply {
+                                setVideoURI(android.net.Uri.parse(videoUrl))
+                                val controller = android.widget.MediaController(ctx)
+                                controller.setAnchorView(this)
+                                setMediaController(controller)
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = true
+                                    start()
+                                }
+                                setOnErrorListener { _, _, _ ->
+                                    true
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(340.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                }
+            } else {
+                // Interactive Zoom & Pan Area for Images, GIFs, Charts, Graphs
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 70.dp)
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                if (scale > 1f) {
+                                    offset += pan
+                                } else {
+                                    offset = Offset.Zero
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    coil.compose.SubcomposeAsyncImage(
+                        model = imageRequest,
+                        contentDescription = title,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(
+                                scaleX = scale,
+                                scaleY = scale,
+                                translationX = offset.x,
+                                translationY = offset.y
+                            )
+                    )
+                }
+            }
+
+            // Bottom Caption
+            if (caption.isNotBlank()) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 28.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.95f),
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+    }
 }
+

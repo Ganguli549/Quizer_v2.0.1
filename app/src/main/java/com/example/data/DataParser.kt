@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 import androidx.room.withTransaction
 import kotlinx.coroutines.sync.withLock
 
@@ -146,21 +147,136 @@ class DataParser {
 
     companion object {
         fun autoFixJson(jsonStr: String): String {
-            var fixed = jsonStr
-            // Remove trailing commas in objects and arrays
-            fixed = fixed.replace(Regex(""",(\s*[}\]])"""), "$1")
+            if (jsonStr.isBlank()) return jsonStr
+
+            var fixed = jsonStr.trim()
             
-            // Fix invalid escaped characters from AI (like \s, \%, \$, etc. used in LaTeX)
-            // Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \u
-            fixed = fixed.replace(Regex("""\\(.)""")) { matchResult ->
-                val c = matchResult.groupValues[1]
-                if (c == "\"" || c == "\\" || c == "/" || c == "b" || c == "f" || c == "n" || c == "r" || c == "t" || c == "u") {
-                    matchResult.value
+            // 1. Remove markdown code fences if present (e.g. ```json ... ```)
+            if (fixed.startsWith("```json", ignoreCase = true)) {
+                fixed = fixed.removePrefix("```json").removePrefix("```JSON").trim()
+            } else if (fixed.startsWith("```")) {
+                fixed = fixed.removePrefix("```").trim()
+            }
+            if (fixed.endsWith("```")) {
+                fixed = fixed.removeSuffix("```").trim()
+            }
+
+            // 2. Remove trailing commas in objects and arrays
+            fixed = fixed.replace(Regex(""",(\s*[}\]])"""), "$1")
+
+            // 3. Fix unescaped backslashes in JSON strings, especially LaTeX commands.
+            // In valid JSON: \" is escaped quote, \\ is escaped backslash, \/ is escaped slash.
+            // \uXXXX is valid ONLY if followed by exactly 4 hex digits [0-9a-fA-F]{4}.
+            // Control escapes \n, \r, \t are valid for actual linebreaks/tabs, but when followed by
+            // LaTeX command names (like \neq, \nu, \times, \theta, \text, \right, etc.), or for \b (beta, bar, etc.)
+            // and \f (frac, forall, etc.), they are LaTeX commands and MUST have their backslash escaped as \\!
+            val sb = StringBuilder(fixed.length + 128)
+            var inString = false
+            var i = 0
+            val len = fixed.length
+            
+            while (i < len) {
+                val c = fixed[i]
+                if (!inString) {
+                    if (c == '"') {
+                        inString = true
+                    }
+                    sb.append(c)
+                    i++
                 } else {
-                    "\\\\$c"
+                    if (c == '"') {
+                        inString = false
+                        sb.append(c)
+                        i++
+                    } else if (c == '\\') {
+                        if (i + 1 >= len) {
+                            sb.append("\\\\")
+                            i++
+                        } else {
+                            val next = fixed[i + 1]
+                            if (next == '\\') {
+                                // Already double-escaped: \\
+                                sb.append("\\\\")
+                                i += 2
+                            } else if (next == '"' || next == '/') {
+                                // Valid JSON escape: \" or \/
+                                sb.append('\\').append(next)
+                                i += 2
+                            } else if (next == 'u') {
+                                // Check if followed by 4 hex digits
+                                val isHex4 = (i + 5 < len) && (2..5).all { offset ->
+                                    val h = fixed[i + offset]
+                                    (h in '0'..'9') || (h in 'a'..'f') || (h in 'A'..'F')
+                                }
+                                if (isHex4) {
+                                    sb.append("\\u")
+                                    i += 2
+                                } else {
+                                    // LaTeX command starting with \u (e.g. \underbrace, \uparrow, \upsilon)
+                                    sb.append("\\\\u")
+                                    i += 2
+                                }
+                            } else if (next == 'f') {
+                                // In AI question text \f is ALWAYS LaTeX (\frac, \forall, \flat)
+                                sb.append("\\\\f")
+                                i += 2
+                            } else if (next == 'b') {
+                                // In AI question text \b is ALWAYS LaTeX (\beta, \bar, \begin, \binom, \bullet, etc.)
+                                sb.append("\\\\b")
+                                i += 2
+                            } else if (next == 't') {
+                                val rest = fixed.substring(i + 1)
+                                val isLatexT = rest.startsWith("times") || rest.startsWith("theta") ||
+                                        rest.startsWith("text") || rest.startsWith("tan") ||
+                                        rest.startsWith("tau") || rest.startsWith("to") ||
+                                        rest.startsWith("tilde") || rest.startsWith("therefore") ||
+                                        rest.startsWith("triangle") || rest.startsWith("tfrac") ||
+                                        rest.startsWith("top")
+                                if (isLatexT) {
+                                    sb.append("\\\\t")
+                                } else {
+                                    sb.append("\\t")
+                                }
+                                i += 2
+                            } else if (next == 'r') {
+                                val rest = fixed.substring(i + 1)
+                                val isLatexR = rest.startsWith("right") || rest.startsWith("rho") ||
+                                        rest.startsWith("rightarrow") || rest.startsWith("Rightarrow") ||
+                                        rest.startsWith("rangle") || rest.startsWith("rfloor") ||
+                                        rest.startsWith("rceil") || rest.startsWith("Re") ||
+                                        rest.startsWith("root")
+                                if (isLatexR) {
+                                    sb.append("\\\\r")
+                                } else {
+                                    sb.append("\\r")
+                                }
+                                i += 2
+                            } else if (next == 'n') {
+                                val rest = fixed.substring(i + 1)
+                                val isLatexN = rest.startsWith("neq") || rest.startsWith("nabla") ||
+                                        rest.startsWith("nearrow") || rest.startsWith("neg") ||
+                                        rest.startsWith("nu") ||
+                                        (rest.startsWith("ne") && (rest.length == 2 || !rest[2].isLetter())) ||
+                                        (rest.startsWith("not") && (rest.length == 3 || !rest[3].isLetter()))
+                                if (isLatexN) {
+                                    sb.append("\\\\n")
+                                } else {
+                                    sb.append("\\n")
+                                }
+                                i += 2
+                            } else {
+                                // Any other character (e.g. \s, \a, \d, \p, \alpha, \sqrt, \[, \], \(, \), \$, etc.)
+                                sb.append("\\\\").append(next)
+                                i += 2
+                            }
+                        }
+                    } else {
+                        sb.append(c)
+                        i++
+                    }
                 }
             }
-            return fixed
+            return sb.toString()
         }
 
         suspend fun loadInitialData(context: Context, repository: QuizRepository) {
@@ -218,9 +334,10 @@ class DataParser {
 
         private val syncMutex = kotlinx.coroutines.sync.Mutex()
 
-        fun extractImagesFromQBook(file: File, destDir: File) {
+        fun extractImagesFromQBook(file: File, destDir: File, context: Context? = null) {
             try {
                 if (!destDir.exists()) destDir.mkdirs()
+                val extractedFiles = mutableListOf<File>()
                 java.util.zip.ZipFile(file).use { zip ->
                     val entries = zip.entries()
                     val buffer = ByteArray(65536)
@@ -244,8 +361,12 @@ class DataParser {
                                     }
                                 }
                             }
+                            extractedFiles.add(destFile)
                         }
                     }
+                }
+                if (context != null && extractedFiles.isNotEmpty()) {
+                    MediaScannerHelper.scanFiles(context, extractedFiles)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -337,7 +458,7 @@ class DataParser {
                             // Ensure image assets exist even if questions already parsed
                             val bookImagesDir = File(quizerDir, "$bookId/images")
                             if (!bookImagesDir.exists() || bookImagesDir.listFiles().isNullOrEmpty()) {
-                                extractImagesFromQBook(file, bookImagesDir)
+                                extractImagesFromQBook(file, bookImagesDir, context)
                             }
                         }
                     }
@@ -434,14 +555,6 @@ class DataParser {
                         if (identity.name == null) return@withContext Pair("Book Identity lacks 'name'.", bookId)
                         if (identity.questionIdStart == null) return@withContext Pair("Book Identity lacks 'questionIdStart'.", bookId)
                         if (identity.questionIdEnd == null) return@withContext Pair("Book Identity lacks 'questionIdEnd'.", bookId)
-                        
-                        val bookIdStr = identity.id
-                        val existingCheck = repository.getBookSync(bookIdStr)
-                        if (existingCheck != null) {
-                            repository.deleteQuestionsForBook(bookIdStr)
-                            repository.deleteAssociatedDataForBook(bookIdStr)
-                            // We will replace it
-                        }
                     }
 
                     onProgress?.invoke("Parsing and Saving Questions...")
@@ -454,6 +567,7 @@ class DataParser {
                         return@withContext Pair("Questions data is not a valid JSON array.", bookId)
                     }
 
+                    val existingQuestionsMap = repository.getQuestionsForBookSync(bookId).associateBy { it.id }
                     val questionIds = mutableSetOf<Long>()
                     val questionEntities = mutableListOf<QuestionEntity>()
                     val categorySet = mutableSetOf<String>()
@@ -513,8 +627,10 @@ class DataParser {
                         val cat = raw.category ?: raw.path.split(">").lastOrNull()?.trim() ?: "Unknown"
                         categorySet.add(cat)
                         
+                        val existingGlobalId = existingQuestionsMap[raw.id]?.globalId ?: UUID.randomUUID().toString()
                         questionEntities.add(
                             QuestionEntity(
+                                globalId = existingGlobalId,
                                 id = raw.id,
                                 bookId = if(isUpdate) existingBook?.id ?: bookId else bookId,
                                 path = raw.path,
@@ -532,61 +648,61 @@ class DataParser {
                             )
                         )
                         totalParsedQuestions++
-                        
-                        // Batch insert to prevent massive memory usage
-                        if (questionEntities.size >= 1000) {
-                            repository.insertQuestions(questionEntities)
-                            questionEntities.clear()
-                            // Keep only ranges that might still apply (endId >= raw.id)
-                            headerRanges.removeAll { it.endId < raw.id }
-                        }
                     }
                     jsonReader.endArray()
                     
                     if (totalParsedQuestions == 0) return@withContext Pair("Questions array is empty.", bookId)
                     
-                    // Insert any remaining questions
-                    if (questionEntities.isNotEmpty()) {
-                        repository.insertQuestions(questionEntities)
-                    }
-                    
-                    onProgress?.invoke("Updating Book Catalog...")
-                    if (isUpdate && existingBook != null) {
-                         val newBookVersion = identity.bookVersion ?: existingBook.bookVersion
-                         
-                         if (identity.updateVersion != null) {
-                             existingUpdatesList.addAll(identity.updateVersion)
-                         } else if (identity.updateId != null && identity.questionIdStart != null && identity.questionIdEnd != null) {
-                             existingUpdatesList.add(mapOf<String, List<Long>>((identity.updateId ?: "") to listOf<Long>((identity.questionIdStart ?: 0L).toLong(), (identity.questionIdEnd ?: 0L).toLong())))
-                         }
+                    onProgress?.invoke("Committing Book and Questions...")
+                    val db = AppDatabase.getDatabase(context)
+                    db.withTransaction {
+                        if (isUpdate && existingBook != null) {
+                            val newBookVersion = identity.bookVersion ?: existingBook.bookVersion
+                            
+                            if (identity.updateVersion != null) {
+                                existingUpdatesList.addAll(identity.updateVersion)
+                            } else if (identity.updateId != null && identity.questionIdStart != null && identity.questionIdEnd != null) {
+                                existingUpdatesList.add(mapOf<String, List<Long>>((identity.updateId ?: "") to listOf<Long>((identity.questionIdStart ?: 0L).toLong(), (identity.questionIdEnd ?: 0L).toLong())))
+                            }
 
-                         val updatedBook = existingBook.copy(
-                             totalQuestions = existingBook.totalQuestions + totalParsedQuestions,
-                             bookVersion = newBookVersion,
-                             updateVersions = gson.toJson(existingUpdatesList),
-                             questionIdEnd = identity.questionIdEnd ?: existingBook.questionIdEnd
-                         )
-                         repository.insertBook(updatedBook)
-                         return@withContext Pair(null, bookId)
-                    } else {
-                         repository.insertBook(
-                             BookEntity(
-                                 id = bookId,
-                                 name = identity.name ?: "Unknown Book",
-                                 totalQuestions = totalParsedQuestions,
-                                 totalCategories = categorySet.size,
-                                 dataVariable = identity.dataVariable,
-                                 updateId = identity.updateId,
-                                 bookVersion = identity.bookVersion,
-                                 updateVersions = if (identity.updateVersion != null) gson.toJson(identity.updateVersion) else "[]",
-                                 questionIdStart = identity.questionIdStart ?: 0L,
-                                 questionIdEnd = identity.questionIdEnd ?: 0L,
-                                 hierarchyLabels = if (identity.hierarchyLabels != null) gson.toJson(identity.hierarchyLabels) else "[]",
-                                 roadmapLeafLevel = identity.roadmapLeafLevel ?: 0
-                             )
-                         )
-                         return@withContext Pair(null, bookId)
+                            val updatedBook = existingBook.copy(
+                                totalQuestions = existingBook.totalQuestions + totalParsedQuestions,
+                                bookVersion = newBookVersion,
+                                updateVersions = gson.toJson(existingUpdatesList),
+                                questionIdEnd = identity.questionIdEnd ?: existingBook.questionIdEnd
+                            )
+                            for (chunk in questionEntities.chunked(1000)) {
+                                repository.insertQuestions(chunk)
+                            }
+                            repository.insertBook(updatedBook)
+                        } else {
+                            val existingCheck = repository.getBookSync(bookId)
+                            if (existingCheck != null) {
+                                repository.deleteQuestionsForBook(bookId)
+                                repository.deleteAssociatedDataForBook(bookId)
+                            }
+                            for (chunk in questionEntities.chunked(1000)) {
+                                repository.insertQuestions(chunk)
+                            }
+                            repository.insertBook(
+                                BookEntity(
+                                    id = bookId,
+                                    name = identity.name ?: "Unknown Book",
+                                    totalQuestions = totalParsedQuestions,
+                                    totalCategories = categorySet.size,
+                                    dataVariable = identity.dataVariable,
+                                    updateId = identity.updateId,
+                                    bookVersion = identity.bookVersion,
+                                    updateVersions = if (identity.updateVersion != null) gson.toJson(identity.updateVersion) else "[]",
+                                    questionIdStart = identity.questionIdStart ?: 0L,
+                                    questionIdEnd = identity.questionIdEnd ?: 0L,
+                                    hierarchyLabels = if (identity.hierarchyLabels != null) gson.toJson(identity.hierarchyLabels) else "[]",
+                                    roadmapLeafLevel = identity.roadmapLeafLevel ?: 0
+                                )
+                            )
+                        }
                     }
+                    return@withContext Pair(null, bookId)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     return@withContext Pair("Exception occurred during parsing: ${e.message}", null)
@@ -709,6 +825,7 @@ class DataParser {
                                 }
                             }
                             
+                            val existingQuestionsMap = repository.getQuestionsForBookSync(bookIdStr).associateBy { it.id }
                             var parseSuccess = false
                             try {
                                 zip.getInputStream(qEntry).use { stream ->
@@ -717,8 +834,12 @@ class DataParser {
                                     jsonReader.isLenient = true
                                     jsonReader.beginArray()
                                     
+                                    val seenQuestionIds = mutableSetOf<Long>()
                                     while (jsonReader.hasNext()) {
                                         val q = gson.fromJson<QBookQuestion>(jsonReader, QBookQuestion::class.java)
+                                        if (!seenQuestionIds.add(q.id)) {
+                                            return@withContext "Invalid .qbook: Duplicate question ID ${q.id} found."
+                                        }
                                         totalQuestions++
                                         if (qIdStart == -1L) qIdStart = q.id
                                         qIdEnd = q.id
@@ -748,8 +869,10 @@ class DataParser {
                                             if (idx != -1) idx else 0
                                         } else 0
                                         
+                                        val existingGlobalId = existingQuestionsMap[q.id]?.globalId ?: UUID.randomUUID().toString()
                                         parsedQuestions.add(
                                             QuestionEntity(
+                                                globalId = existingGlobalId,
                                                 id = q.id,
                                                 bookId = bookIdStr,
                                                 path = q.metadata?.path ?: "",
@@ -799,6 +922,10 @@ class DataParser {
                     
                     val isUpdate = meta?.type == "UPDATE" || meta?.type == "update"
                     val existingBook = repository.getBookSync(bookIdStr)
+
+                    if (isUpdate && existingBook == null) {
+                        return@withContext "Cannot apply this update: install the base book first."
+                    }
 
                     if (isUpdate && existingBook != null) {
                         val existingUpdatesType = object : TypeToken<List<Map<String, List<Long>>>>() {}.type

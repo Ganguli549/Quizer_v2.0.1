@@ -570,10 +570,11 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
     var imageGenApiUrl by remember { mutableStateOf("") }
     var imageGenApiKey by remember { mutableStateOf("") }
     var imageGenModel by remember { mutableStateOf("") }
-    var selectedModel by remember { mutableStateOf("gemini-1.5-flash") }
+    var selectedModel by remember { mutableStateOf("gemini-flash-lite-latest") }
     var expandedModelDropdown by remember { mutableStateOf(false) }
     
     var models by remember { mutableStateOf(listOf(
+        "gemini-flash-lite-latest",
         "gemini-1.5-flash",
         "gemini-1.5-pro",
         "gemini-1.5-flash-8b"
@@ -588,7 +589,7 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
         imageGenApiUrl = prefs.getString("image_gen_api_url", "") ?: ""
         imageGenApiKey = prefs.getString("image_gen_api_key", "") ?: ""
         imageGenModel = prefs.getString("image_gen_model", "flux") ?: "flux" 
-        selectedModel = prefs.getString("gemini_model", "gemini-1.5-flash") ?: "gemini-1.5-flash"
+        selectedModel = prefs.getString("gemini_model", "gemini-flash-lite-latest") ?: "gemini-flash-lite-latest"
     }
 
     val coroutineScope = rememberCoroutineScope()
@@ -606,7 +607,7 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
             if (fetchedModels.isNotEmpty()) {
                 models = fetchedModels
                 if (selectedModel !in models) {
-                    selectedModel = models.firstOrNull() ?: "gemini-1.5-flash"
+                    selectedModel = models.firstOrNull() ?: "gemini-flash-lite-latest"
                     com.example.data.SecurePrefs.get(context)
                         .edit().putString("gemini_model", selectedModel).apply()
                 }
