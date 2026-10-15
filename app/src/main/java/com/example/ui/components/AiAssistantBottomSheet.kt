@@ -1752,12 +1752,10 @@ fun ChatMessageContent(content: String, isUser: Boolean = false) {
 
     if (isUser) {
         androidx.compose.foundation.text.selection.SelectionContainer {
-            Text(
+            com.example.ui.components.SmartRichText(
                 text = content,
                 color = textColor,
-                fontSize = 16.sp,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.wrapContentSize()
+                fontSize = 16.sp
             )
         }
         return

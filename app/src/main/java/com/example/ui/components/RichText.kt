@@ -1101,7 +1101,6 @@ fun RichText(
             TextView(ctx).apply {
                 if (isHorizontallyScrollable) {
                     setHorizontallyScrolling(true)
-                    setSingleLine(true)
                     setTextIsSelectable(false)
                     movementMethod = null
                     layoutParams = android.widget.FrameLayout.LayoutParams(
@@ -1138,7 +1137,6 @@ fun RichText(
             textView.textSize = fontSize.value
             if (isHorizontallyScrollable) {
                 textView.setHorizontallyScrolling(true)
-                textView.setSingleLine(true)
                 textView.setTextIsSelectable(false)
                 textView.movementMethod = null
                 textView.layoutParams = android.widget.FrameLayout.LayoutParams(

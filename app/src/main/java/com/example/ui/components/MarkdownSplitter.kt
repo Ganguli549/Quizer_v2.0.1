@@ -51,31 +51,99 @@ fun MathSplitterRichText(
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val allMatches = BLOCK_MATH_REGEX.findAll(text).toList()
-    val matches = allMatches.filter { isScrollableMathFormula(it.value) }
+    val scrollableMatches = allMatches.filter { isScrollableMathFormula(it.value) }
 
-    if (matches.isEmpty()) {
+    if (scrollableMatches.isEmpty()) {
         RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         return
     }
 
-    var lastIndex = 0
+    // data class to store expanded ranges for math blocks
+    data class MathChunk(val fullRange: IntRange, val rawMath: String)
+    val chunks = mutableListOf<MathChunk>()
+    
+    val markers = listOf("**", "__", "*", "_", "~~", "`")
+    val listRegex = Regex("""(?m)^[ \t]*(?:\*|\+|\-|\d+\.)[ \t]*$""")
+
+    for (m in scrollableMatches) {
+        var start = m.range.first
+        var end = m.range.last + 1
+        
+        // 1. Look for leading markers/list items on the same line
+        val prefix = text.substring(0, start)
+        val lastNewlineBefore = prefix.lastIndexOf('\n')
+        val lineStart = if (lastNewlineBefore == -1) 0 else lastNewlineBefore + 1
+        val proseOnLine = text.substring(lineStart, start)
+        
+        var expandedStart = start
+        var foundMarker: String? = null
+        
+        // Check for matching marker immediately before (ignoring whitespace)
+        val proseTrimmed = proseOnLine.trimEnd()
+        val trailingWs = proseOnLine.length - proseTrimmed.length
+        
+        for (marker in markers) {
+            if (proseTrimmed.endsWith(marker)) {
+                foundMarker = marker
+                expandedStart = start - (marker.length + trailingWs)
+                break
+            }
+        }
+        
+        // Check if the remaining text on line is just a list marker
+        val remainingProse = text.substring(lineStart, expandedStart)
+        if (remainingProse.isBlank() || listRegex.matches(remainingProse.trimEnd())) {
+            expandedStart = lineStart
+        }
+        
+        // 2. Look for trailing markers/punctuation on the same line
+        var expandedEnd = end
+        val suffix = text.substring(end)
+        val firstNewlineAfter = suffix.indexOf('\n')
+        val lineEnd = if (firstNewlineAfter == -1) text.length else end + firstNewlineAfter
+        val proseAfterOnLine = text.substring(end, lineEnd)
+        
+        val proseAfterTrimmed = proseAfterOnLine.trimStart()
+        val leadingWs = proseAfterOnLine.length - proseAfterTrimmed.length
+        
+        if (foundMarker != null && proseAfterTrimmed.startsWith(foundMarker)) {
+            expandedEnd = end + leadingWs + foundMarker.length
+        }
+        
+        // Include trailing colon or period if it's the only thing left on line
+        val finalSuffix = text.substring(expandedEnd, lineEnd).trim()
+        if (finalSuffix.length <= 2 && finalSuffix.all { !it.isLetterOrDigit() }) {
+            expandedEnd = lineEnd
+        }
+        
+        chunks.add(MathChunk(expandedStart until expandedEnd, m.value))
+    }
+
+    // Merge overlapping or contiguous math chunks if necessary
+    val mergedChunks = mutableListOf<MathChunk>()
+    if (chunks.isNotEmpty()) {
+        var current = chunks[0]
+        for (i in 1 until chunks.size) {
+            val next = chunks[i]
+            if (next.fullRange.first <= current.fullRange.last + 1) {
+                current = MathChunk(current.fullRange.first until maxOf(current.fullRange.last, next.fullRange.last) + 1, current.rawMath + " " + next.rawMath)
+            } else {
+                mergedChunks.add(current)
+                current = next
+            }
+        }
+        mergedChunks.add(current)
+    }
+
     Column(modifier = modifier) {
-        for (match in matches) {
-            val before = text.substring(lastIndex, match.range.first)
+        var lastIndex = 0
+        for (chunk in mergedChunks) {
+            val before = text.substring(lastIndex, chunk.fullRange.first)
             if (before.isNotBlank()) {
                 RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
             
-            val rawFormula = match.value.trim()
-            val cleanMathStr = when {
-                rawFormula.startsWith("```math") -> rawFormula.removePrefix("```math").removeSuffix("```").trim().let { "$$${it}$$" }
-                rawFormula.startsWith("```latex") -> rawFormula.removePrefix("```latex").removeSuffix("```").trim().let { "$$${it}$$" }
-                rawFormula.startsWith("\\[") && rawFormula.endsWith("\\]") -> rawFormula.removePrefix("\\[").removeSuffix("\\]").trim().let { "$$${it}$$" }
-                rawFormula.startsWith("$$") && rawFormula.endsWith("$$") -> rawFormula
-                rawFormula.startsWith("\\begin") -> "$$${rawFormula}$$"
-                rawFormula.startsWith("$") && rawFormula.endsWith("$") -> "$$${rawFormula.removePrefix("$").removeSuffix("$")}$$"
-                else -> if (rawFormula.startsWith("$$")) rawFormula else "$$${rawFormula}$$"
-            }
+            val fullMathContent = text.substring(chunk.fullRange)
             
             Box(
                 modifier = Modifier
@@ -84,7 +152,7 @@ fun MathSplitterRichText(
                     .padding(vertical = 4.dp)
             ) {
                 RichText(
-                    text = cleanMathStr, 
+                    text = fullMathContent, 
                     modifier = Modifier.wrapContentWidth(unbounded = true), 
                     color = color, 
                     fontSize = fontSize, 
@@ -100,7 +168,7 @@ fun MathSplitterRichText(
                 )
             }
             
-            lastIndex = match.range.last + 1
+            lastIndex = chunk.fullRange.last + 1
         }
         val after = text.substring(lastIndex)
         if (after.isNotBlank()) {
