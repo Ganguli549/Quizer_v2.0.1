@@ -14,7 +14,12 @@ import androidx.compose.ui.layout.Layout
 import kotlin.math.max
 
 @Composable
-fun TableRenderer(tableData: List<List<String>>, textColor: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current, searchQuery: String = "") {
+fun TableRenderer(
+    tableData: List<List<String>>, 
+    textColor: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current, 
+    searchQuery: String = "",
+    customMenuItems: List<CustomTextMenuItem> = emptyList()
+) {
     if (tableData.isEmpty()) return
     val borderColor = textColor.copy(alpha = 0.2f)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -38,7 +43,8 @@ fun TableRenderer(tableData: List<List<String>>, textColor: androidx.compose.ui.
                                 text = cellText,
                                 fontSize = 16.sp,
                                 color = textColor,
-                                searchQuery = searchQuery
+                                searchQuery = searchQuery,
+                                customMenuItems = customMenuItems
                             )
                         }
                     }

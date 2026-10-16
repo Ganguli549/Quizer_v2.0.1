@@ -152,10 +152,10 @@ fun getThemeColors(theme: ReadingTheme): ThemeColors {
     val sysPrimary = MaterialTheme.colorScheme.primary
     return when(theme) {
         ReadingTheme.System -> ThemeColors(sysBg, sysSurface, sysText, sysPrimary)
-        ReadingTheme.Day -> ThemeColors(Color(0xFFFFFFFF), Color(0xFFF2F2F2), Color(0xFF000000), Color(0xFF1976D2))
-        ReadingTheme.Night -> ThemeColors(Color(0xFF000000), Color(0xFF1E1E1E), Color(0xFFB0B0B0), Color(0xFF90CAF9))
+        ReadingTheme.Day -> ThemeColors(Color(0xFFF8F9FA), Color(0xFFECEEF2), Color(0xFF181C22), Color(0xFF1A56DB))
+        ReadingTheme.Night -> ThemeColors(Color(0xFF111317), Color(0xFF1B1E26), Color(0xFFE5E7EB), Color(0xFF6895F5))
         ReadingTheme.Sepia -> ThemeColors(Color(0xFFDCCAB3), Color(0xFFCCB8A0), Color(0xFF1F1A14), Color(0xFF6B5542))
-        ReadingTheme.Green -> ThemeColors(Color(0xFFCEE5D2), Color(0xFFBCD8C2), Color(0xFF2E4C34), Color(0xFF388E3C))
+        ReadingTheme.Green -> ThemeColors(Color(0xFFEAF1EB), Color(0xFFD9E4DC), Color(0xFF16321C), Color(0xFF246C34))
         ReadingTheme.BookPage -> ThemeColors(Color(0xFFFAFAFA), Color(0xFFECECEC), Color(0xFF1A1A1A), Color(0xFF555555))
     }
 }
@@ -825,40 +825,53 @@ fun ReadBookScreen(
                 enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
                 exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
             ) {
-                BottomAppBar(
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    containerColor = themeColors.background.copy(alpha = 0.95f),
-                    contentColor = themeColors.text,
-                    tonalElevation = 8.dp,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                    color = themeColors.surface,
+                    shadowElevation = 4.dp
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = bottomBarInfo.first,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = themeColors.text,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(end = 16.dp)
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        HorizontalDivider(
+                            thickness = 1.dp,
+                            color = themeColors.text.copy(alpha = 0.15f)
                         )
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = themeColors.primary.copy(alpha = 0.1f),
-                            contentColor = themeColors.primary,
-                            modifier = Modifier.clickable {
-                                openEditBookWithQuestion(currentReadingQuestion)
-                            }
+                        BottomAppBar(
+                            modifier = Modifier.fillMaxWidth(),
+                            containerColor = themeColors.surface,
+                            contentColor = themeColors.text,
+                            tonalElevation = 0.dp,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
                         ) {
-                            Text(
-                                text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = bottomBarInfo.first,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = themeColors.text,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f).padding(end = 16.dp)
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = themeColors.primary.copy(alpha = 0.12f),
+                                    contentColor = themeColors.primary,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.primary.copy(alpha = 0.25f)),
+                                    modifier = Modifier.clickable {
+                                        openEditBookWithQuestion(currentReadingQuestion)
+                                    }
+                                ) {
+                                    Text(
+                                        text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -870,177 +883,189 @@ fun ReadBookScreen(
                 enter = expandVertically() + fadeIn(),
                 exit = shrinkVertically() + fadeOut()
             ) {
-                if (isSearchActive) {
-                    TopAppBar(
-                        title = {
-                            TextField(
-                                value = searchQuery,
-                                onValueChange = { searchQuery = it },
-                                placeholder = { Text("Search...", color = themeColors.text.copy(alpha = 0.6f)) },
-                                singleLine = true,
-                                colors = TextFieldDefaults.colors(
-                                    focusedTextColor = themeColors.text,
-                                    unfocusedTextColor = themeColors.text,
-                                    cursorColor = themeColors.primary,
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    disabledContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent
-                                ),
-                                modifier = Modifier.fillMaxWidth()
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = themeColors.surface,
+                    shadowElevation = 3.dp
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        if (isSearchActive) {
+                            TopAppBar(
+                                title = {
+                                    TextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        placeholder = { Text("Search...", color = themeColors.text.copy(alpha = 0.6f)) },
+                                        singleLine = true,
+                                        colors = TextFieldDefaults.colors(
+                                            focusedTextColor = themeColors.text,
+                                            unfocusedTextColor = themeColors.text,
+                                            cursorColor = themeColors.primary,
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            disabledContainerColor = Color.Transparent,
+                                            focusedIndicatorColor = Color.Transparent,
+                                            unfocusedIndicatorColor = Color.Transparent
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                },
+                                navigationIcon = {
+                                    IconButton(onClick = { 
+                                        isSearchActive = false
+                                        searchQuery = ""
+                                    }) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
+                                    }
+                                },
+                                actions = {
+                                    if (searchMatches.isNotEmpty()) {
+                                        Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge, color = themeColors.text)
+                                        IconButton(onClick = { 
+                                            if (currentMatchIndex > 0) {
+                                                currentMatchIndex--
+                                                coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.KeyboardArrowUp, "Previous", tint = themeColors.text)
+                                        }
+                                        IconButton(onClick = { 
+                                            if (currentMatchIndex < searchMatches.size - 1) {
+                                                currentMatchIndex++
+                                                coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.KeyboardArrowDown, "Next", tint = themeColors.text)
+                                        }
+                                    }
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(Icons.Default.Close, "Clear", tint = themeColors.text)
+                                        }
+                                    }
+                                },
+                                colors = TopAppBarDefaults.topAppBarColors(
+                                    containerColor = themeColors.surface,
+                                    scrolledContainerColor = themeColors.surface,
+                                    titleContentColor = themeColors.text,
+                                    navigationIconContentColor = themeColors.text,
+                                    actionIconContentColor = themeColors.text
+                                )
                             )
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = { 
-                                isSearchActive = false
-                                searchQuery = ""
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
-                            }
-                        },
-                        actions = {
-                            if (searchMatches.isNotEmpty()) {
-                                Text("${currentMatchIndex + 1}/${searchMatches.size}", style = MaterialTheme.typography.labelLarge, color = themeColors.text)
-                                IconButton(onClick = { 
-                                    if (currentMatchIndex > 0) {
-                                        currentMatchIndex--
-                                        coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                        } else {
+                            TopAppBar(
+                                title = { Text(currentBook?.name ?: "Read Book", color = themeColors.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                navigationIcon = {
+                                    IconButton(onClick = onHome) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
                                     }
-                                }) {
-                                    Icon(Icons.Default.KeyboardArrowUp, "Previous", tint = themeColors.text)
-                                }
-                                IconButton(onClick = { 
-                                    if (currentMatchIndex < searchMatches.size - 1) {
-                                        currentMatchIndex++
-                                        coroutineScope.launch { listState.animateScrollToItem(searchMatches[currentMatchIndex]) }
+                                },
+                                actions = {
+                                    IconButton(onClick = {
+                                        chapterSheetOpenCount++
+                                        showChapterIndex = true
+                                    }) {
+                                        Icon(Icons.AutoMirrored.Filled.List, "Index", tint = themeColors.text)
                                     }
-                                }) {
-                                    Icon(Icons.Default.KeyboardArrowDown, "Next", tint = themeColors.text)
-                                }
-                            }
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, "Clear", tint = themeColors.text)
-                                }
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = themeColors.background.copy(alpha = 0.95f),
-                            scrolledContainerColor = themeColors.background.copy(alpha = 0.95f),
-                            titleContentColor = themeColors.text,
-                            navigationIconContentColor = themeColors.text,
-                            actionIconContentColor = themeColors.text
-                        )
-                    )
-                } else {
-                    TopAppBar(
-                        title = { Text(currentBook?.name ?: "Read Book", color = themeColors.text, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                        navigationIcon = {
-                            IconButton(onClick = onHome) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = themeColors.text)
-                            }
-                        },
-                        actions = {
-                            IconButton(onClick = {
-                                chapterSheetOpenCount++
-                                showChapterIndex = true
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.List, "Index", tint = themeColors.text)
-                            }
-                            IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
-                                Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode", tint = themeColors.text)
-                            }
-                            Box {
-                                IconButton(onClick = { showMenu = true }) {
-                                    Icon(Icons.Default.MoreVert, "More Options", tint = themeColors.text)
-                                }
-                                DropdownMenu(
-                                    expanded = showMenu,
-                                    onDismissRequest = { showMenu = false },
-                                    containerColor = themeColors.background,
-                                    modifier = Modifier.background(themeColors.background),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.text.copy(alpha = 0.15f))
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Search", color = themeColors.text) },
-                                        onClick = { showMenu = false; isSearchActive = true; isBarsVisible = true },
-                                        leadingIcon = { Icon(Icons.Default.Search, null, tint = themeColors.text) },
-                                        colors = MenuDefaults.itemColors(
-                                            textColor = themeColors.text,
-                                            leadingIconColor = themeColors.text
-                                        )
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Theme", color = themeColors.text) },
-                                        onClick = { showMenu = false; showThemeMenu = true },
-                                        leadingIcon = { Icon(Icons.Default.Palette, null, tint = themeColors.text) },
-                                        colors = MenuDefaults.itemColors(
-                                            textColor = themeColors.text,
-                                            leadingIconColor = themeColors.text
-                                        )
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Edit Book", color = themeColors.text) },
-                                        onClick = { 
-                                            showMenu = false
-                                            openEditBookWithQuestion(currentReadingQuestion)
-                                        },
-                                        leadingIcon = { Icon(Icons.Default.Edit, null, tint = themeColors.text) },
-                                        colors = MenuDefaults.itemColors(
-                                            textColor = themeColors.text,
-                                            leadingIconColor = themeColors.text
-                                        )
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(if (showBookmarks) "Hide bookmarks" else "Show bookmarks", color = themeColors.text) },
-                                        onClick = {
-                                            showMenu = false
-                                            val newShow = !showBookmarks
-                                            showBookmarks = newShow
-                                            viewModel.settingsManager.setShowBookmarks(currentBookId, newShow)
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                if (newShow) {
-                                                    if (bookmarkedQuestionIds.isEmpty()) "Bookmarks shown (0 bookmarks)" else "Bookmarks shown"
-                                                } else {
-                                                    "Bookmarks hidden"
-                                                },
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                if (showBookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                                null,
-                                                tint = themeColors.text
+                                    IconButton(onClick = { inBookQuizMode = !inBookQuizMode }) {
+                                        Icon(if (inBookQuizMode) Icons.Default.VisibilityOff else Icons.Default.Visibility, "In-Book Quiz Mode", tint = themeColors.text)
+                                    }
+                                    Box {
+                                        IconButton(onClick = { showMenu = true }) {
+                                            Icon(Icons.Default.MoreVert, "More Options", tint = themeColors.text)
+                                        }
+                                        DropdownMenu(
+                                            expanded = showMenu,
+                                            onDismissRequest = { showMenu = false },
+                                            containerColor = themeColors.surface,
+                                            modifier = Modifier.background(themeColors.surface),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.text.copy(alpha = 0.15f))
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("Search", color = themeColors.text) },
+                                                onClick = { showMenu = false; isSearchActive = true; isBarsVisible = true },
+                                                leadingIcon = { Icon(Icons.Default.Search, null, tint = themeColors.text) },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = themeColors.text,
+                                                    leadingIconColor = themeColors.text
+                                                )
                                             )
-                                        },
-                                        colors = MenuDefaults.itemColors(
-                                            textColor = themeColors.text,
-                                            leadingIconColor = themeColors.text
-                                        )
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Brief Explanation", color = themeColors.text) },
-                                        onClick = { showMenu = false; showBriefExplanation = !showBriefExplanation },
-                                        leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null, tint = themeColors.text) },
-                                        colors = MenuDefaults.itemColors(
-                                            textColor = themeColors.text,
-                                            leadingIconColor = themeColors.text
-                                        )
-                                    )
-                                }
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = themeColors.background.copy(alpha = 0.95f),
-                            scrolledContainerColor = themeColors.background.copy(alpha = 0.95f),
-                            titleContentColor = themeColors.text,
-                            navigationIconContentColor = themeColors.text,
-                            actionIconContentColor = themeColors.text
+                                            DropdownMenuItem(
+                                                text = { Text("Theme", color = themeColors.text) },
+                                                onClick = { showMenu = false; showThemeMenu = true },
+                                                leadingIcon = { Icon(Icons.Default.Palette, null, tint = themeColors.text) },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = themeColors.text,
+                                                    leadingIconColor = themeColors.text
+                                                )
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Edit Book", color = themeColors.text) },
+                                                onClick = { 
+                                                    showMenu = false
+                                                    openEditBookWithQuestion(currentReadingQuestion)
+                                                },
+                                                leadingIcon = { Icon(Icons.Default.Edit, null, tint = themeColors.text) },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = themeColors.text,
+                                                    leadingIconColor = themeColors.text
+                                                )
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text(if (showBookmarks) "Hide bookmarks" else "Show bookmarks", color = themeColors.text) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    val newShow = !showBookmarks
+                                                    showBookmarks = newShow
+                                                    viewModel.settingsManager.setShowBookmarks(currentBookId, newShow)
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        if (newShow) {
+                                                            if (bookmarkedQuestionIds.isEmpty()) "Bookmarks shown (0 bookmarks)" else "Bookmarks shown"
+                                                        } else {
+                                                            "Bookmarks hidden"
+                                                        },
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        if (showBookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                                        null,
+                                                        tint = themeColors.text
+                                                    )
+                                                },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = themeColors.text,
+                                                    leadingIconColor = themeColors.text
+                                                )
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Brief Explanation", color = themeColors.text) },
+                                                onClick = { showMenu = false; showBriefExplanation = !showBriefExplanation },
+                                                leadingIcon = { Icon(if (showBriefExplanation) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null, tint = themeColors.text) },
+                                                colors = MenuDefaults.itemColors(
+                                                    textColor = themeColors.text,
+                                                    leadingIconColor = themeColors.text
+                                                )
+                                            )
+                                        }
+                                    }
+                                },
+                                colors = TopAppBarDefaults.topAppBarColors(
+                                    containerColor = themeColors.surface,
+                                    scrolledContainerColor = themeColors.surface,
+                                    titleContentColor = themeColors.text,
+                                    navigationIconContentColor = themeColors.text,
+                                    actionIconContentColor = themeColors.text
+                                )
+                            )
+                        }
+                        HorizontalDivider(
+                            thickness = 1.dp,
+                            color = themeColors.text.copy(alpha = 0.15f)
                         )
-                    )
+                    }
                 }
             }
         }
@@ -1529,6 +1554,9 @@ fun ReadBookScreen(
                 currentBookId = currentBookId,
                 viewModel = viewModel,
                 autoSend = autoSendAiPrompt,
+                onAutoSendConsumed = {
+                    autoSendAiPrompt = false
+                },
                 onDismiss = {
                     showAiAssistant = false
                     autoSendAiPrompt = false
@@ -1773,7 +1801,11 @@ fun ReadBookQuestionItem(
             }
             if (tableData != null) {
                 Spacer(modifier = Modifier.height(17.dp))
-                com.example.ui.components.TableRenderer(tableData, themeColors.text)
+                com.example.ui.components.TableRenderer(
+                    tableData = tableData,
+                    textColor = themeColors.text,
+                    customMenuItems = questionCustomMenuItems
+                )
             }
         }
         
@@ -1890,11 +1922,13 @@ fun ReadBookQuestionItem(
             }
         }
         
-        AnimatedVisibility(visible = isRevealed && ((question.explanation.isNotBlank() && (showBriefExplanation || question.detailedExplanation.isNullOrEmpty())) || !question.detailedExplanation.isNullOrEmpty())) {
+        val safeExplanation = question.explanation.takeIf { it.isNotBlank() && !it.trim().equals("null", ignoreCase = true) }
+        val safeDetailed = question.detailedExplanation?.takeIf { it.isNotBlank() && !it.trim().equals("null", ignoreCase = true) }
+        val hasBrief = safeExplanation != null && (showBriefExplanation || safeDetailed == null)
+        val hasDetailed = safeDetailed != null
+
+        AnimatedVisibility(visible = isRevealed && (hasBrief || hasDetailed)) {
             Column(modifier = Modifier.padding(top = 8.dp)) {
-                val hasBrief = question.explanation.isNotBlank() && (showBriefExplanation || question.detailedExplanation.isNullOrEmpty())
-                val hasDetailed = !question.detailedExplanation.isNullOrEmpty()
-                
                 Text(
                     text = "Explanation:",
                     style = MaterialTheme.typography.titleMedium,
@@ -1906,7 +1940,7 @@ fun ReadBookQuestionItem(
                 if (hasBrief && hasDetailed) {
                     Text("Brief:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = themeColors.text)
                     com.example.ui.components.SmartRichText(
-                        text = question.explanation,
+                        text = safeExplanation!!,
                         fontSize = 16.sp,
                         color = themeColors.text,
                         modifier = Modifier.padding(top = 4.dp),
@@ -1919,7 +1953,7 @@ fun ReadBookQuestionItem(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Detailed:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = themeColors.text)
                     com.example.ui.components.SmartRichText(
-                        text = question.detailedExplanation!!,
+                        text = safeDetailed!!,
                         fontSize = 16.sp,
                         color = themeColors.text,
                         modifier = Modifier.padding(top = 4.dp),
@@ -1931,7 +1965,7 @@ fun ReadBookQuestionItem(
                     )
                 } else if (hasBrief) {
                     com.example.ui.components.SmartRichText(
-                        text = question.explanation,
+                        text = safeExplanation!!,
                         fontSize = 16.sp,
                         color = themeColors.text,
                         modifier = Modifier.padding(top = 4.dp),
@@ -1943,7 +1977,7 @@ fun ReadBookQuestionItem(
                     )
                 } else if (hasDetailed) {
                     com.example.ui.components.SmartRichText(
-                        text = question.detailedExplanation!!,
+                        text = safeDetailed!!,
                         fontSize = 16.sp,
                         color = themeColors.text,
                         modifier = Modifier.padding(top = 4.dp),
@@ -2002,7 +2036,7 @@ fun ReadBookQuestionItem(
             }
         }
 
-        if (isRevealed && question.explanation.isBlank() && question.detailedExplanation.isNullOrBlank() && onAskAiQuestion != null) {
+        if (isRevealed && safeExplanation == null && safeDetailed == null && onAskAiQuestion != null) {
             Surface(
                 onClick = { onAskAiQuestion.invoke(question, localNumber) },
                 shape = RoundedCornerShape(12.dp),

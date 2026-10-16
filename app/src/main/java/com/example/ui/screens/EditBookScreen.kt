@@ -682,12 +682,12 @@ fun EditQuestionDialog(
     var qFormat by remember { mutableStateOf(question.format ?: "") }
     var qTableData by remember { mutableStateOf(question.tableData ?: "") }
     var qBottomText by remember { mutableStateOf(question.bottomText ?: "") }
-    var qExams by remember { mutableStateOf(question.exams ?: "") }
-    var qExam by remember { mutableStateOf(question.exam) }
-    var qYear by remember { mutableStateOf(question.year) }
-    var qExplanation by remember { mutableStateOf(question.explanation) }
-    var qDetailedExplanation by remember { mutableStateOf(question.detailedExplanation ?: "") }
-    var qExplanationTable by remember { mutableStateOf(question.explanationTable ?: "") }
+    var qExams by remember { mutableStateOf(if (question.exams?.trim()?.equals("null", ignoreCase = true) == true) "" else question.exams ?: "") }
+    var qExam by remember { mutableStateOf(if (question.exam.trim().equals("null", ignoreCase = true)) "" else question.exam) }
+    var qYear by remember { mutableStateOf(if (question.year.trim().equals("null", ignoreCase = true)) "" else question.year) }
+    var qExplanation by remember { mutableStateOf(if (question.explanation.trim().equals("null", ignoreCase = true)) "" else question.explanation) }
+    var qDetailedExplanation by remember { mutableStateOf(if (question.detailedExplanation?.trim()?.equals("null", ignoreCase = true) == true) "" else question.detailedExplanation ?: "") }
+    var qExplanationTable by remember { mutableStateOf(if (question.explanationTable?.trim()?.equals("null", ignoreCase = true) == true) "" else question.explanationTable ?: "") }
     var qOptions by remember { mutableStateOf(question.options) }
     var qExtraOptions by remember { mutableStateOf(question.extraOptions) }
     var qCorrectIndex by remember { mutableStateOf(question.correctIndex.toString()) }
@@ -830,17 +830,17 @@ fun EditQuestionDialog(
                             options = qOptions,
                             extraOptions = qExtraOptions,
                             correctIndex = correctIndex,
-                            explanation = qExplanation,
-                            detailedExplanation = qDetailedExplanation.takeIf { it.isNotBlank() },
-                            questionHeader = qHeader.takeIf { it.isNotBlank() },
-                            img = qImg.takeIf { it.isNotBlank() },
-                            explanationImage = qExplanationImage.takeIf { it.isNotBlank() },
+                            explanation = qExplanation.trim().takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                            detailedExplanation = qDetailedExplanation.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+                            questionHeader = qHeader.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+                            img = qImg.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+                            explanationImage = qExplanationImage.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             advancedOptions = com.example.data.SharedGson.normal.toJson(advancedList),
                             advancedCorrectIds = com.example.data.SharedGson.normal.toJson(correctIds),
-                            exams = qExams.takeIf { it.isNotBlank() },
-                            explanationTable = qExplanationTable.takeIf { it.isNotBlank() },
-                            exam = qExam,
-                            year = qYear
+                            exams = qExams.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) && it != "[]" },
+                            explanationTable = qExplanationTable.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+                            exam = qExam.trim().takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                            year = qYear.trim().takeIf { !it.equals("null", ignoreCase = true) } ?: ""
                         )
                         val hasChanges = updated != question || hStartId.isNotBlank() || hEndId.isNotBlank()
                         TextButton(onClick = {

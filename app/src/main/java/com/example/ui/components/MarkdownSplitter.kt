@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
@@ -25,14 +24,19 @@ private val BLOCK_MATH_REGEX = Regex(
 
 private val TABLE_REGEX = Regex("(?m)^(?:[ \\t]*\\|.*\\|[ \\t]*(?:\\r?\\n|$))+")
 
-private fun isScrollableMathFormula(matchStr: String): Boolean {
+private fun isScrollableMathFormula(matchStr: String, isStandaloneOnLine: Boolean): Boolean {
     if (matchStr.startsWith("```") || matchStr.startsWith("\\[") || matchStr.startsWith("\\begin") || matchStr.startsWith("$$")) {
         return true
     }
     val inner = matchStr.trim('$').trim()
-    if (inner.length >= 25) return true
-    val complexKeywords = listOf("\\int", "\\iiint", "\\sum", "\\frac", "\\sqrt", "\\lim", "\\oint", "\\prod", "\\matrix", "\\begin", "\\align", "\\partial", "\\nabla")
-    return complexKeywords.any { inner.contains(it) }
+    // If an inline $...$ formula is embedded inside a sentence with prose on the same line,
+    // keep it inline inside the sentence unless it is extremely long (>= 120 chars).
+    if (!isStandaloneOnLine) {
+        return inner.length >= 120
+    }
+    if (inner.length >= 45) return true
+    val blockComplexKeywords = listOf("\\begin", "\\matrix", "\\pmatrix", "\\bmatrix", "\\align", "\\iiint", "\\oint")
+    return blockComplexKeywords.any { inner.contains(it) }
 }
 
 @Composable
@@ -51,37 +55,33 @@ fun MathSplitterRichText(
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val allMatches = BLOCK_MATH_REGEX.findAll(text).toList()
-    val scrollableMatches = allMatches.filter { isScrollableMathFormula(it.value) }
-
-    if (scrollableMatches.isEmpty()) {
+    if (allMatches.isEmpty()) {
         RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         return
     }
 
-    // data class to store expanded ranges for math blocks
-    data class MathChunk(val fullRange: IntRange, val rawMath: String)
-    val chunks = mutableListOf<MathChunk>()
-    
     val markers = listOf("**", "__", "*", "_", "~~", "`")
     val listRegex = Regex("""(?m)^[ \t]*(?:\*|\+|\-|\d+\.)[ \t]*$""")
 
-    for (m in scrollableMatches) {
-        var start = m.range.first
-        var end = m.range.last + 1
-        
-        // 1. Look for leading markers/list items on the same line
+    data class MathChunk(val fullRange: IntRange, val rawMath: String)
+    val chunks = mutableListOf<MathChunk>()
+
+    for (m in allMatches) {
+        val start = m.range.first
+        val end = m.range.last + 1
+
+        // 1. Inspect text on the same line before the formula
         val prefix = text.substring(0, start)
         val lastNewlineBefore = prefix.lastIndexOf('\n')
         val lineStart = if (lastNewlineBefore == -1) 0 else lastNewlineBefore + 1
         val proseOnLine = text.substring(lineStart, start)
-        
+
         var expandedStart = start
         var foundMarker: String? = null
-        
-        // Check for matching marker immediately before (ignoring whitespace)
+
         val proseTrimmed = proseOnLine.trimEnd()
         val trailingWs = proseOnLine.length - proseTrimmed.length
-        
+
         for (marker in markers) {
             if (proseTrimmed.endsWith(marker)) {
                 foundMarker = marker
@@ -89,51 +89,60 @@ fun MathSplitterRichText(
                 break
             }
         }
-        
-        // Check if the remaining text on line is just a list marker
-        val remainingProse = text.substring(lineStart, expandedStart)
-        if (remainingProse.isBlank() || listRegex.matches(remainingProse.trimEnd())) {
+
+        val remainingProseBefore = text.substring(lineStart, expandedStart)
+        val hasNoLeadingProse = remainingProseBefore.isBlank() || listRegex.matches(remainingProseBefore.trimEnd())
+        if (hasNoLeadingProse) {
             expandedStart = lineStart
         }
-        
-        // 2. Look for trailing markers/punctuation on the same line
+
+        // 2. Inspect text on the same line after the formula
         var expandedEnd = end
         val suffix = text.substring(end)
         val firstNewlineAfter = suffix.indexOf('\n')
         val lineEnd = if (firstNewlineAfter == -1) text.length else end + firstNewlineAfter
         val proseAfterOnLine = text.substring(end, lineEnd)
-        
+
         val proseAfterTrimmed = proseAfterOnLine.trimStart()
         val leadingWs = proseAfterOnLine.length - proseAfterTrimmed.length
-        
+
         if (foundMarker != null && proseAfterTrimmed.startsWith(foundMarker)) {
             expandedEnd = end + leadingWs + foundMarker.length
         }
-        
-        // Include trailing colon or period if it's the only thing left on line
+
         val finalSuffix = text.substring(expandedEnd, lineEnd).trim()
-        if (finalSuffix.length <= 2 && finalSuffix.all { !it.isLetterOrDigit() }) {
+        val hasNoTrailingProse = finalSuffix.length <= 2 && finalSuffix.all { !it.isLetterOrDigit() }
+        if (hasNoTrailingProse) {
             expandedEnd = lineEnd
         }
-        
-        chunks.add(MathChunk(expandedStart until expandedEnd, m.value))
+
+        val isStandaloneOnLine = hasNoLeadingProse && hasNoTrailingProse
+        if (isScrollableMathFormula(m.value, isStandaloneOnLine)) {
+            chunks.add(MathChunk(expandedStart until expandedEnd, m.value))
+        }
+    }
+
+    if (chunks.isEmpty()) {
+        RichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
+        return
     }
 
     // Merge overlapping or contiguous math chunks if necessary
     val mergedChunks = mutableListOf<MathChunk>()
-    if (chunks.isNotEmpty()) {
-        var current = chunks[0]
-        for (i in 1 until chunks.size) {
-            val next = chunks[i]
-            if (next.fullRange.first <= current.fullRange.last + 1) {
-                current = MathChunk(current.fullRange.first until maxOf(current.fullRange.last, next.fullRange.last) + 1, current.rawMath + " " + next.rawMath)
-            } else {
-                mergedChunks.add(current)
-                current = next
-            }
+    var current = chunks[0]
+    for (i in 1 until chunks.size) {
+        val next = chunks[i]
+        if (next.fullRange.first <= current.fullRange.last + 1) {
+            current = MathChunk(
+                current.fullRange.first until maxOf(current.fullRange.last, next.fullRange.last) + 1,
+                current.rawMath + " " + next.rawMath
+            )
+        } else {
+            mergedChunks.add(current)
+            current = next
         }
-        mergedChunks.add(current)
     }
+    mergedChunks.add(current)
 
     Column(modifier = modifier) {
         var lastIndex = 0
@@ -142,9 +151,9 @@ fun MathSplitterRichText(
             if (before.isNotBlank()) {
                 RichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
-            
+
             val fullMathContent = text.substring(chunk.fullRange)
-            
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -152,13 +161,13 @@ fun MathSplitterRichText(
                     .padding(vertical = 4.dp)
             ) {
                 RichText(
-                    text = fullMathContent, 
-                    modifier = Modifier.wrapContentWidth(unbounded = true), 
-                    color = color, 
-                    fontSize = fontSize, 
-                    searchQuery = searchQuery, 
-                    highlightColor = highlightColor, 
-                    isSelectable = false, 
+                    text = fullMathContent,
+                    modifier = Modifier.wrapContentWidth(unbounded = true),
+                    color = color,
+                    fontSize = fontSize,
+                    searchQuery = searchQuery,
+                    highlightColor = highlightColor,
+                    isSelectable = false,
                     isBookmarked = isBookmarked,
                     onBookmarkToggle = onBookmarkToggle,
                     customMenuItems = customMenuItems,
@@ -167,7 +176,7 @@ fun MathSplitterRichText(
                     isHorizontallyScrollable = true
                 )
             }
-            
+
             lastIndex = chunk.fullRange.last + 1
         }
         val after = text.substring(lastIndex)
@@ -193,12 +202,12 @@ fun SmartRichText(
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val matches = TABLE_REGEX.findAll(text).toList()
-    
+
     if (matches.isEmpty()) {
         MathSplitterRichText(text, modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
         return
     }
-    
+
     var lastIndex = 0
     Column(modifier = modifier) {
         for (match in matches) {
@@ -206,7 +215,7 @@ fun SmartRichText(
             if (before.isNotBlank()) {
                 MathSplitterRichText(before, Modifier, color, fontSize, searchQuery, highlightColor, isSelectable, isBookmarked, onBookmarkToggle, customMenuItems, onClick, onClickWithCoords)
             }
-            
+
             // Parse table
             val tableStr = match.value.trim()
             val rows = tableStr.split(Regex("\\r?\\n")).map { it.trim() }
@@ -226,7 +235,7 @@ fun SmartRichText(
                     tableData.add(cols)
                 }
             }
-            
+
             if (tableData.isNotEmpty()) {
                 TableRenderer(tableData, color, searchQuery)
             }

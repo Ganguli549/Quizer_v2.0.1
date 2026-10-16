@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.Json
+import com.example.ui.components.optCleanString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -120,7 +121,7 @@ class MainViewModel(
                 }
             }
             val elapsedTime = System.currentTimeMillis() - startTime
-            val minSplashTime = 300L
+            val minSplashTime = 3000L
             val remainingTime = minSplashTime - elapsedTime
             if (remainingTime > 0) {
                 kotlinx.coroutines.delay(remainingTime)
@@ -615,7 +616,7 @@ class MainViewModel(
                        - For reading comprehension passages or stories, wrap the passage content inside `<p>` or `<p name="Passage Title">` tags (e.g. `Directions (Q. 1 to 5): Read the passage:\n<p name="Passage Title">Passage body text here...</p>`). The app renders `<p>` tags as expandable passage cards and keeps related questions grouped together!
                        - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction/passage text in the 'questionHeader' field for ALL questions belonging to that group/range.
                        - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
-                       - If a question has no preceding instruction or group header, set 'questionHeader' to null.
+                       - If a question has no preceding instruction or group header, set 'questionHeader' to "".
                     3. **Math & Formula Formatting (STRICT MANDATE)**:
                        - Wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`...${"$"}` (e.g. `${"$"}E = mc^2${"$"}` or `${"$"}x = 1${"$"}` or `${"$"}\frac{1}{2}${"$"}`).
                        - Block equations MUST use double dollar signs `${"$$"}`...${"$$"}`.
@@ -623,17 +624,21 @@ class MainViewModel(
                        - Format exponents (`x^2`), subscripts (`a_n`), fractions (`\frac{a}{b}`), roots (`\sqrt{x}`), Greek symbols (`\alpha`, `\beta`, `\theta`, `\pi`), and operators cleanly.
                        - **CRITICAL JSON ESCAPING RULE**: You MUST double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`).
                     
+                    4. **NO NULL VALUES (CRITICAL)**: For any parameter with no value or empty content (such as exam, year, explanation, detailedExplanation, questionHeader, section, tableData, etc.), ALWAYS output an empty string "" (or empty list []). NEVER output null or "null"!
+
                     Format the output strictly as a JSON array containing objects matching this schema:
                     [
                       {
                         "question": "question text",
                         "options": ["A", "B", "C", "D"],
                         "correctIndex": integer index of correct option,
-                        "explanation": "brief explanation",
-                        "detailedExplanation": "detailed explanation if present, or generate one",
-                        "path": "Topic/Subtopic based on PDF/document headers",
+                        "explanation": "brief explanation (empty string \"\" if none)",
+                        "detailedExplanation": "detailed explanation if present, or generate one (empty string \"\" if none)",
+                        "path": "Topic/Subtopic based on PDF/document headers (empty string \"\" if none)",
                         "format": "text",
-                        "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Null if none."
+                        "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Empty string \"\" if none.",
+                        "exam": "exam tags if present (e.g. 'SSC CGL 2023'), else \"\"",
+                        "year": "exam year if present, else \"\""
                       }
                     ]
                     If explanations are missing, write them based on the text. If it is a textbook without explicit questions, generate good multiple choice questions from the content.
@@ -675,18 +680,24 @@ class MainViewModel(
                         is kotlinx.serialization.json.JsonPrimitive -> {
                             if (el !is kotlinx.serialization.json.JsonNull) {
                                 val c = el.content.trim()
-                                if (c.isNotBlank() && !c.equals("null", ignoreCase = true)) c else null
+                                if (c.isNotBlank() && !c.equals("null", ignoreCase = true) && !c.equals("undefined", ignoreCase = true) && !c.equals("none", ignoreCase = true)) c else null
                             } else null
                         }
                         else -> null
                     }
-                    val rawQuestion = obj["question"]?.jsonPrimitive?.content ?: ""
+                    val rawQuestion = obj.optCleanString("question") ?: ""
                     val questionText = com.example.ui.components.cleanExtractedMathText(rawQuestion)
-                    val rawExplanation = obj["explanation"]?.jsonPrimitive?.content ?: ""
+                    val rawExplanation = obj.optCleanString("explanation") ?: ""
                     val explanation = com.example.ui.components.cleanExtractedMathText(rawExplanation)
-                    val rawDetailed = obj["detailedExplanation"]?.jsonPrimitive?.content
-                    val detailedExplanation = rawDetailed?.let { com.example.ui.components.cleanExtractedMathText(it) }
-                    val cleanedHeader = rawHeader?.let { com.example.ui.components.cleanExtractedMathText(it) }
+                    val rawDetailed = obj.optCleanString("detailedExplanation")
+                    val detailedExplanation = rawDetailed?.let { com.example.ui.components.cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                    val cleanedHeader = rawHeader?.let { com.example.ui.components.cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                    val exam = obj.optCleanString("exam") ?: ""
+                    val year = obj.optCleanString("year") ?: ""
+                    val format = obj.optCleanString("format")?.takeIf { it.equals("table", ignoreCase = true) } ?: "text"
+                    val tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                    val section = cleanedHeader ?: obj.optCleanString("section") ?: ""
+                    val path = obj.optCleanString("path") ?: ""
 
                     val updatedQ = com.example.data.QuestionEntity(
                         globalId = java.util.UUID.randomUUID().toString(),
@@ -699,11 +710,12 @@ class MainViewModel(
                         correctIndex = obj["correctIndex"]?.jsonPrimitive?.int ?: 0,
                         explanation = explanation,
                         detailedExplanation = detailedExplanation,
-                        format = obj["format"]?.jsonPrimitive?.content ?: "text",
-                        section = cleanedHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
-                        exam = "",
-                        year = "",
-                        path = obj["path"]?.jsonPrimitive?.content ?: "",
+                        format = format,
+                        tableData = tableData,
+                        section = section,
+                        exam = exam,
+                        year = year,
+                        path = path,
                         questionHeader = cleanedHeader
                     )
                     

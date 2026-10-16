@@ -8,6 +8,7 @@ import android.graphics.drawable.Drawable
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.style.BackgroundColorSpan
+import android.text.style.ReplacementSpan
 import android.widget.TextView
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.background
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.noties.markwon.Markwon
+import io.noties.markwon.ext.latex.JLatexMathNode
 import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.html.HtmlPlugin
 import io.noties.markwon.image.coil.CoilImagesPlugin
@@ -41,6 +43,7 @@ import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonVisitor
 import io.noties.markwon.core.MarkwonTheme
 import org.commonmark.node.SoftLineBreak
+import kotlin.math.roundToInt
 
 class TextDrawable(private val text: String, private val textSize: Float, private val textColor: Int) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -86,57 +89,135 @@ class TextDrawable(private val text: String, private val textSize: Float, privat
     }
 }
 
+/**
+ * Custom synchronous ReplacementSpan for rendering JLatexMath drawables:
+ * 1. Eliminates Markwon AsyncDrawable callback stealing when duplicate formulas appear on screen.
+ * 2. Centers formulas on the font's math axis ((ascent + descent) / 2) while preserving the
+ *    native font metrics floor so math-only lines (like Option "20") align with "A.", "B.", "C.", "D.".
+ * 3. Proportionally scales down wide inline formulas if they exceed maxWidthPx so they never clip.
+ */
+class AlignedLatexSpan(
+    private val drawable: Drawable,
+    private val maxWidthPx: Int = Int.MAX_VALUE
+) : ReplacementSpan() {
+
+    private val rawWidth: Int = drawable.intrinsicWidth.coerceAtLeast(1)
+    private val rawHeight: Int = drawable.intrinsicHeight.coerceAtLeast(1)
+
+    private val scale: Float = if (maxWidthPx in 1 until rawWidth) {
+        maxWidthPx.toFloat() / rawWidth.toFloat()
+    } else {
+        1f
+    }
+
+    private val scaledWidth: Int = (rawWidth * scale).roundToInt().coerceAtLeast(1)
+    private val scaledHeight: Int = (rawHeight * scale).roundToInt().coerceAtLeast(1)
+
+    override fun getSize(
+        paint: Paint,
+        text: CharSequence?,
+        start: Int,
+        end: Int,
+        fm: Paint.FontMetricsInt?
+    ): Int {
+        if (fm != null) {
+            val paintFm = paint.fontMetricsInt
+            val textCenter = (paintFm.ascent + paintFm.descent) / 2
+            val halfH = scaledHeight / 2
+            val spanTop = textCenter - halfH
+            val spanBottom = textCenter + (scaledHeight - halfH)
+
+            // Preserve native font metrics as a minimum floor so math-only TextViews (e.g. options)
+            // have the exact same baseline and line height as standard text, while tall fractions
+            // expand symmetrically above and below the math axis.
+            fm.ascent = minOf(paintFm.ascent, spanTop)
+            fm.top = minOf(paintFm.top, spanTop)
+            fm.descent = maxOf(paintFm.descent, spanBottom)
+            fm.bottom = maxOf(paintFm.bottom, spanBottom)
+        }
+        return scaledWidth
+    }
+
+    override fun draw(
+        canvas: Canvas,
+        text: CharSequence?,
+        start: Int,
+        end: Int,
+        x: Float,
+        top: Int,
+        y: Int,
+        bottom: Int,
+        paint: Paint
+    ) {
+        val paintFm = paint.fontMetricsInt
+        val textCenter = y + (paintFm.ascent + paintFm.descent) / 2f
+        val transY = textCenter - (scaledHeight / 2f)
+
+        canvas.save()
+        canvas.translate(x, transY)
+        if (scale != 1f) {
+            canvas.scale(scale, scale)
+        }
+        drawable.draw(canvas)
+        canvas.restore()
+    }
+}
+
+object LatexDrawableCache {
+    private val cache = android.util.LruCache<Triple<String, Int, Int>, Drawable>(600)
+
+    fun getOrCreate(rawLatex: String, fontSizePx: Float, textColorArgb: Int): Drawable {
+        val cleanKey = rawLatex.trim()
+        val sizeKey = (fontSizePx * 10f).roundToInt()
+        val key = Triple(cleanKey, sizeKey, textColorArgb)
+        val cached = cache.get(key)
+        if (cached != null) return cached
+
+        val created = trySalvageLatex(cleanKey, fontSizePx, textColorArgb)
+            ?: TextDrawable(cleanKey.ifEmpty { "MathError" }, fontSizePx, textColorArgb).apply {
+                setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+            }
+        cache.put(key, created)
+        return created
+    }
+}
+
 fun restoreCorruptedLatexEscapes(text: String): String {
     if (text.isEmpty()) return text
     var s = text
-    // 1. Form feed \u000c (ASCII 12) from unescaped \f in JSON
-    s = s.replace("\u000crac", "\\frac")
-        .replace("\u000corall", "\\forall")
-        .replace("\u000clat", "\\flat")
-        .replace("\u000crown", "\\frown")
-    
-    // 2. Backspace \u0008 (ASCII 8) from unescaped \b in JSON
-    s = s.replace("\u0008eta", "\\beta")
-        .replace("\u0008ar", "\\bar")
-        .replace("\u0008inom", "\\binom")
-        .replace("\u0008ullet", "\\bullet")
-        .replace("\u0008egin", "\\begin")
-        .replace("\u0008f", "\\bf")
-        .replace("\u0008oldsymbol", "\\boldsymbol")
-        .replace("\u0008matrix", "\\bmatrix")
-        .replace("\u0008mod", "\\bmod")
-        .replace("\u0008ot", "\\bot")
-        .replace("\u0008race", "\\brace")
-        .replace("\u0008rack", "\\brack")
-        .replace("\u0008cap", "\\bigcap")
-        .replace("\u0008cup", "\\bigcup")
-        
-    // 3. Tab \t (\u0009) from unescaped \t in JSON
-    s = s.replace("\u0009imes", "\\times")
-        .replace("\u0009heta", "\\theta")
-        .replace("\u0009ext", "\\text")
-        .replace("\u0009an", "\\tan")
-        .replace("\u0009au", "\\tau")
-        .replace("\u0009o", "\\to")
-        .replace("\u0009ilde", "\\tilde")
-        .replace("\u0009herefore", "\\therefore")
-        .replace("\u0009riangle", "\\triangle")
-        .replace("\u0009frac", "\\tfrac")
-        .replace("\u0009op", "\\top")
-        .replace("\u0009extbf", "\\textbf")
-        .replace("\u0009extit", "\\textit")
-        
+    // 1. Form feed \u000c (ASCII 12) from unescaped \f in JSON (e.g. \frac, \forall, \flat, \frown)
+    s = s.replace(Regex("""\u000c(?=[a-zA-Z])"""), "\\\\f")
+
+    // 2. Backspace \u0008 (ASCII 8) from unescaped \b in JSON (e.g. \beta, \bar, \binom, \begin, \mathbf)
+    s = s.replace(Regex("""\u0008(?=[a-zA-Z])"""), "\\\\b")
+
+    // 3. Tab \t (\u0009) from unescaped \t in JSON before LaTeX command names
+    s = s.replace(
+        Regex("""\u0009(?=imes|heta|ext|an|au|o(?![a-zA-Z])|op(?![a-zA-Z])|ilde|herefore|riangle|frac|hick|wohead)"""),
+        "\\\\t"
+    )
+
     // 4. Carriage return \r (\u000d) before LaTeX command keywords
-    s = s.replace(Regex("""\r(?=ight|ho|rightarrow|Rightarrow|rangle|rfloor|rceil|Re|root)"""), "\\\\")
-    
+    s = s.replace(
+        Regex("""\r(?=ight|ho|rightarrow|Rightarrow|rangle|rfloor|rceil|Re|root|mathrm|mathbf|mathit|mathcal|mathbb|rightharpoonup|rtimes)"""),
+        "\\\\r"
+    )
+
     // 5. Newline \n (\u000a) before LaTeX command keywords
-    s = s.replace(Regex("""\n(?=eq|abla|nearrow|neg|nu(?![a-zA-Z])|ne(?![a-zA-Z])|not(?![a-zA-Z]))"""), "\\\\")
+    s = s.replace(
+        Regex("""\n(?=eq|abla|nearrow|neg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin|u(?![a-zA-Z])|e(?![a-zA-Z])|ot(?![a-zA-Z])|i(?![a-zA-Z]))"""),
+        "\\\\n"
+    )
 
     return s
 }
 
 fun cleanExtractedMathText(text: String): String {
-    if (text.isBlank()) return text
+    if (text.isBlank()) return ""
+    val trimmed = text.trim()
+    if (trimmed.equals("null", ignoreCase = true) || trimmed.equals("undefined", ignoreCase = true) || trimmed.equals("none", ignoreCase = true)) {
+        return ""
+    }
     // Normalize corrupted escapes first
     val s = restoreCorruptedLatexEscapes(text)
     // Run span-aware preprocessing: sanitizes math expressions in-place,
@@ -149,18 +230,25 @@ fun sanitizeLatex(input: String): String {
 
     var s = restoreCorruptedLatexEscapes(input.trim())
 
-    // Normalize over-escaped LaTeX commands (e.g. \\tan -> \tan, \\frac -> \frac),
+    // Normalize over-escaped LaTeX commands (e.g. \\tan -> \tan, \\frac -> \frac, \\% -> \%),
     // but preserve valid LaTeX row-break sequences like \\ followed by whitespace/newline/closing bracket
-    s = s.replace(Regex("""\\\\(?=[a-zA-Z])""")) { "\\" }
+    s = s.replace(Regex("""\\\\(?=[a-zA-Z%])""")) { "\\" }
+
+    // Escape bare % inside LaTeX math mode so JLatexMath does not treat % as a comment character
+    // that discards the rest of the expression
+    s = s.replace(Regex("""(?<!\\)%"""), "\\\\%")
 
     // 1. Normalize unicode math and typography characters to standard LaTeX
     s = s.replace("×", "\\times ")
         .replace("÷", "\\div ")
         .replace("±", "\\pm ")
+        .replace("∓", "\\mp ")
         .replace("≤", "\\leq ")
         .replace("≥", "\\geq ")
         .replace("≠", "\\neq ")
         .replace("≈", "\\approx ")
+        .replace("≡", "\\equiv ")
+        .replace("∝", "\\propto ")
         .replace("∞", "\\infty ")
         .replace("√", "\\sqrt ")
         .replace("π", "\\pi ")
@@ -169,6 +257,7 @@ fun sanitizeLatex(input: String): String {
         .replace("β", "\\beta ")
         .replace("γ", "\\gamma ")
         .replace("δ", "\\delta ")
+        .replace("ε", "\\epsilon ")
         .replace("λ", "\\lambda ")
         .replace("μ", "\\mu ")
         .replace("σ", "\\sigma ")
@@ -176,7 +265,9 @@ fun sanitizeLatex(input: String): String {
         .replace("ϕ", "\\phi ")
         .replace("ω", "\\omega ")
         .replace("Δ", "\\Delta ")
+        .replace("Ω", "\\Omega ")
         .replace("∑", "\\sum ")
+        .replace("∏", "\\prod ")
         .replace("∫", "\\int ")
         .replace("∂", "\\partial ")
         .replace("°", "^{\\circ}")
@@ -195,10 +286,21 @@ fun sanitizeLatex(input: String): String {
         .replace("¾", "\\frac{3}{4}")
         .replace("⅓", "\\frac{1}{3}")
         .replace("⅔", "\\frac{2}{3}")
+        .replace("⅕", "\\frac{1}{5}")
+        .replace("⅖", "\\frac{2}{5}")
+        .replace("⅗", "\\frac{3}{5}")
+        .replace("⅘", "\\frac{4}{5}")
+        .replace("⅙", "\\frac{1}{6}")
+        .replace("⅚", "\\frac{5}{6}")
+        .replace("⅛", "\\frac{1}{8}")
+        .replace("⅜", "\\frac{3}{8}")
+        .replace("⅝", "\\frac{5}{8}")
+        .replace("⅞", "\\frac{7}{8}")
         .replace("→", "\\rightarrow ")
         .replace("←", "\\leftarrow ")
         .replace("↔", "\\leftrightarrow ")
         .replace("⇒", "\\Rightarrow ")
+        .replace("⇔", "\\Leftrightarrow ")
         .replace("∈", "\\in ")
         .replace("∉", "\\notin ")
         .replace("⊂", "\\subset ")
@@ -208,6 +310,11 @@ fun sanitizeLatex(input: String): String {
         .replace("∅", "\\emptyset ")
         .replace("•", "\\cdot ")
         .replace("·", "\\cdot ")
+        .replace("−", "-")
+        .replace("–", "-")
+        .replace("′", "'")
+        .replace("″", "''")
+        .replace("₹", "\\text{Rs. }")
 
     // Normalize accents and quotes
     s = s.replace("’", "'")
@@ -225,6 +332,11 @@ fun sanitizeLatex(input: String): String {
         .replace(Regex("""\\to(?![a-zA-Z])""")) { "\\rightarrow" }
         .replace(Regex("""\\degree(?![a-zA-Z])""")) { "^{\\circ}" }
         .replace(Regex("""\\not=(?![a-zA-Z])""")) { "\\neq" }
+        .replace(Regex("""\\le(?![a-zA-Z])""")) { "\\leq" }
+        .replace(Regex("""\\ge(?![a-zA-Z])""")) { "\\geq" }
+        .replace(Regex("""\\ne(?![a-zA-Z])""")) { "\\neq" }
+        .replace(Regex("""\\lt(?![a-zA-Z])""")) { "<" }
+        .replace(Regex("""\\gt(?![a-zA-Z])""")) { ">" }
         .replace(Regex("""\\dfrac(?![a-zA-Z])""")) { "\\frac" }
         .replace(Regex("""\\tfrac(?![a-zA-Z])""")) { "\\frac" }
         .replace(Regex("""\\cfrac(?![a-zA-Z])""")) { "\\frac" }
@@ -258,7 +370,7 @@ fun sanitizeLatex(input: String): String {
         val c = s[i]
         if (c == '\\' && i + 1 < s.length) {
             val next = s[i + 1]
-            if (next == '{' || next == '}') {
+            if (next == '{' || next == '}' || next == '%') {
                 sb.append(c).append(next)
                 i += 2
                 continue
@@ -282,7 +394,12 @@ fun sanitizeLatex(input: String): String {
     repeat(braceDepth) {
         sb.append('}')
     }
-    s = sb.toString()
+    s = sb.toString().trim()
+
+    // Ensure standalone superscript/subscript at start of expression has an empty base group {}
+    if (s.startsWith("^") || s.startsWith("_")) {
+        s = "{}$s"
+    }
 
     // 4. Balance \left and \right
     val leftMatches = Regex("""\\left(?![a-zA-Z])""").findAll(s).toList()
@@ -360,67 +477,88 @@ fun trySalvageLatex(rawLatex: String?, fontSizePx: Float, textColorArgb: Int): D
 }
 
 object MarkwonCache {
-    private val cache = mutableMapOf<Pair<Float, Color>, Markwon>()
+    private val cache = mutableMapOf<Triple<Float, Color, Int>, Markwon>()
+    @Volatile
+    private var jlatexInitialized = false
 
-    fun get(context: android.content.Context, fontSizePx: Float, color: Color): Markwon {
-        val key = Pair(fontSizePx, color)
-        return cache.getOrPut(key) {
-            val textColorArgb = if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK
-            Markwon.builder(context)
-                .usePlugin(HtmlPlugin.create())
-                .usePlugin(CoilImagesPlugin.create(context))
-                .usePlugin(MarkwonInlineParserPlugin.create { factoryBuilder ->
-                    factoryBuilder.addInlineProcessor(SingleDollarInlineProcessor())
-                })
-                .usePlugin(StrikethroughPlugin.create())
-                .usePlugin(TablePlugin.create(context))
-                .usePlugin(object : AbstractMarkwonPlugin() {
-                    override fun configureTheme(builder: MarkwonTheme.Builder) {
-                        builder.listItemColor(textColorArgb)
-                        val thematicAlpha = 70
-                        val thematicColor = android.graphics.Color.argb(
-                            thematicAlpha,
-                            android.graphics.Color.red(textColorArgb),
-                            android.graphics.Color.green(textColorArgb),
-                            android.graphics.Color.blue(textColorArgb)
+    private fun ensureJLatexInitialized(context: android.content.Context) {
+        if (!jlatexInitialized) {
+            synchronized(this) {
+                if (!jlatexInitialized) {
+                    try {
+                        ru.noties.jlatexmath.JLatexMathAndroid.init(context.applicationContext ?: context)
+                    } catch (_: Exception) {
+                    }
+                    jlatexInitialized = true
+                }
+            }
+        }
+    }
+
+    fun get(
+        context: android.content.Context,
+        fontSizePx: Float,
+        color: Color,
+        maxFormulaWidthPx: Int = Int.MAX_VALUE
+    ): Markwon {
+        ensureJLatexInitialized(context)
+        val key = Triple(fontSizePx, color, maxFormulaWidthPx)
+        return synchronized(cache) {
+            cache.getOrPut(key) {
+                val textColorArgb = if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK
+                Markwon.builder(context)
+                    .usePlugin(HtmlPlugin.create())
+                    .usePlugin(CoilImagesPlugin.create(context))
+                    .usePlugin(MarkwonInlineParserPlugin.create { factoryBuilder ->
+                        factoryBuilder.addInlineProcessor(SingleDollarInlineProcessor())
+                    })
+                    .usePlugin(StrikethroughPlugin.create())
+                    .usePlugin(TablePlugin.create(context))
+                    .usePlugin(
+                        JLatexMathPlugin.create(
+                            fontSizePx,
+                            object : JLatexMathPlugin.BuilderConfigure {
+                                override fun configureBuilder(builder: JLatexMathPlugin.Builder) {
+                                    // Disable JLatexMathPlugin's buggy async parser/loader; SingleDollarInlineProcessor
+                                    // and our synchronous JLatexMathNode visitor below handle both $...$ and $$...$$.
+                                    builder.inlinesEnabled(false)
+                                    builder.blocksEnabled(false)
+                                }
+                            }
                         )
-                        builder.thematicBreakColor(thematicColor)
-                    }
-
-                    override fun configureVisitor(builder: MarkwonVisitor.Builder) {
-                        builder.on(SoftLineBreak::class.java) { visitor, _ ->
-                            visitor.builder().append('\n')
+                    )
+                    .usePlugin(object : AbstractMarkwonPlugin() {
+                        override fun configureTheme(builder: MarkwonTheme.Builder) {
+                            builder.listItemColor(textColorArgb)
+                            val thematicAlpha = 70
+                            val thematicColor = android.graphics.Color.argb(
+                                thematicAlpha,
+                                android.graphics.Color.red(textColorArgb),
+                                android.graphics.Color.green(textColorArgb),
+                                android.graphics.Color.blue(textColorArgb)
+                            )
+                            builder.thematicBreakColor(thematicColor)
                         }
-                    }
-                })
-                .usePlugin(
-                    JLatexMathPlugin.create(
-                        fontSizePx,
-                        object : JLatexMathPlugin.BuilderConfigure {
-                            override fun configureBuilder(builder: JLatexMathPlugin.Builder) {
-                                builder.inlinesEnabled(true)
-                                builder.blocksLegacy(true)
-                                builder.blocksEnabled(true)
-                                builder.theme().blockFitCanvas(false)
-                                builder.theme().textColor(textColorArgb)
-                                builder.theme().inlineTextColor(textColorArgb)
-                                builder.theme().blockTextColor(textColorArgb)
-                                builder.errorHandler { latex, error ->
-                                    val salvaged = trySalvageLatex(latex, fontSizePx, textColorArgb)
-                                    if (salvaged != null) {
-                                        salvaged
-                                    } else {
-                                        android.util.Log.w("JLatexMath", "Could not parse LaTeX: ${latex?.take(80)}... (${error.message})")
-                                        TextDrawable(latex ?: "MathError", fontSizePx, textColorArgb).apply {
-                                            setBounds(0, 0, intrinsicWidth, intrinsicHeight)
-                                        }
-                                    }
+
+                        override fun configureVisitor(builder: MarkwonVisitor.Builder) {
+                            builder.on(SoftLineBreak::class.java) { visitor, _ ->
+                                visitor.builder().append('\n')
+                            }
+                            // Synchronous, math-axis-aligned rendering for all $...$ and $$...$$ nodes
+                            builder.on(JLatexMathNode::class.java) { visitor, node ->
+                                val rawLatex = node.latex()
+                                if (!rawLatex.isNullOrBlank()) {
+                                    val drawable = LatexDrawableCache.getOrCreate(rawLatex, fontSizePx, textColorArgb)
+                                    val start = visitor.length()
+                                    val singleLinePlaceholder = rawLatex.replace('\n', ' ').replace('\r', ' ')
+                                    visitor.builder().append(singleLinePlaceholder)
+                                    visitor.setSpans(start, AlignedLatexSpan(drawable, maxFormulaWidthPx))
                                 }
                             }
                         }
-                    )
-                )
-                .build()
+                    })
+                    .build()
+            }
         }
     }
 }
@@ -612,20 +750,43 @@ class CustomSelectionActionModeCallback(
 
 class SingleDollarInlineProcessor : io.noties.markwon.inlineparser.InlineProcessor() {
     companion object {
-        // Regex for inline math $...$
-        // Must start with $ and not another $, not end with newline or preceded by backslash, ends with $ not followed by $ or digits
-        private val RE = java.util.regex.Pattern.compile("^\\$([^\\$\\n]+?)\\$(?!\\$)")
+        // Match display $$...$$ first, then inline $...$
+        private val RE_DISPLAY = java.util.regex.Pattern.compile("^\\$\\$([\\s\\S]+?)\\$\\$")
+        private val RE_INLINE = java.util.regex.Pattern.compile("^\\$([^\\$\\n]+?)\\$(?!\\$)")
     }
 
     override fun specialCharacter(): Char = '$'
 
     override fun parse(): org.commonmark.node.Node? {
-        val matched = match(RE) ?: return null
-        val inner = matched.substring(1, matched.length - 1).trim()
+        val displayMatched = match(RE_DISPLAY)
+        if (displayMatched != null) {
+            val inner = displayMatched.substring(2, displayMatched.length - 2).trim()
+            if (inner.isEmpty()) return null
+            val node = JLatexMathNode()
+            node.latex(inner)
+            return node
+        }
+
+        val inlineMatched = match(RE_INLINE) ?: return null
+        val inner = inlineMatched.substring(1, inlineMatched.length - 1).trim()
         if (inner.isEmpty()) return null
-        val node = io.noties.markwon.ext.latex.JLatexMathNode()
+        val node = JLatexMathNode()
         node.latex(inner)
         return node
+    }
+}
+
+/**
+ * Merges patterns where a parenthesized math group immediately precedes a superscript/subscript
+ * dollar span, e.g. `(0.08\% \text{ of } 0.008\% \text{ of } 8)$^{\frac{1}{9}}$`
+ * -> `$(0.08\% \text{ of } 0.008\% \text{ of } 8)^{\frac{1}{9}}$`.
+ */
+private fun mergeSplitBaseAndExponentSpans(raw: String): String {
+    if (!raw.contains("$^") && !raw.contains("\$_")) return raw
+    return raw.replace(
+        Regex("""(\([^()\n]+\))\s*\$\s*([\^_](?:\{(?:[^{}]|\{[^{}]*\})*\}|[a-zA-Z0-9]+))\s*\$""")
+    ) { m ->
+        "$" + m.groupValues[1] + m.groupValues[2] + "$"
     }
 }
 
@@ -642,6 +803,8 @@ class SingleDollarInlineProcessor : io.noties.markwon.inlineparser.InlineProcess
 fun preprocessMathSpans(raw: String): String {
     if (raw.isBlank()) return raw
 
+    val mergedRaw = mergeSplitBaseAndExponentSpans(raw)
+
     // Match code blocks, inline code, display math, bracket display, inline paren, and inline dollar
     val spanPattern = Regex(
         "(?s)(```(?:math|latex)\\s*[\\s\\S]*?```)" +             // Group 1: fenced math
@@ -653,12 +816,12 @@ fun preprocessMathSpans(raw: String): String {
         "|((?<![\\$\\w\\\\])\\$(?!\\$)(?:[^\\$\\n\\\\]|\\\\.)+?\\$(?![\\$0-9]))" // Group 7: inline dollar $...$
     )
 
-    val out = StringBuilder(raw.length + 64)
+    val out = StringBuilder(mergedRaw.length + 64)
     var lastIdx = 0
 
-    for (m in spanPattern.findAll(raw)) {
+    for (m in spanPattern.findAll(mergedRaw)) {
         if (m.range.first > lastIdx) {
-            val plainText = raw.substring(lastIdx, m.range.first)
+            val plainText = mergedRaw.substring(lastIdx, m.range.first)
             out.append(wrapBareLatexInPlainText(plainText))
         }
 
@@ -675,7 +838,7 @@ fun preprocessMathSpans(raw: String): String {
                 // Fenced math: ```math ... ``` or ```latex ... ```
                 val inner = g1.replace(Regex("""^```(?:math|latex)\s*"""), "")
                     .replace(Regex("""\s*```$"""), "")
-                out.append("\n\n$$").append(sanitizeLatex(inner)).append("$$\n\n")
+                out.append("\n\n$$").append(sanitizeLatex(inner).replace(Regex("""\n\s*\n"""), "\n")).append("$$\n\n")
             }
             g2 != null -> {
                 // Fenced code block (e.g. ```kotlin ... ```) -> preserve exactly as-is
@@ -685,7 +848,7 @@ fun preprocessMathSpans(raw: String): String {
                 // Inline code span -> preserve as-is unless it explicitly wraps math like `$$...$$` or `$...$`
                 if (g3.startsWith("`$$") && g3.endsWith("$$`")) {
                     val inner = g3.removePrefix("`$$").removeSuffix("$$`")
-                    out.append("$$").append(sanitizeLatex(inner)).append("$$")
+                    out.append("$$").append(sanitizeLatex(inner).replace(Regex("""\n\s*\n"""), "\n")).append("$$")
                 } else if (g3.startsWith("`$") && g3.endsWith("$`")) {
                     val inner = g3.removePrefix("`$").removeSuffix("$`")
                     out.append("$").append(sanitizeLatex(inner)).append("$")
@@ -696,12 +859,12 @@ fun preprocessMathSpans(raw: String): String {
             g4 != null -> {
                 // Display $$...$$ -> preserve as display math, sanitize inner content only
                 val inner = g4.substring(2, g4.length - 2)
-                out.append("$$").append(sanitizeLatex(inner)).append("$$")
+                out.append("$$").append(sanitizeLatex(inner).replace(Regex("""\n\s*\n"""), "\n")).append("$$")
             }
             g5 != null -> {
                 // Display \[...\] -> convert to display math $$...$$ with newline boundaries
                 val inner = g5.substring(2, g5.length - 2)
-                out.append("\n\n$$").append(sanitizeLatex(inner)).append("$$\n\n")
+                out.append("\n\n$$").append(sanitizeLatex(inner).replace(Regex("""\n\s*\n"""), "\n")).append("$$\n\n")
             }
             g6 != null -> {
                 // Inline \(...\) -> convert to inline math $...$
@@ -726,8 +889,8 @@ fun preprocessMathSpans(raw: String): String {
         lastIdx = m.range.last + 1
     }
 
-    if (lastIdx < raw.length) {
-        val plainText = raw.substring(lastIdx)
+    if (lastIdx < mergedRaw.length) {
+        val plainText = mergedRaw.substring(lastIdx)
         out.append(wrapBareLatexInPlainText(plainText))
     }
 
@@ -737,6 +900,7 @@ fun preprocessMathSpans(raw: String): String {
 /**
  * Apply bare-LaTeX auto-wrapping ONLY to plain-text spans outside existing formulas,
  * code spans, and code blocks.
+ * Preserves 100% of non-ASCII (e.g. Hindi/Devanagari) characters, %, \%, and nested braces.
  */
 private fun wrapBareLatexInPlainText(plainText: String): String {
     if (plainText.isEmpty()) return plainText
@@ -749,33 +913,36 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
         "the", "a", "an", "this", "that", "these", "those", "for", "with", "from", "to", "in", "on", "at",
         "by", "of", "equal", "equals", "yields", "gives", "so", "such", "solution", "curve",
         "option", "options", "question", "statement", "value", "values", "constant", "constants",
-        "rewriting", "solving", "testing", "lies", "integrating", "differentiating"
+        "rewriting", "solving", "testing", "lies", "integrating", "differentiating", "find", "calculate"
     )
 
+    val nestedBraceGroup = """\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"""
     val tokenPattern = Regex(
-        """(\\[a-zA-Z]+(?:\s*\{[^{}]*\}|\s*\[[^\[\]]*\]|\s*_\{[^{}]*\}|\s*_\w+|\s*\^\{[^{}]*\}|\s*\^\w+)*)""" +
+        """(\\[a-zA-Z]+(?:\s*$nestedBraceGroup|\s*\[[^\[\]]*\]|\s*_$nestedBraceGroup|\s*_\w+|\s*\^$nestedBraceGroup|\s*\^\w+)*|\\[%&#_{}])""" +
         """|([a-zA-Z]+)""" +
         """|([0-9]+(?:\.[0-9]+)?)""" +
-        """|(_\{[^{}]*\}|_\w+|\^\{[^{}]*\}|\^\w+)""" +
-        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?])""" +
+        """|(_$nestedBraceGroup|_\w+|\^$nestedBraceGroup|\^\w+)""" +
+        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%])""" +
         """|(\$)""" +
-        """|(\s+)"""
+        """|(\s+)""" +
+        """|([^\s\\a-zA-Z0-9_\^\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%\$]+)"""
     )
 
     val matches = tokenPattern.findAll(plainText).toList()
     if (matches.isEmpty()) return plainText
 
-    val result = StringBuilder()
+    val result = StringBuilder(plainText.length + 32)
     val matchStrings = matches.map { it.value }
     val matchTypes = matches.map { m ->
         when {
-            m.groups[1] != null -> 1 // LaTeX command
-            m.groups[2] != null -> 2 // Word
+            m.groups[1] != null -> 1 // LaTeX command or escaped symbol
+            m.groups[2] != null -> 2 // ASCII Word
             m.groups[3] != null -> 3 // Number
             m.groups[4] != null -> 4 // Sub/Super
-            m.groups[5] != null -> 5 // Operator / Punctuation
+            m.groups[5] != null -> 5 // Operator / Punctuation (including %)
             m.groups[6] != null -> 6 // Dollar $
-            else -> 7 // Whitespace
+            m.groups[7] != null -> 7 // Whitespace
+            else -> 8                // Non-ASCII prose (e.g. Hindi/Devanagari) or other characters
         }
     }
 
@@ -795,11 +962,12 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
             var leadStart = result.length
             val prevText = result.toString()
 
-            val leadMatch = Regex("""(?:[a-zA-Z0-9\(\)]+\s*=\s*)$""").find(prevText)
+            // Capture leading `x = ` or unclosed parenthesized math prefix like `(0.08\% ` on the same line
+            val leadMatch = Regex("""(?:[a-zA-Z0-9\(\)]+\s*=\s*|\([0-9\.\s\\%\+\-\*\/]+)$""").find(prevText)
             if (leadMatch != null) {
                 val leadStr = leadMatch.value
                 val leadProse = leadStr.trim().split(Regex("""\s+""")).any { it.lowercase() in proseWords }
-                if (!leadProse) {
+                if (!leadProse && !leadStr.contains('\n')) {
                     leadStart = prevText.length - leadStr.length
                 }
             }
@@ -821,6 +989,17 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
                 val nxtType = matchTypes[i]
                 val nxtStr = matchStrings[i]
 
+                // Break on newline so inline $...$ never spans across multiple lines
+                if (nxtType == 7 && nxtStr.contains('\n')) {
+                    break
+                }
+
+                // Break on non-ASCII prose words (e.g. Hindi/Devanagari text)
+                if (nxtType == 8) {
+                    break
+                }
+
+                // Break on English prose words
                 if (nxtType == 2 && proseWords.contains(nxtStr.lowercase())) {
                     break
                 }
@@ -831,7 +1010,11 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
                 }
 
                 if (nxtType == 5 && nxtStr == ".") {
-                    if (i + 1 == n || (matchTypes[i + 1] == 2 && proseWords.contains(matchStrings[i + 1].lowercase()))) {
+                    if (i + 1 == n ||
+                        matchTypes[i + 1] == 8 ||
+                        (matchTypes[i + 1] == 7 && matchStrings[i + 1].contains('\n')) ||
+                        (matchTypes[i + 1] == 2 && proseWords.contains(matchStrings[i + 1].lowercase()))
+                    ) {
                         break
                     }
                 }
@@ -856,14 +1039,6 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
         } else {
             result.append(s)
             i++
-        }
-    }
-
-    val lastEnd = if (matches.isNotEmpty()) matches.last().range.last + 1 else 0
-    if (lastEnd < plainText.length) {
-        val tail = plainText.substring(lastEnd)
-        if (tail != "$") {
-            result.append(tail)
         }
     }
 
@@ -970,7 +1145,6 @@ private fun transformNonMathLineBreaks(text: String): String {
 
 object MathFormattingCache {
     private val formattedTextCache = android.util.LruCache<String, String>(1000)
-    private val spannableCache = android.util.LruCache<Triple<String, Float, Int>, Spannable>(500)
 
     fun getFormattedText(raw: String): String {
         if (raw.isBlank()) return raw
@@ -981,21 +1155,16 @@ object MathFormattingCache {
         return formatted
     }
 
+    /**
+     * Always creates a fresh Spannable per view so stateful spans are never shared across multiple
+     * TextViews. Individual JLatexMathDrawables are cached inside LatexDrawableCache, making this fast.
+     */
     fun getSpannable(
         markwon: Markwon,
-        processedText: String,
-        fontSizePx: Float,
-        colorArgb: Int
+        processedText: String
     ): Spannable {
-        val key = Triple(processedText, fontSizePx, colorArgb)
-        val cached = spannableCache.get(key)
-        if (cached != null) {
-            return SpannableString(cached)
-        }
         val markdownNode = markwon.toMarkdown(processedText)
-        val spannable = if (markdownNode is Spannable) markdownNode else SpannableString(markdownNode)
-        spannableCache.put(key, SpannableString(spannable))
-        return SpannableString(spannable)
+        return if (markdownNode is Spannable) SpannableString(markdownNode) else SpannableString(markdownNode)
     }
 }
 
@@ -1016,9 +1185,16 @@ fun RichText(
     isHorizontallyScrollable: Boolean = false
 ) {
     val context = LocalContext.current
-    val fontSizePx = fontSize.value * context.resources.displayMetrics.density
-    val markwon = remember(fontSizePx) {
-        MarkwonCache.get(context, fontSizePx, color)
+    val displayMetrics = context.resources.displayMetrics
+    val fontSizePx = fontSize.value * displayMetrics.density
+    val maxFormulaWidthPx = if (isHorizontallyScrollable) {
+        Int.MAX_VALUE
+    } else {
+        (displayMetrics.widthPixels - (36f * displayMetrics.density)).toInt().coerceAtLeast(120)
+    }
+
+    val markwon = remember(fontSizePx, color, maxFormulaWidthPx) {
+        MarkwonCache.get(context, fontSizePx, color, maxFormulaWidthPx)
     }
 
     val processedText = remember(text) {
@@ -1030,9 +1206,8 @@ fun RichText(
     var zoomableImageUrl by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
 
     val spannableToDisplay = remember(processedText, markwon, searchQuery, highlightColor, textColorArgb) {
-        val baseSpannable = MathFormattingCache.getSpannable(markwon, processedText, fontSizePx, textColorArgb)
-        val spannable = SpannableString(baseSpannable)
-        
+        val spannable = MathFormattingCache.getSpannable(markwon, processedText)
+
         if (searchQuery.isNotBlank()) {
             val lowerText = spannable.toString().lowercase()
             val lowerQuery = searchQuery.lowercase()
@@ -1049,7 +1224,7 @@ fun RichText(
                 startIndex = index + lowerQuery.length
             }
         }
-        
+
         try {
             val imageSpans = spannable.getSpans(0, spannable.length, io.noties.markwon.image.AsyncDrawableSpan::class.java)
             for (span in imageSpans) {
@@ -1067,7 +1242,7 @@ fun RichText(
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        
+
         spannable
     }
 
@@ -1099,6 +1274,9 @@ fun RichText(
         modifier = modifier,
         factory = { ctx ->
             TextView(ctx).apply {
+                includeFontPadding = true
+                setTextColor(textColorArgb)
+                textSize = fontSize.value
                 if (isHorizontallyScrollable) {
                     setHorizontallyScrolling(true)
                     setTextIsSelectable(false)
@@ -1133,8 +1311,10 @@ fun RichText(
             }
         },
         update = { textView ->
-            textView.setTextColor(if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK)
-            textView.textSize = fontSize.value
+            textView.setTextColor(textColorArgb)
+            if (textView.textSize != fontSizePx) {
+                textView.textSize = fontSize.value
+            }
             if (isHorizontallyScrollable) {
                 textView.setHorizontallyScrolling(true)
                 textView.setTextIsSelectable(false)
@@ -1178,11 +1358,12 @@ fun RichText(
                 if (spannable != null) {
                     android.text.Selection.removeSelection(spannable)
                 }
+                textView.tag = null
                 textView.clearFocus()
             } catch (e: Exception) {}
         }
     )
-    
+
     if (zoomableImageUrl != null) {
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { zoomableImageUrl = null },
@@ -1203,7 +1384,7 @@ fun RichText(
                     scale = (scale * zoomChange).coerceIn(1f, 5f)
                     offset += offsetChange
                 }
-                
+
                 coil.compose.AsyncImage(
                     model = zoomableImageUrl,
                     contentDescription = null,
@@ -1218,7 +1399,7 @@ fun RichText(
                         .transformable(state = state),
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit
                 )
-                
+
                 androidx.compose.material3.IconButton(
                     onClick = { zoomableImageUrl = null },
                     modifier = Modifier

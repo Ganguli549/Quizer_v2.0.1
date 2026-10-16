@@ -81,6 +81,16 @@ data class PendingQuestionUpdate(
     val isDelete: Boolean = false
 )
 
+fun kotlinx.serialization.json.JsonObject.optCleanString(key: String): String? {
+    val el = this[key] ?: return null
+    if (el is kotlinx.serialization.json.JsonNull) return null
+    if (el is kotlinx.serialization.json.JsonPrimitive) {
+        val c = el.content.trim()
+        return if (c.isNotEmpty() && !c.equals("null", ignoreCase = true) && !c.equals("undefined", ignoreCase = true) && !c.equals("none", ignoreCase = true)) c else null
+    }
+    return null
+}
+
 fun processExtractedQuestionHeaders(updates: List<PendingQuestionUpdate>): List<PendingQuestionUpdate> {
     if (updates.isEmpty()) return updates
 
@@ -183,7 +193,8 @@ fun AiAssistantBottomSheet(
     visibleQuestionNumbers: List<Int> = emptyList(),
     onNavigateToAiSettings: () -> Unit = {},
     onNavigateToUsage: () -> Unit = {},
-    autoSend: Boolean = false
+    autoSend: Boolean = false,
+    onAutoSendConsumed: () -> Unit = {}
 ) {
     val chatContextId = remember(currentBookId, mode) {
         when (mode) {
@@ -240,13 +251,14 @@ fun AiAssistantBottomSheet(
         }
     }
 
-    var hasAutoSent by remember(chatContextId, prompt) { mutableStateOf(false) }
+    var hasAutoSent by remember { mutableStateOf(!autoSend) }
     val sessionAttachments by viewModel.sessionAttachments.collectAsState()
     val attachedPdfUri = sessionAttachments[chatContextId]
 
     LaunchedEffect(autoSend, prompt, isProcessing) {
         if (autoSend && !hasAutoSent && prompt.isNotBlank() && !isProcessing) {
             hasAutoSent = true
+            onAutoSendConsumed()
             val currentPrompt = prompt
             viewModel.setAiPromptText(chatContextId, "")
             viewModel.startAiProcessing(
@@ -1170,7 +1182,7 @@ suspend fun processAiChatCommand(
                - The `<p>` tag enables the app to render the passage in an expandable interactive card in Quiz and Read modes, and ensures all related questions remain grouped together.
                - For simple instruction-only headers without a reading passage (e.g. 'Choose one word Substitution (for question from 1 to 10)'), DO NOT use `<p>` tags. Use `<p>` ONLY when encapsulating actual passage/reading content.
                - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
-               - If a question has no preceding instruction or group header, set 'questionHeader' to null.
+               - If a question has no preceding instruction or group header, set 'questionHeader' to "".
             9. Extract ALL questions from the document. Take as much space as you need.
             10. Format the output strictly as a JSON array containing objects matching this schema:
             [
@@ -1179,18 +1191,20 @@ suspend fun processAiChatCommand(
                 "options": ["A", "B", "C", "D"],
                 "extraOptions": ["E", "F"] (ONLY IF REQUESTED),
                 "correctIndex": integer index of correct option,
-                "explanation": "Brief or ai generated explanation (ONLY IF REQUESTED)",
-                "detailedExplanation": "Explanation explicitly extracted from the book",
-                "path": "Topic/Subtopic based on PDF headers or user instructions",
+                "explanation": "Brief or ai generated explanation (empty string \"\" if none/not requested)",
+                "detailedExplanation": "Explanation explicitly extracted from the book (empty string \"\" if none)",
+                "path": "Topic/Subtopic based on PDF headers or user instructions (empty string \"\" if none)",
                 "format": "text or table",
-                "tableData": "JSON string of 2D array (ONLY if format is table)",
+                "tableData": "JSON string of 2D array (empty string \"\" if not table)",
                 "explanationImagePrompts": ["prompt1", "prompt2"] (ONLY IF REQUESTED),
                 "explanationImageOptions": ["url1", "url2"] (ONLY IF REQUESTED),
-                "questionHeader": "Instruction / header / passage applying to this question or group (e.g. 'Directions (Q. 1 to 5):\n<p name=\"Passage 1\">Passage text...</p>' or 'Choose one word Substitution (for question from 1 to 10)'). Wrap reading passages in <p>...</p> tags. Set for each question in the group. Null if none.",
-                "section": "question header if present",
-                "exam": "exam tags if present"
+                "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Empty string \"\" if none.",
+                "section": "question header if present, else \"\"",
+                "exam": "exam tags if present (e.g. 'SSC CGL 2023'), else \"\"",
+                "year": "exam year if present, else \"\""
               }
             ]
+            11. **NO NULL VALUES (CRITICAL)**: For any parameter with no value or empty content (such as exam, year, explanation, detailedExplanation, questionHeader, section, tableData, etc.), ALWAYS output an empty string "" (or empty list []). NEVER output null or "null"!
             Return ONLY the JSON array. Do not use markdown blocks like ```json.
         """.trimIndent()
         
@@ -1266,18 +1280,26 @@ suspend fun processAiChatCommand(
                     is kotlinx.serialization.json.JsonPrimitive -> {
                         if (el !is kotlinx.serialization.json.JsonNull) {
                             val c = el.content.trim()
-                            if (c.isNotBlank() && !c.equals("null", ignoreCase = true)) c else null
+                            if (c.isNotBlank() && !c.equals("null", ignoreCase = true) && !c.equals("undefined", ignoreCase = true) && !c.equals("none", ignoreCase = true)) c else null
                         } else null
                     }
                     else -> null
                 }
-                val rawQuestion = obj["question"]?.jsonPrimitive?.content ?: ""
+                val rawQuestion = obj.optCleanString("question") ?: ""
                 val questionText = cleanExtractedMathText(rawQuestion)
-                val rawExplanation = obj["explanation"]?.jsonPrimitive?.content ?: ""
+                val rawExplanation = obj.optCleanString("explanation") ?: ""
                 val explanation = cleanExtractedMathText(rawExplanation)
-                val rawDetailed = obj["detailedExplanation"]?.jsonPrimitive?.content
-                val detailedExplanation = rawDetailed?.let { cleanExtractedMathText(it) }
-                val cleanedHeader = rawHeader?.let { cleanExtractedMathText(it) }
+                val rawDetailed = obj.optCleanString("detailedExplanation")
+                val detailedExplanation = rawDetailed?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val cleanedHeader = rawHeader?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val exam = obj.optCleanString("exam") ?: ""
+                val year = obj.optCleanString("year") ?: ""
+                val format = obj.optCleanString("format")?.takeIf { it.equals("table", ignoreCase = true) } ?: "text"
+                val tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val bottomText = obj.optCleanString("bottomText")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val exams = obj.optCleanString("exams")?.takeIf { it.isNotBlank() && it != "[]" && !it.equals("null", ignoreCase = true) }
+                val section = cleanedHeader ?: obj.optCleanString("section") ?: ""
+                val path = obj.optCleanString("path") ?: ""
 
                 val updatedQ = com.example.data.QuestionEntity(
                     globalId = java.util.UUID.randomUUID().toString(),
@@ -1292,12 +1314,14 @@ suspend fun processAiChatCommand(
                     correctIndex = cIndex1,
                     explanation = explanation,
                     detailedExplanation = detailedExplanation,
-                    format = obj["format"]?.jsonPrimitive?.content ?: "text",
-                    tableData = obj["tableData"]?.jsonPrimitive?.content,
-                    section = cleanedHeader ?: obj["section"]?.jsonPrimitive?.content ?: "",
-                    exam = obj["exam"]?.jsonPrimitive?.content ?: "",
-                    year = "",
-                    path = obj["path"]?.jsonPrimitive?.content ?: "",
+                    format = format,
+                    tableData = tableData,
+                    bottomText = bottomText,
+                    section = section,
+                    exam = exam,
+                    exams = exams,
+                    year = year,
+                    path = path,
                     questionHeader = cleanedHeader
                 )
                 updates.add(PendingQuestionUpdate(
@@ -1693,33 +1717,33 @@ suspend fun processAiChatCommand(
                     id = if (id == -1) System.currentTimeMillis() else id.toLong(),
                     bookId = originalQ?.bookId ?: allQuestions.firstOrNull()?.bookId ?: "",
                     category = originalQ?.category ?: "AI Generated",
-                    question = obj["question"]?.jsonPrimitive?.content ?: originalQ?.question ?: "",
+                    question = obj.optCleanString("question")?.let { cleanExtractedMathText(it) } ?: originalQ?.question ?: "",
                     options = gson.toJson(parsedOptions),
                     advancedOptions = gson.toJson(generatedOptions2),
                     advancedCorrectIds = gson.toJson(listOfNotNull(generatedOptions2.getOrNull(cIndex2)?.id)),
                     extraOptions = gson.toJson(parsedExtraOptions),
                     correctIndex = cIndex2,
-                    explanation = obj["explanation"]?.jsonPrimitive?.content ?: originalQ?.explanation ?: "",
-                    detailedExplanation = obj["detailedExplanation"]?.jsonPrimitive?.content ?: originalQ?.detailedExplanation,
+                    explanation = obj.optCleanString("explanation")?.let { cleanExtractedMathText(it) } ?: originalQ?.explanation?.takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                    detailedExplanation = obj.optCleanString("detailedExplanation")?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) } ?: originalQ?.detailedExplanation?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                     img = originalQ?.img,
                     explanationImage = originalQ?.explanationImage,
-                    section = originalQ?.section ?: "",
-                    exam = originalQ?.exam ?: "",
-                    year = originalQ?.year ?: "",
-                    format = obj["format"]?.jsonPrimitive?.content ?: originalQ?.format,
-                    tableData = obj["tableData"]?.jsonPrimitive?.content ?: originalQ?.tableData,
+                    section = obj.optCleanString("section") ?: originalQ?.section?.takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                    exam = obj.optCleanString("exam") ?: originalQ?.exam?.takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                    year = obj.optCleanString("year") ?: originalQ?.year?.takeIf { !it.equals("null", ignoreCase = true) } ?: "",
+                    format = obj.optCleanString("format") ?: originalQ?.format,
+                    tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) } ?: originalQ?.tableData?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                     questionHeader = obj["questionHeader"]?.let { 
                         if (it is kotlinx.serialization.json.JsonObject) it.toString() 
                         else {
-                            val raw = it.jsonPrimitive.content
-                            if (raw.trim().startsWith("{")) {
+                            val raw = it.jsonPrimitive.content.trim()
+                            if (raw.startsWith("{")) {
                                 raw
-                            } else if (raw.isNotBlank()) {
+                            } else if (raw.isNotBlank() && !raw.equals("null", ignoreCase = true)) {
                                 "{\"startId\": ${originalQ?.id ?: 1}, \"endId\": ${originalQ?.id ?: 1}, \"text\": \"${raw.replace("\"", "\\\"").replace("\n", "\\n")}\"}"
                             } else null
                         }
-                    } ?: originalQ?.questionHeader,
-                    path = obj["path"]?.jsonPrimitive?.content ?: originalQ?.path ?: ""
+                    } ?: originalQ?.questionHeader?.takeIf { !it.equals("null", ignoreCase = true) },
+                    path = obj.optCleanString("path") ?: originalQ?.path?.takeIf { !it.equals("null", ignoreCase = true) } ?: ""
                 )
 
                 pendingUpdates.add(PendingQuestionUpdate(originalQ?.id ?: -1L, updatedQ, imgOptions))

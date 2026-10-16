@@ -610,9 +610,13 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                     }
                 }
 
-                if (!animatedQuestion.questionHeader.isNullOrBlank() || (!animatedQuestion.exam.isBlank() || !animatedQuestion.year.isBlank() || !animatedQuestion.exams.isNullOrBlank())) {
+                val hasHeader = !animatedQuestion.questionHeader.isNullOrBlank() && !animatedQuestion.questionHeader.trim().equals("null", ignoreCase = true)
+                val hasExam = (!animatedQuestion.exam.isBlank() && !animatedQuestion.exam.trim().equals("null", ignoreCase = true)) || 
+                              (!animatedQuestion.year.isBlank() && !animatedQuestion.year.trim().equals("null", ignoreCase = true)) || 
+                              (!animatedQuestion.exams.isNullOrBlank() && !animatedQuestion.exams!!.trim().equals("null", ignoreCase = true) && animatedQuestion.exams != "[]")
+                if (hasHeader || hasExam) {
                     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                        if (!animatedQuestion.questionHeader.isNullOrBlank()) {
+                        if (hasHeader) {
                             com.example.ui.components.ExpandableQuestionHeader(
                                 headerText = animatedQuestion.questionHeader,
                                 rangeStr = rangeStr,
@@ -841,8 +845,10 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                     enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
                     exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
                 ) {
-                    val hasDetailed = !animatedQuestion.detailedExplanation.isNullOrEmpty() || !animatedQuestion.explanationImage.isNullOrEmpty() || !animatedQuestion.explanationTable.isNullOrEmpty()
-                    val hasBasic = animatedQuestion.explanation.isNotBlank()
+                    val safeDetailedExp = animatedQuestion.detailedExplanation?.takeIf { it.isNotBlank() && !it.trim().equals("null", ignoreCase = true) }
+                    val hasDetailed = safeDetailedExp != null || !animatedQuestion.explanationImage.isNullOrEmpty() || !animatedQuestion.explanationTable.isNullOrEmpty()
+                    val safeBasicExp = animatedQuestion.explanation.takeIf { it.isNotBlank() && !it.trim().equals("null", ignoreCase = true) }
+                    val hasBasic = safeBasicExp != null
                     
                     if (hasBasic || hasDetailed || true) {
                         Column {
@@ -855,7 +861,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     if (hasBasic) {
                                         Text("Explanation:", fontWeight = FontWeight.Bold)
                                         Spacer(modifier = Modifier.height(4.dp))
-                                        com.example.ui.components.SmartRichText(animatedQuestion.explanation)
+                                        com.example.ui.components.SmartRichText(safeBasicExp!!)
                                         Spacer(modifier = Modifier.height(8.dp))
                                     }
                                     
@@ -1056,7 +1062,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
     fun ExplanationSheet() {
         if (showExplanationSheet) {
             val currentQuestion = questions[currentIndex]
-            val hasDetailed = !currentQuestion.detailedExplanation.isNullOrEmpty() || !currentQuestion.explanationImage.isNullOrEmpty() || !currentQuestion.explanationTable.isNullOrEmpty()
+            val safeDetailedExp = currentQuestion.detailedExplanation?.takeIf { it.isNotBlank() && !it.trim().equals("null", ignoreCase = true) }
+            val hasDetailed = safeDetailedExp != null || !currentQuestion.explanationImage.isNullOrEmpty() || !currentQuestion.explanationTable.isNullOrEmpty()
             val actualTabIndex = if (hasDetailed) explanationSheetTab else 1
             
             com.example.ui.components.CustomModalBottomSheet(
@@ -1177,8 +1184,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         }
                                     }
                                 }
-                                if (!questions[currentIndex].detailedExplanation.isNullOrEmpty()) {
-                                    com.example.ui.components.SmartRichText(questions[currentIndex].detailedExplanation!!)
+                                if (safeDetailedExp != null) {
+                                    com.example.ui.components.SmartRichText(safeDetailedExp)
                                 }
                                 if (!questions[currentIndex].explanationTable.isNullOrEmpty()) {
                                     val expTableData = androidx.compose.runtime.remember(questions[currentIndex].id) {
