@@ -374,7 +374,7 @@ fun AiAssistantBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp)
+                .padding(bottom = 8.8.dp)
                 .weight(1f, fill = false)
         ) {
             Row(
@@ -972,7 +972,13 @@ fun AiAssistantBottomSheet(
                 }
             }
             // Input Area
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 6.6.dp, top = 4.4.dp)
+            ) {
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { viewModel.setAiPromptText(chatContextId, it) },

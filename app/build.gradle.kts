@@ -15,8 +15,8 @@ android {
     applicationId = "com.aistudio.bmwquiz.xyza"
     minSdk = 24
     targetSdk = 36
-    versionCode = 7
-    versionName = "2.1.7"
+    versionCode = 8
+    versionName = "3.0.1"
   }
 
   signingConfigs {

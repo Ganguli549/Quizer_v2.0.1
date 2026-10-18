@@ -34,14 +34,14 @@ fun CustomModalBottomSheet(
         sheetState = sheetState,
         sheetGesturesEnabled = false,
         contentWindowInsets = { 
-            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Vertical)
                 .union(WindowInsets.ime) 
         },
         dragHandle = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp, bottom = 4.dp)
+                    .padding(top = 6.6.dp, bottom = 4.dp)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
