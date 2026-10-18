@@ -1,26 +1,24 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 
 @Composable
 fun ExpandableQuestionHeader(
@@ -32,7 +30,8 @@ fun ExpandableQuestionHeader(
     initiallyExpanded: Boolean = false,
     searchQuery: String = "",
     highlightColor: Color = Color.Yellow,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     val pTagRegex = Regex("<p(?:\\s+name=\"([^\"]+)\")?\\s*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
     val match = pTagRegex.find(headerText)
@@ -42,9 +41,9 @@ fun ExpandableQuestionHeader(
         val insideP = match.value.trim()
         val afterP = headerText.substring(match.range.last + 1).trim()
         val headerTitle = match.groupValues[1].takeIf { it.isNotBlank() } ?: "Passage"
-        
+
         var isExpanded by remember(headerText, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
-        
+
         Column(modifier = modifier.fillMaxWidth()) {
             val rangeDisplay = if (rangeStr.isNotBlank()) " <b>$rangeStr</b>" else ""
             if (beforeP.isNotBlank()) {
@@ -54,7 +53,8 @@ fun ExpandableQuestionHeader(
                     color = textColor,
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
-                    onClick = onClick
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
                 )
             } else if (rangeStr.isNotBlank()) {
                 RichText(
@@ -63,10 +63,11 @@ fun ExpandableQuestionHeader(
                     color = textColor,
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
-                    onClick = onClick
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
                 )
             }
-            
+
             if (insideP.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 if (!isQuizMode) {
@@ -76,10 +77,10 @@ fun ExpandableQuestionHeader(
                         color = textColor,
                         searchQuery = searchQuery,
                         highlightColor = highlightColor,
-                        onClick = onClick
+                        onClick = onClick,
+                        onClickWithCoords = onClickWithCoords
                     )
                 } else {
-                    // Expandable with modern aesthetic
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -127,7 +128,7 @@ fun ExpandableQuestionHeader(
                                     )
                                 }
                             }
-                            
+
                             if (isExpanded) {
                                 Spacer(modifier = Modifier.height(12.dp))
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -138,14 +139,15 @@ fun ExpandableQuestionHeader(
                                     color = MaterialTheme.colorScheme.onSurface,
                                     searchQuery = searchQuery,
                                     highlightColor = highlightColor,
-                                    onClick = onClick
+                                    onClick = onClick,
+                                    onClickWithCoords = onClickWithCoords
                                 )
                             }
                         }
                     }
                 }
             }
-            
+
             if (afterP.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 RichText(
@@ -154,7 +156,8 @@ fun ExpandableQuestionHeader(
                     color = textColor,
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
-                    onClick = onClick
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
                 )
             }
         }
@@ -167,7 +170,8 @@ fun ExpandableQuestionHeader(
             modifier = modifier,
             searchQuery = searchQuery,
             highlightColor = highlightColor,
-            onClick = onClick
+            onClick = onClick,
+            onClickWithCoords = onClickWithCoords
         )
     }
 }

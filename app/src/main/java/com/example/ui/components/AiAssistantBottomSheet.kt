@@ -91,6 +91,42 @@ fun kotlinx.serialization.json.JsonObject.optCleanString(key: String): String? {
     return null
 }
 
+fun isHeaderOmissionRequested(cmd: String): Boolean {
+    val lower = cmd.lowercase().trim()
+    if (lower.contains("omit header") || lower.contains("omit headers") ||
+        lower.contains("set header to null") || lower.contains("set headers to null") ||
+        lower.contains("set header null") || lower.contains("set headers null") ||
+        lower.contains("set it to null") || lower.contains("set them to null") ||
+        lower.contains("header to null") || lower.contains("headers to null") ||
+        lower.contains("header = null") || lower.contains("header: null") ||
+        lower.contains("header null") || lower.contains("headers null") ||
+        lower.contains("null header") || lower.contains("null headers") ||
+        lower.contains("no header") || lower.contains("no headers") ||
+        lower.contains("without header") || lower.contains("without headers") ||
+        lower.contains("skip header") || lower.contains("skip headers") ||
+        lower.contains("ignore header") || lower.contains("ignore headers") ||
+        lower.contains("remove header") || lower.contains("remove headers") ||
+        lower.contains("delete header") || lower.contains("delete headers") ||
+        lower.contains("empty header") || lower.contains("empty headers") ||
+        lower.contains("header empty") || lower.contains("headers empty") ||
+        lower.contains("exclude header") || lower.contains("exclude headers") ||
+        lower.contains("clear header") || lower.contains("clear headers") ||
+        lower.contains("no question header") || lower.contains("no question headers") ||
+        lower.contains("omit question header") || lower.contains("omit question headers") ||
+        lower.contains("don't include header") || lower.contains("dont include header") ||
+        lower.contains("do not include header") || lower.contains("don't extract header") ||
+        lower.contains("dont extract header") || lower.contains("do not extract header") ||
+        lower.contains("don't add header") || lower.contains("dont add header") ||
+        lower.contains("do not add header") || lower.contains("don't set header") ||
+        lower.contains("dont set header") || lower.contains("do not set header")
+    ) return true
+
+    val pattern1 = Regex("""(?i)\b(?:omit|no|without|skip|ignore|remove|delete|null|empty|exclude|clear|leave\s+out|don't\s+(?:include|extract|set|add|put|give)|do\s+not\s+(?:include|extract|set|add|put|give))\s+(?:any\s+)?(?:question\s*)?(?:headers?|headings?|passages?|directions?|instructions?)\b""")
+    val pattern2 = Regex("""(?i)\b(?:headers?|headings?|passages?|directions?|instructions?)\s*(?:=|:|\bis\b|\bto\b|\bas\b)?\s*(?:null|empty|none|omit|skip|false|no|blank|zero)\b""")
+    val pattern3 = Regex("""(?i)\bset\s+(?:it|them|header|headers)\s+(?:as\s+|to\s+)?(?:null|empty|blank|none)\b""")
+    return pattern1.containsMatchIn(cmd) || pattern2.containsMatchIn(cmd) || pattern3.containsMatchIn(cmd)
+}
+
 fun processExtractedQuestionHeaders(updates: List<PendingQuestionUpdate>): List<PendingQuestionUpdate> {
     if (updates.isEmpty()) return updates
 
@@ -1031,20 +1067,23 @@ suspend fun processAiChatCommand(
 ): Pair<List<PendingQuestionUpdate>, String> {
     val gson = com.example.data.SharedGson.normal
     
+    val hasAttachedFile = pdfBytes != null || extractedText != null || attachments.isNotEmpty()
+    
     onStatusUpdate("Analyzing request...", 0f)
     val intentPrompt = """
         User command: "$command"
         Mode: $mode
         Current context info: $currentContextInfo
+        File/Document Attached: $hasAttachedFile
         
         Determine if the user wants to CHAT, EDIT, EXTRACT_QUESTIONS, BATCH_EDIT, or REMOVE.
         - CHAT: General conversation, answering ANY general knowledge or coding questions, asking for explanations, generating images, or requesting examples. (e.g. "provide an image", "explain this", "hi", "what is this?", "who is the pm of india?", "write a python script")
         - EDIT: Explicitly modifying the book/questions (e.g. "add distractors", "fix typos", "format table", "add an image to this question").
-        - EXTRACT_QUESTIONS: User attached a document/image and wants to extract questions into the book.
-        - BATCH_EDIT: Changing a specific field (e.g., questionHeader, path, category, format) to a specific value for a range of questions, without needing to analyze the text of the questions. (e.g., "change question header to 'Choose OWS' for question 5 to 25", "change path to 'Maths' for 1 to 25").
+        - EXTRACT_QUESTIONS: User attached a document/image/PDF and wants to extract questions into the book or process questions with specific commands (e.g. "omit header", "set header to null", "extract all", "parse this document").
+        - BATCH_EDIT: Changing a specific field (e.g., questionHeader, path, category, format) to a specific value for a range of existing questions, without an uploaded document. (e.g., "change question header to 'Choose OWS' for question 5 to 25", "change path to 'Maths' for 1 to 25").
         - REMOVE: Explicitly asking to delete or remove questions. (e.g., "remove question 5", "delete questions 10 to 20").
         
-        CRITICAL RULE: If the mode is READ_BOOK, ONLY return "edit", "batch_edit", or "remove" if the user uses explicit modification verbs. Default to "chat" unless editing is undeniable.
+        CRITICAL RULE: If a file is attached (File/Document Attached: true) and the user gives extraction or document instructions (e.g., "extract questions", "omit header", "set header to null", "no headers", "parse document", "import questions"), you MUST return "intent": "extract_questions"!
         
         Note: The app supports tabular questions natively. The question object can have 'format'="table" and 'tableData'=JSON string array of string arrays.
         Extract the following information and return ONLY a JSON object:
@@ -1096,6 +1135,17 @@ suspend fun processAiChatCommand(
         endId = parsed["endId"]?.jsonPrimitive?.intOrNull ?: maxPossibleId
         isExpansion = parsed["isExpansion"]?.jsonPrimitive?.booleanOrNull ?: false
         actionText = parsed["action"]?.jsonPrimitive?.content ?: "Processing"
+        
+        if (hasAttachedFile && intent != "extract_questions") {
+            val cmdLower = command.lowercase()
+            val isOmission = isHeaderOmissionRequested(command)
+            if (isOmission || cmdLower.contains("extract") || cmdLower.contains("omit") || cmdLower.contains("header") || 
+                cmdLower.contains("null") || cmdLower.contains("parse") || cmdLower.contains("pdf") || 
+                cmdLower.contains("document") || cmdLower.contains("file") || cmdLower.contains("question") ||
+                cmdLower.contains("import") || allQuestions.isEmpty()) {
+                intent = "extract_questions"
+            }
+        }
         
         if (intent == "batch_edit") {
             val batchActions = parsed["batchActions"]?.jsonArray
@@ -1160,11 +1210,37 @@ suspend fun processAiChatCommand(
         onStatusUpdate("Extracting questions via AI...", 0.3f)
         
         val sourceText = if (extractedText != null) "extracted text document:\n$extractedText\n\n" else "attached PDF/Image."
+        val shouldOmitHeaders = isHeaderOmissionRequested(command)
+
+        val headerExtractionRule = if (shouldOmitHeaders) {
+            """
+            8. **CRITICAL USER OVERRIDE (HIGHEST PRIORITY) - OMIT ALL HEADERS / SET HEADERS TO NULL**:
+               - The user explicitly commanded: "$command".
+               - You MUST set "questionHeader": "" and "section": "" for ALL questions extracted!
+               - DO NOT analyze, extract, copy, or synthesize any question headers, instructions, directions, reading passages, or section headings from the document into 'questionHeader' or 'section'.
+               - Leave both 'questionHeader': "" and 'section': "" as empty strings "" for every single question!
+            """.trimIndent()
+        } else {
+            """
+            8. **Question Header Extraction & Passage `<p>` Tag**:
+               - Documents sometimes contain question headers, which are instructions, directions, reading passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+               - When present, extract these instructions/headers into the 'questionHeader' field.
+               - For reading comprehension passages or stories, wrap the passage content inside `<p>` or `<p name="Passage Title">` tags (e.g. `Directions (Q. 1 to 5): Read the passage:\n<p name="Passage Title">Passage body text here...</p>`).
+               - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
+               - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
+               - If a question has no preceding instruction or group header, set 'questionHeader' to "".
+            """.trimIndent()
+        }
+
         val prompt = """
             You are extracting questions from the $sourceText based on the user's instructions.
             User's Instructions: "$command"
             
             Rules for Extraction:
+            0. **CRITICAL MANDATE - USER COMMAND OVERRIDES DEFAULT RULES (HIGHEST PRIORITY)**:
+               - The user's explicit instructions above in 'User's Instructions: "$command"' STRICTLY OVERRIDE ANY built-in rule below!
+               ${if (shouldOmitHeaders) "- MANDATORY: USER COMMANDED NO HEADERS / SET HEADERS TO NULL. Set \"questionHeader\": \"\" and \"section\": \"\" for ALL questions. DO NOT analyze or extract headers from the document." else ""}
+               - If the user instructs to omit explanations, format differently, or customize any field, follow the user's instructions completely.
             1. By default, extract ONLY: questions (including text, tables, images if present), options, answers, path, question header, exams, and explanation from the source itself.
             2. DO NOT generate AI explanations or extraOptions UNLESS the user explicitly asked for them in their instructions.
             3. If the user provided specific instructions for the path, follow them.
@@ -1173,16 +1249,7 @@ suspend fun processAiChatCommand(
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             7. **Math & Style (STRICT MANDATE)**: You MUST preserve mathematical symbols and format them correctly. You MUST wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`. (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`). Block equations MUST use double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without wrapping it in dollar signs. NEVER use `\(` or `\[` for math.  Use HTML for bold/italics if necessary.
             **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. output `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`). In valid JSON source, two backslashes represent one literal LaTeX backslash. DO NOT output quad backslashes.
-            8. **Question Header Extraction & Passage `<p>` Tag (CRITICAL)**: Documents often contain question headers, which are instructions, directions, reading passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
-               - You MUST extract these instructions/headers into the 'questionHeader' field.
-               - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction text in the 'questionHeader' field for ALL questions belonging to that group/range.
-               - **Passage / Reading Context `<p>` Tag (MANDATORY FOR PASSAGES)**: When a header contains a reading passage, story, case study, or context paragraphs that questions are based on, you MUST enclose the passage text inside `<p>...</p>` or `<p name="Passage Title">...</p>` tags (e.g. `<p name="Passage 1">Passage text here...</p>` or `<p>Passage text here...</p>`).
-               - Place instructions or directions BEFORE the `<p>` tag, for example:
-                 `Directions (Q. 1 to 5): Read the following passage carefully and answer the questions:\n<p name="Passage 1">Passage body text goes here...</p>`
-               - The `<p>` tag enables the app to render the passage in an expandable interactive card in Quiz and Read modes, and ensures all related questions remain grouped together.
-               - For simple instruction-only headers without a reading passage (e.g. 'Choose one word Substitution (for question from 1 to 10)'), DO NOT use `<p>` tags. Use `<p>` ONLY when encapsulating actual passage/reading content.
-               - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
-               - If a question has no preceding instruction or group header, set 'questionHeader' to "".
+            $headerExtractionRule
             9. Extract ALL questions from the document. Take as much space as you need.
             10. Format the output strictly as a JSON array containing objects matching this schema:
             [
@@ -1198,8 +1265,8 @@ suspend fun processAiChatCommand(
                 "tableData": "JSON string of 2D array (empty string \"\" if not table)",
                 "explanationImagePrompts": ["prompt1", "prompt2"] (ONLY IF REQUESTED),
                 "explanationImageOptions": ["url1", "url2"] (ONLY IF REQUESTED),
-                "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Empty string \"\" if none.",
-                "section": "question header if present, else \"\"",
+                "questionHeader": ${if (shouldOmitHeaders) "\"\" (User commanded to omit headers - MUST be empty string \"\")" else "\"Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Empty string \\\"\\\" if none.\""},
+                "section": ${if (shouldOmitHeaders) "\"\"" else "\"question header if present, else \\\"\\\"\""},
                 "exam": "exam tags if present (e.g. 'SSC CGL 2023'), else \"\"",
                 "year": "exam year if present, else \"\""
               }
@@ -1291,14 +1358,15 @@ suspend fun processAiChatCommand(
                 val explanation = cleanExtractedMathText(rawExplanation)
                 val rawDetailed = obj.optCleanString("detailedExplanation")
                 val detailedExplanation = rawDetailed?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                val cleanedHeader = rawHeader?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val shouldOmit = shouldOmitHeaders || isHeaderOmissionRequested(command)
+                val cleanedHeader = if (shouldOmit) null else rawHeader?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val exam = obj.optCleanString("exam") ?: ""
                 val year = obj.optCleanString("year") ?: ""
                 val format = obj.optCleanString("format")?.takeIf { it.equals("table", ignoreCase = true) } ?: "text"
                 val tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val bottomText = obj.optCleanString("bottomText")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val exams = obj.optCleanString("exams")?.takeIf { it.isNotBlank() && it != "[]" && !it.equals("null", ignoreCase = true) }
-                val section = cleanedHeader ?: obj.optCleanString("section") ?: ""
+                val section = if (shouldOmit) "" else (cleanedHeader ?: obj.optCleanString("section") ?: "")
                 val path = obj.optCleanString("path") ?: ""
 
                 val updatedQ = com.example.data.QuestionEntity(
@@ -1331,7 +1399,16 @@ suspend fun processAiChatCommand(
                 ))
             }
             
-            val processedUpdates = processExtractedQuestionHeaders(updates)
+            val shouldOmit = shouldOmitHeaders || isHeaderOmissionRequested(command)
+
+            val processedUpdates = if (shouldOmit) {
+                updates.map { pending ->
+                    val q = pending.updatedQuestion
+                    pending.copy(updatedQuestion = q.copy(questionHeader = null, section = ""))
+                }
+            } else {
+                processExtractedQuestionHeaders(updates)
+            }
             if (processedUpdates.isNotEmpty()) {
                 return Pair(processedUpdates, "I extracted ${processedUpdates.size} questions from the document. Please review the pending updates above.")
             } else {
@@ -1424,8 +1501,15 @@ suspend fun processAiChatCommand(
                 query = rawContent.removeSurrounding("\"").removeSurrounding("'")
             }
 
+            val isExplicitVisualReq = command.contains("video", ignoreCase = true) ||
+                    command.contains("gif", ignoreCase = true) ||
+                    command.contains("animation", ignoreCase = true) ||
+                    command.contains("diagram", ignoreCase = true) ||
+                    command.contains("illustrat", ignoreCase = true) ||
+                    rawContent.contains("video", ignoreCase = true) ||
+                    rawContent.contains("gif", ignoreCase = true)
             val conceptContext = "$command | $currentContextInfo | $query ${caption ?: ""}".trim()
-            if (!com.example.data.WikipediaImageHelper.isConceptSuitableForIllustration(query, conceptContext)) {
+            if (!isExplicitVisualReq && !com.example.data.WikipediaImageHelper.isConceptSuitableForIllustration(query, conceptContext)) {
                 onDevLog?.invoke("Skipping illustration: '$query' is vocabulary or abstract concept not suitable for illustration.")
                 finalResponse = finalResponse.replace(match.value, "")
                 continue
@@ -1448,6 +1532,23 @@ suspend fun processAiChatCommand(
                 val eProv = java.net.URLEncoder.encode(illustration.provider, "UTF-8")
                 val eType = java.net.URLEncoder.encode(illustration.mediaType, "UTF-8")
                 val eVid = java.net.URLEncoder.encode(illustration.videoUrl ?: "", "UTF-8")
+                finalResponse = finalResponse.replace(
+                    match.value,
+                    "\n\n[WEB_ILLUSTRATION:url=$eUrl&title=$eTitle&caption=$eCap&source=$eSrc&provider=$eProv&type=$eType&video=$eVid]\n\n"
+                )
+            } else if (isExplicitVisualReq) {
+                val isVidReq = command.contains("video", true) || rawContent.contains("video", true)
+                val isGifReq = command.contains("gif", true) || rawContent.contains("gif", true) || command.contains("animation", true)
+                val mType = if (isVidReq) "video" else if (isGifReq) "gif" else "image"
+                val mTitle = if (isVidReq) "Educational Video: $query" else if (isGifReq) "Animation (GIF): $query" else "Illustration: $query"
+                val mSource = "https://commons.wikimedia.org/w/index.php?search=" + java.net.URLEncoder.encode(query, "UTF-8")
+                val eUrl = ""
+                val eTitle = java.net.URLEncoder.encode(mTitle, "UTF-8")
+                val eCap = java.net.URLEncoder.encode(caption ?: "Educational $mType for $query", "UTF-8")
+                val eSrc = java.net.URLEncoder.encode(mSource, "UTF-8")
+                val eProv = java.net.URLEncoder.encode("Wikimedia Commons", "UTF-8")
+                val eType = java.net.URLEncoder.encode(mType, "UTF-8")
+                val eVid = java.net.URLEncoder.encode(mSource, "UTF-8")
                 finalResponse = finalResponse.replace(
                     match.value,
                     "\n\n[WEB_ILLUSTRATION:url=$eUrl&title=$eTitle&caption=$eCap&source=$eSrc&provider=$eProv&type=$eType&video=$eVid]\n\n"
@@ -1820,7 +1921,7 @@ fun ChatMessageContent(content: String, isUser: Boolean = false) {
                     }
                 }
             }
-            if (url.isNotBlank()) {
+            if (url.isNotBlank() || videoUrl.isNotBlank() || mediaType == "video" || mediaType == "gif") {
                 tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(url, title, caption, source, provider, mediaType, videoUrl)))
             }
         }
@@ -1832,12 +1933,46 @@ fun ChatMessageContent(content: String, isUser: Boolean = false) {
             }
         }
 
+        val mdMediaLinkRegex = Regex("\\[(.*?)\\]\\((https?://\\S+?\\.(?:webm|mp4|ogv|mov|gif)(?:\\?\\S*)?)\\)", RegexOption.IGNORE_CASE)
+        for (m in mdMediaLinkRegex.findAll(content)) {
+            if (tagMatches.none { it.range.first <= m.range.first && it.range.last >= m.range.last }) {
+                val title = m.groupValues[1].trim()
+                val url = m.groupValues[2].trim()
+                val lower = url.lowercase()
+                val isVid = lower.endsWith(".webm") || lower.endsWith(".mp4") || lower.endsWith(".ogv") || lower.endsWith(".mov")
+                val isGif = lower.endsWith(".gif") || lower.contains(".gif?")
+                val mType = if (isVid) "video" else if (isGif) "gif" else "image"
+                val displayImg = if (isVid) "" else url
+                val videoUrl = if (isVid) url else ""
+                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(displayImg, title = title.ifBlank { if (isVid) "Educational Video" else "Animation" }, caption = title, source = url, provider = if (isVid) "Video Link" else "GIF Animation", mediaType = mType, videoUrl = videoUrl)))
+            }
+        }
+
         for (m in mdImageRegex.findAll(content)) {
             if (tagMatches.none { it.range.first <= m.range.first && it.range.last >= m.range.last }) {
                 val caption = m.groupValues[1].trim()
                 val url = m.groupValues[2].trim()
-                val mediaType = if (url.lowercase().endsWith(".gif")) "gif" else if (url.lowercase().endsWith(".svg")) "chart" else "image"
-                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(url, title = "", caption = caption, source = "", provider = "Web Image", mediaType = mediaType)))
+                val lower = url.lowercase()
+                val isVid = lower.endsWith(".webm") || lower.endsWith(".mp4") || lower.endsWith(".ogv") || lower.contains("/video/")
+                val isG = lower.endsWith(".gif") || lower.contains(".gif?")
+                val mediaType = if (isVid) "video" else if (isG) "gif" else if (lower.endsWith(".svg")) "chart" else "image"
+                val videoUrl = if (isVid) url else ""
+                val displayImg = if (isVid) "" else url
+                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(displayImg, title = caption.ifBlank { if (isVid) "Short Video" else "Animation" }, caption = caption, source = url, provider = if (isVid) "Video" else "Web Media", mediaType = mediaType, videoUrl = videoUrl)))
+            }
+        }
+
+        val standaloneMediaRegex = Regex("(?<!\\()(https?://\\S+?\\.(?:webm|mp4|ogv|mov|gif)(?:\\?\\S*)?)(?!\\))", RegexOption.IGNORE_CASE)
+        for (m in standaloneMediaRegex.findAll(content)) {
+            if (tagMatches.none { it.range.first <= m.range.first && it.range.last >= m.range.last }) {
+                val url = m.groupValues[1].trim()
+                val lower = url.lowercase()
+                val isVid = lower.endsWith(".webm") || lower.endsWith(".mp4") || lower.endsWith(".ogv") || lower.endsWith(".mov")
+                val isG = lower.endsWith(".gif") || lower.contains(".gif?")
+                val mediaType = if (isVid) "video" else if (isG) "gif" else "image"
+                val videoUrl = if (isVid) url else ""
+                val displayImg = if (isVid) "" else url
+                tagMatches.add(TagMatch(m.range, MessageChunk.WebImage(displayImg, title = if (isVid) "Short Video" else "Animation (GIF)", caption = "", source = url, provider = if (isVid) "Video" else "Animation", mediaType = mediaType, videoUrl = videoUrl)))
             }
         }
 
@@ -1918,8 +2053,14 @@ fun WebIllustrationCard(
 ) {
     var loadFailed by remember(imageUrl) { mutableStateOf(false) }
 
-    // When illustration is unavailable, wikipedia illustration section is NOT shown in chat bubble!
-    if (loadFailed || imageUrl.isBlank()) {
+    val isVideo = mediaType == "video" || videoUrl.isNotBlank() || imageUrl.endsWith(".webm") || imageUrl.endsWith(".mp4") || imageUrl.endsWith(".ogv") || imageUrl.endsWith(".mov")
+    val isGif = mediaType == "gif" || imageUrl.contains(".gif", ignoreCase = true) || videoUrl.contains(".gif", ignoreCase = true)
+    val effectiveVideoUrl = videoUrl.ifBlank { if (imageUrl.endsWith(".webm") || imageUrl.endsWith(".mp4") || imageUrl.endsWith(".ogv") || imageUrl.endsWith(".mov")) imageUrl else "" }
+    val effectiveGifUrl = if (isGif) (imageUrl.ifBlank { videoUrl }) else imageUrl
+    val effectiveMediaUrl = if (isGif) effectiveGifUrl else imageUrl
+
+    // IMPORTANT: Videos and GIFs must NEVER be hidden or removed from the chat bubble!
+    if (!isVideo && !isGif && loadFailed && imageUrl.isBlank() && title.isBlank() && caption.isBlank()) {
         return
     }
 
@@ -1927,12 +2068,17 @@ fun WebIllustrationCard(
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     var showDialog by remember { mutableStateOf(false) }
 
-    val imageRequest = remember(imageUrl) {
-        coil.request.ImageRequest.Builder(context)
-            .data(imageUrl)
-            .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
-            .crossfade(true)
-            .build()
+    val isDirectVideoFile = effectiveMediaUrl.endsWith(".webm") || effectiveMediaUrl.endsWith(".mp4") || effectiveMediaUrl.endsWith(".ogv") || effectiveMediaUrl.endsWith(".mov")
+    val imageRequest = remember(effectiveMediaUrl) {
+        if (effectiveMediaUrl.isNotBlank() && !isDirectVideoFile) {
+            coil.request.ImageRequest.Builder(context)
+                .data(effectiveMediaUrl)
+                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+                .crossfade(true)
+                .build()
+        } else {
+            null
+        }
     }
 
     Card(
@@ -1955,10 +2101,10 @@ fun WebIllustrationCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                val (typeLabel, typeIcon) = when (mediaType) {
-                    "video" -> Pair("Short Video", Icons.Default.Videocam)
-                    "gif" -> Pair("Animation (GIF)", Icons.Default.Animation)
-                    "chart" -> Pair("Chart & Diagram", Icons.Default.BarChart)
+                val (typeLabel, typeIcon) = when {
+                    isVideo -> Pair("Short Video", Icons.Default.Videocam)
+                    isGif -> Pair("Animation (GIF)", Icons.Default.Animation)
+                    mediaType == "chart" -> Pair("Chart & Diagram", Icons.Default.BarChart)
                     else -> Pair(if (provider.isNotBlank()) provider else "Wikipedia", Icons.Default.Public)
                 }
 
@@ -2030,46 +2176,175 @@ fun WebIllustrationCard(
                     .clickable { showDialog = true },
                 contentAlignment = Alignment.Center
             ) {
-                coil.compose.SubcomposeAsyncImage(
-                    model = imageRequest,
-                    contentDescription = title.ifBlank { caption },
-                    contentScale = ContentScale.Fit,
-                    onError = {
-                        // Crucial: When image load fails, hide this card completely from the chat bubble
-                        loadFailed = true
-                    },
-                    loading = {
+                if (isVideo) {
+                    if (imageRequest != null && !loadFailed) {
+                        coil.compose.SubcomposeAsyncImage(
+                            model = imageRequest,
+                            contentDescription = title.ifBlank { caption },
+                            contentScale = ContentScale.Fit,
+                            onError = { loadFailed = true },
+                            loading = {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                        )
+                        Surface(
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = Color.Black.copy(alpha = 0.65f),
+                            modifier = Modifier.size(52.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Play Video",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        // Sleek video fallback banner: NEVER removed or hidden!
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp),
+                                .height(180.dp)
+                                .background(
+                                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                    )
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Surface(
+                                    shape = androidx.compose.foundation.shape.CircleShape,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Video",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(34.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = title.ifBlank { "Educational Video" },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Tap to play video",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 280.dp)
-                )
-
-                // Play Button overlay if it is a video
-                if (mediaType == "video" || videoUrl.isNotBlank()) {
-                    Surface(
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = Color.Black.copy(alpha = 0.65f),
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play Video",
-                                tint = Color.White,
-                                modifier = Modifier.size(32.dp)
-                            )
+                    }
+                } else if (isGif) {
+                    if (imageRequest != null && !loadFailed) {
+                        coil.compose.SubcomposeAsyncImage(
+                            model = imageRequest,
+                            contentDescription = title.ifBlank { caption },
+                            contentScale = ContentScale.Fit,
+                            onError = { loadFailed = true },
+                            loading = {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                        )
+                    } else {
+                        // Animated GIF fallback container: NEVER removed or hidden!
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Animation,
+                                    contentDescription = "Animation GIF",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = title.ifBlank { "Animated Demonstration (GIF)" },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Tap to view animation",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Regular Image or Chart
+                    if (imageRequest != null && !loadFailed) {
+                        coil.compose.SubcomposeAsyncImage(
+                            model = imageRequest,
+                            contentDescription = title.ifBlank { caption },
+                            contentScale = ContentScale.Fit,
+                            onError = { loadFailed = true },
+                            loading = {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                        )
+                    } else if (title.isNotBlank() || caption.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Public,
+                                    contentDescription = "Illustration",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Illustration Reference",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -2083,14 +2358,14 @@ fun WebIllustrationCard(
                         .padding(8.dp)
                 ) {
                     val badgeText = when {
-                        mediaType == "video" || videoUrl.isNotBlank() -> "Play video"
-                        mediaType == "gif" -> "GIF animation"
+                        isVideo -> "Play video"
+                        isGif -> "GIF animation"
                         mediaType == "chart" -> "Zoom diagram"
                         else -> "Tap to zoom"
                     }
                     val badgeIcon = when {
-                        mediaType == "video" || videoUrl.isNotBlank() -> Icons.Default.PlayArrow
-                        mediaType == "gif" -> Icons.Default.Animation
+                        isVideo -> Icons.Default.PlayArrow
+                        isGif -> Icons.Default.Animation
                         else -> Icons.Default.ZoomIn
                     }
 
@@ -2175,12 +2450,17 @@ fun FullMediaViewerDialog(
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
 
-        val imageRequest = remember(imageUrl) {
-            coil.request.ImageRequest.Builder(context)
-                .data(imageUrl)
-                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
-                .crossfade(true)
-                .build()
+        val effectiveDisplayUrl = if (mediaType == "gif") imageUrl.ifBlank { videoUrl } else imageUrl
+        val imageRequest = remember(effectiveDisplayUrl) {
+            if (effectiveDisplayUrl.isNotBlank()) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(effectiveDisplayUrl)
+                    .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile; QuizerEducationalApp/1.0; contact@quizer.app) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36")
+                    .crossfade(true)
+                    .build()
+            } else {
+                null
+            }
         }
 
         Box(
@@ -2228,34 +2508,56 @@ fun FullMediaViewerDialog(
             }
 
             // Media View Area
-            if (mediaType == "video" && videoUrl.isNotBlank()) {
+            val effectiveVid = videoUrl.ifBlank { if (imageUrl.endsWith(".webm") || imageUrl.endsWith(".mp4") || imageUrl.endsWith(".ogv")) imageUrl else "" }
+            if (mediaType == "video" || effectiveVid.isNotBlank()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(vertical = 70.dp, horizontal = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    AndroidView(
-                        factory = { ctx ->
-                            android.widget.VideoView(ctx).apply {
-                                setVideoURI(android.net.Uri.parse(videoUrl))
-                                val controller = android.widget.MediaController(ctx)
-                                controller.setAnchorView(this)
-                                setMediaController(controller)
-                                setOnPreparedListener { mp ->
-                                    mp.isLooping = true
-                                    start()
-                                }
-                                setOnErrorListener { _, _, _ ->
-                                    true
-                                }
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (effectiveVid.isNotBlank()) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    android.widget.VideoView(ctx).apply {
+                                        setVideoURI(android.net.Uri.parse(effectiveVid))
+                                        val controller = android.widget.MediaController(ctx)
+                                        controller.setAnchorView(this)
+                                        setMediaController(controller)
+                                        setOnPreparedListener { mp ->
+                                            mp.isLooping = true
+                                            start()
+                                        }
+                                        setOnErrorListener { _, _, _ ->
+                                            true
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(340.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            )
+                        }
+                        val linkToOpen = effectiveVid.ifBlank { sourceUrl }
+                        if (linkToOpen.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            FilledTonalButton(
+                                onClick = {
+                                    try { uriHandler.openUri(linkToOpen) } catch (e: Exception) { e.printStackTrace() }
+                                },
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Play in External Player / Browser")
                             }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(340.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                    )
+                        }
+                    }
                 }
             } else {
                 // Interactive Zoom & Pan Area for Images, GIFs, Charts, Graphs

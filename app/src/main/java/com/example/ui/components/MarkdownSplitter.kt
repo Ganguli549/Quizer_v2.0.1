@@ -237,7 +237,16 @@ fun SmartRichText(
             }
 
             if (tableData.isNotEmpty()) {
-                TableRenderer(tableData, color, searchQuery)
+                TableRenderer(
+                    tableData = tableData,
+                    textColor = color,
+                    searchQuery = searchQuery,
+                    highlightColor = highlightColor,
+                    isSelectable = isSelectable,
+                    customMenuItems = customMenuItems,
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
+                )
             }
             lastIndex = match.range.last + 1
         }

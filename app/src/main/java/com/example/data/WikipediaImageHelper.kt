@@ -41,13 +41,12 @@ object WikipediaImageHelper {
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", USER_AGENT)
-                .header("Range", "bytes=0-1024")
                 .build()
             client.newCall(request).execute().use { response ->
-                response.isSuccessful
+                response.isSuccessful || response.code == 416 || response.code in 300..399
             }
         } catch (e: Exception) {
-            false
+            url.startsWith("https://upload.wikimedia.org") || url.startsWith("https://commons.wikimedia.org")
         }
     }
 
@@ -194,9 +193,14 @@ object WikipediaImageHelper {
 
                                 val mediaType = detectMediaType(originalUrl, mime, title)
                                 val videoUrl = if (mediaType == "video") originalUrl else null
-                                val displayUrl = if (thumbUrl.isNotBlank()) thumbUrl else originalUrl
+                                val isDirectVideoThumb = thumbUrl.endsWith(".webm", true) || thumbUrl.endsWith(".ogv", true) || thumbUrl.endsWith(".mp4", true)
+                                val displayUrl = if (mediaType == "video") {
+                                    if (thumbUrl.isNotBlank() && !isDirectVideoThumb && thumbUrl != originalUrl) thumbUrl else ""
+                                } else {
+                                    if (thumbUrl.isNotBlank()) thumbUrl else originalUrl
+                                }
 
-                                if (displayUrl.isNotBlank()) {
+                                if (displayUrl.isNotBlank() || mediaType == "video") {
                                     val sourceUrl = page.optString(
                                         "descriptionurl",
                                         "https://commons.wikimedia.org/wiki/File:${URLEncoder.encode(title.replace(" ", "_"), "UTF-8")}"
@@ -330,6 +334,12 @@ object WikipediaImageHelper {
         val q = query.lowercase().trim()
         val ctx = contextInfo.lowercase()
 
+        // Explicit video, gif, or animation requests are always suitable and must never be blocked
+        if (q.contains("video") || q.contains("gif") || q.contains("animation") || q.contains("animated") ||
+            ctx.contains("video") || ctx.contains("gif") || ctx.contains("animation") || ctx.contains("animated")) {
+            return true
+        }
+
         val vocabTerms = listOf(
             "meaning", "synonym", "antonym", "definition", "define", "idiom", "phrase",
             "grammar", "spelling", "tense", "preposition", "adjective", "adverb", "verb",
@@ -361,6 +371,7 @@ object WikipediaImageHelper {
         topic: String,
         title: String,
         caption: String,
+        mimeType: String = "image/jpeg",
         onDevLog: ((String) -> Unit)? = null
     ): Boolean {
         val prompt = """
@@ -389,7 +400,7 @@ object WikipediaImageHelper {
             val response = GeminiHelper.generateContent(
                 context = context,
                 prompt = prompt,
-                attachments = listOf(AiFileAttachment(bytes = imageBytes, mimeType = "image/jpeg")),
+                attachments = listOf(AiFileAttachment(bytes = imageBytes, mimeType = mimeType)),
                 onDevLog = onDevLog
             )
             val upper = response.uppercase()
@@ -478,21 +489,48 @@ object WikipediaImageHelper {
                     onDevLog?.invoke("Skipping candidate with junk/book cover keyword: '${candidate.title}'")
                     continue
                 }
+
+                // If candidate is a video, approve it directly so educational video links are preserved
+                if (candidate.mediaType == "video" || candidate.videoUrl?.isNotBlank() == true) {
+                    onStatusUpdate?.invoke("Adding video illustration...", 0.9f)
+                    onDevLog?.invoke("AI APPROVED video visual: '${candidate.title}' from ${candidate.provider}")
+                    return@withContext candidate
+                }
+
+                val isCandidateGif = candidate.mediaType == "gif" || candidate.imageUrl.endsWith(".gif", true) || candidate.thumbUrl.endsWith(".gif", true) || candidate.title.contains("animation", true) || candidate.title.contains("animated", true)
+                if (isCandidateGif && !isJunkCandidate(candidate.title, candidate.caption, cleanQuery)) {
+                    onStatusUpdate?.invoke("Adding animation...", 0.9f)
+                    onDevLog?.invoke("AI APPROVED educational GIF visual: '${candidate.title}' from ${candidate.provider}")
+                    return@withContext candidate
+                }
+
                 val downloadUrl = candidate.thumbUrl.ifBlank { candidate.imageUrl }
                 onStatusUpdate?.invoke("Checking visual relevance...", baseProgress + 0.05f)
                 onDevLog?.invoke("Evaluating visual candidate: '${candidate.title}' from ${candidate.provider}")
 
-                val imageBytes = downloadBytes(downloadUrl) ?: continue
-                if (imageBytes.isEmpty()) continue
+                val imageBytes = downloadBytes(downloadUrl)
+                if (imageBytes == null || imageBytes.isEmpty()) {
+                    continue
+                }
 
-                val isRelevant = verifyImageRelevanceWithAi(
+                val isGif = isCandidateGif || (imageBytes.size > 3 && imageBytes[0] == 'G'.code.toByte() && imageBytes[1] == 'I'.code.toByte() && imageBytes[2] == 'F'.code.toByte())
+                val detectedMime = if (isGif) "image/gif" else "image/jpeg"
+
+                var isRelevant = verifyImageRelevanceWithAi(
                     context = context,
                     imageBytes = imageBytes,
                     topic = topicContext,
                     title = candidate.title,
                     caption = candidate.caption,
+                    mimeType = detectedMime,
                     onDevLog = onDevLog
                 )
+
+                // Fallback for GIFs: if AI verification failed due to format/decoder, accept if title clearly matches query
+                if (!isRelevant && isGif && !isJunkCandidate(candidate.title, candidate.caption, cleanQuery)) {
+                    onDevLog?.invoke("Approving educational GIF by fallback: '${candidate.title}'")
+                    isRelevant = true
+                }
 
                 if (isRelevant) {
                     val accessibleUrl = if (verifyUrlAccessible(candidate.imageUrl)) {

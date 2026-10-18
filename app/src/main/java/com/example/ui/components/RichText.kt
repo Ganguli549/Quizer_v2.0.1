@@ -1168,6 +1168,27 @@ object MathFormattingCache {
     }
 }
 
+private fun hasClickableSpanAt(textView: TextView, event: android.view.MotionEvent): Boolean {
+    val text = textView.text as? android.text.Spanned ?: return false
+    val layout = textView.layout ?: return false
+    val x = (event.x.toInt() - textView.totalPaddingLeft + textView.scrollX)
+        .coerceIn(0, layout.width.coerceAtLeast(0))
+    val y = (event.y.toInt() - textView.totalPaddingTop + textView.scrollY)
+        .coerceIn(0, layout.height.coerceAtLeast(0))
+    val line = layout.getLineForVertical(y)
+    val offset = layout.getOffsetForHorizontal(line, x.toFloat())
+    val spans = text.getSpans(offset, offset, android.text.style.ClickableSpan::class.java)
+    return spans != null && spans.isNotEmpty()
+}
+
+private class RichTextTouchBridge {
+    var onClick: (() -> Unit)? = null
+    var onClickWithCoords: ((Float, Float) -> Unit)? = null
+    var isSelectable: Boolean = true
+    var isHorizontallyScrollable: Boolean = false
+    var hadSelectionOnDown: Boolean = false
+}
+
 @Composable
 fun RichText(
     text: String,
@@ -1270,6 +1291,13 @@ fun RichText(
     }
     customSelectionCallback.customItems = resolvedCustomItems
 
+    val touchBridge = remember { RichTextTouchBridge() }.apply {
+        this.onClick = onClick
+        this.onClickWithCoords = onClickWithCoords
+        this.isSelectable = isSelectable
+        this.isHorizontallyScrollable = isHorizontallyScrollable
+    }
+
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -1279,14 +1307,16 @@ fun RichText(
                 textSize = fontSize.value
                 if (isHorizontallyScrollable) {
                     setHorizontallyScrolling(true)
-                    setTextIsSelectable(false)
+                    if (isTextSelectable) setTextIsSelectable(false)
                     movementMethod = null
                     layoutParams = android.widget.FrameLayout.LayoutParams(
                         android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                         android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                 } else {
-                    setTextIsSelectable(isSelectable)
+                    if (isTextSelectable != isSelectable) {
+                        setTextIsSelectable(isSelectable)
+                    }
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                     setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
@@ -1295,17 +1325,59 @@ fun RichText(
                 customSelectionActionModeCallback = customSelectionCallback
                 markwon.setParsedMarkdown(this, spannableToDisplay)
                 tag = spannableToDisplay
-                if (onClick != null || onClickWithCoords != null) {
-                    val gestureDetector = android.view.GestureDetector(ctx, object : android.view.GestureDetector.SimpleOnGestureListener() {
+
+                val gestureDetector = android.view.GestureDetector(
+                    ctx,
+                    object : android.view.GestureDetector.SimpleOnGestureListener() {
                         override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
-                            onClickWithCoords?.invoke(e.rawX, e.rawY)
-                            onClick?.invoke()
-                            return false
+                            // 1. If the user tapped a ClickableSpan (e.g. zoomable inline image), let the span handle it
+                            if (hasClickableSpanAt(this@apply, e)) {
+                                return false
+                            }
+                            // 2. PDF/EPUB Reader behavior: if text is currently selected, a single tap clears
+                            // the selection without toggling full-screen bars
+                            if (touchBridge.isSelectable && (touchBridge.hadSelectionOnDown || hasSelection())) {
+                                val sp = text as? android.text.Spannable
+                                if (sp != null) {
+                                    android.text.Selection.removeSelection(sp)
+                                }
+                                clearFocus()
+                                return true
+                            }
+                            // 3. Otherwise, fire the tap callbacks
+                            touchBridge.onClickWithCoords?.invoke(e.rawX, e.rawY)
+                            touchBridge.onClick?.invoke()
+                            return true
                         }
-                    })
-                    setOnTouchListener { _, event ->
+                    }
+                )
+
+                setOnTouchListener { view, event ->
+                    val tv = view as TextView
+                    if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+                        touchBridge.hadSelectionOnDown = tv.hasSelection()
+                    }
+                    val hasTapCallbacks = touchBridge.onClick != null || touchBridge.onClickWithCoords != null
+                    if (hasTapCallbacks) {
                         gestureDetector.onTouchEvent(event)
-                        false
+                    }
+                    when {
+                        touchBridge.isHorizontallyScrollable -> {
+                            val handledByTv = tv.onTouchEvent(event)
+                            handledByTv || hasTapCallbacks
+                        }
+                        !touchBridge.isSelectable -> {
+                            if (hasTapCallbacks) {
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        else -> {
+                            // Selectable TextView: let native TextView.onTouchEvent handle long-press selection,
+                            // selection handles, and ClickableSpans while GestureDetector catches single taps.
+                            false
+                        }
                     }
                 }
             }
@@ -1317,14 +1389,20 @@ fun RichText(
             }
             if (isHorizontallyScrollable) {
                 textView.setHorizontallyScrolling(true)
-                textView.setTextIsSelectable(false)
+                if (textView.isTextSelectable) {
+                    textView.setTextIsSelectable(false)
+                }
                 textView.movementMethod = null
                 textView.layoutParams = android.widget.FrameLayout.LayoutParams(
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             } else {
-                textView.setTextIsSelectable(isSelectable)
+                // Only call setTextIsSelectable when the boolean actually changes so active text
+                // selections are never wiped out during parent recompositions!
+                if (textView.isTextSelectable != isSelectable) {
+                    textView.setTextIsSelectable(isSelectable)
+                }
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 textView.setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
@@ -1335,21 +1413,6 @@ fun RichText(
             if (textView.tag != spannableToDisplay) {
                 markwon.setParsedMarkdown(textView, spannableToDisplay)
                 textView.tag = spannableToDisplay
-            }
-            if (onClick != null || onClickWithCoords != null) {
-                val gestureDetector = android.view.GestureDetector(textView.context, object : android.view.GestureDetector.SimpleOnGestureListener() {
-                    override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
-                        onClickWithCoords?.invoke(e.rawX, e.rawY)
-                        onClick?.invoke()
-                        return false
-                    }
-                })
-                textView.setOnTouchListener { _, event ->
-                    gestureDetector.onTouchEvent(event)
-                    false
-                }
-            } else {
-                textView.setOnTouchListener(null)
             }
         },
         onReset = { textView ->

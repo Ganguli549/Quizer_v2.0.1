@@ -50,11 +50,47 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
+        }
+        
+        // Ensure system IME insets animations cleanly complete without FrameTracker timeouts
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.decorView.setWindowInsetsAnimationCallback(
+                object : android.view.WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                    override fun onStart(
+                        animation: android.view.WindowInsetsAnimation,
+                        bounds: android.view.WindowInsetsAnimation.Bounds
+                    ): android.view.WindowInsetsAnimation.Bounds {
+                        com.example.ui.util.ImeCujHelper.scheduleFinish()
+                        return super.onStart(animation, bounds)
+                    }
+
+                    override fun onEnd(animation: android.view.WindowInsetsAnimation) {
+                        super.onEnd(animation)
+                        com.example.ui.util.ImeCujHelper.endImeCuj()
+                    }
+
+                    override fun onProgress(
+                        insets: android.view.WindowInsets,
+                        runningAnimations: MutableList<android.view.WindowInsetsAnimation>
+                    ): android.view.WindowInsets {
+                        return insets
+                    }
+                }
+            )
+        }
+        window.decorView.viewTreeObserver.addOnGlobalLayoutListener {
+            com.example.ui.util.ImeCujHelper.scheduleFinish()
+        }
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { v, insets ->
+            com.example.ui.util.ImeCujHelper.scheduleFinish()
+            androidx.core.view.ViewCompat.onApplyWindowInsets(v, insets)
         }
         
         // We handle permissions in Compose now.

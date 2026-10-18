@@ -15,16 +15,20 @@ import kotlin.math.max
 
 @Composable
 fun TableRenderer(
-    tableData: List<List<String>>, 
-    textColor: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current, 
+    tableData: List<List<String>>,
+    textColor: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current,
     searchQuery: String = "",
-    customMenuItems: List<CustomTextMenuItem> = emptyList()
+    highlightColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Yellow,
+    isSelectable: Boolean = true,
+    customMenuItems: List<CustomTextMenuItem> = emptyList(),
+    onClick: (() -> Unit)? = null,
+    onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
     if (tableData.isEmpty()) return
     val borderColor = textColor.copy(alpha = 0.2f)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val screenWidthDp = configuration.screenWidthDp.dp
-    
+
     Box(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
@@ -32,8 +36,8 @@ fun TableRenderer(
     ) {
         Layout(
             content = {
-                tableData.forEachIndexed { rowIndex, row ->
-                    row.forEachIndexed { colIndex, cellText ->
+                tableData.forEachIndexed { _, row ->
+                    row.forEachIndexed { _, cellText ->
                         Box(
                             modifier = Modifier
                                 .border(0.5.dp, borderColor)
@@ -44,7 +48,11 @@ fun TableRenderer(
                                 fontSize = 16.sp,
                                 color = textColor,
                                 searchQuery = searchQuery,
-                                customMenuItems = customMenuItems
+                                highlightColor = highlightColor,
+                                isSelectable = isSelectable,
+                                customMenuItems = customMenuItems,
+                                onClick = onClick,
+                                onClickWithCoords = onClickWithCoords
                             )
                         }
                     }

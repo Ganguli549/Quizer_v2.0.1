@@ -37,6 +37,7 @@ class QuizApplication : Application(), ImageLoaderFactory {
             .components {
                 if (Build.VERSION.SDK_INT >= 28) {
                     add(ImageDecoderDecoder.Factory())
+                    add(GifDecoder.Factory())
                 } else {
                     add(GifDecoder.Factory())
                 }

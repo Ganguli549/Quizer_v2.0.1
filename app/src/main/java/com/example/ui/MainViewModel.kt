@@ -526,10 +526,12 @@ class MainViewModel(
         context: android.content.Context,
         chatContextId: String,
         uri: android.net.Uri,
-        allQuestions: List<com.example.data.QuestionEntity>
+        allQuestions: List<com.example.data.QuestionEntity>,
+        userInstructions: String? = null
     ) {
+        val userPromptDisplay = if (!userInstructions.isNullOrBlank()) userInstructions else "Uploaded a PDF for AI extraction."
         addChatMessage(
-            com.example.data.ChatMessageEntity(bookId = chatContextId, role = "user", content = "Uploaded a PDF for AI extraction.", timestamp = System.currentTimeMillis())
+            com.example.data.ChatMessageEntity(bookId = chatContextId, role = "user", content = userPromptDisplay, timestamp = System.currentTimeMillis())
         )
         setAiProcessingStatus(chatContextId, "Reading PDF...", 0f)
         
@@ -605,18 +607,34 @@ class MainViewModel(
                 setAiProcessingStatus(chatContextId, "Extracting questions via AI...", 0.3f)
                 
                 val sourcePromptStr = if (extractedText != null) "Analyze this uploaded document/qbook:\n$extractedText\n\nExtract all educational questions you can find." else "Analyze this uploaded document/PDF. Extract all educational questions you can find."
+                val shouldOmitHeaders = !userInstructions.isNullOrBlank() && com.example.ui.components.isHeaderOmissionRequested(userInstructions)
                 
-                val prompt = """
-                    $sourcePromptStr
-                    
-                    Rules for Extraction:
-                    1. Extract questions, options, correctIndex, explanation, detailedExplanation, path, format, and questionHeader from the source.
-                    2. **Question Header Extraction & Passage `<p>` Tag (CRITICAL)**: Documents often contain question headers, which are instructions, directions, passage texts, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
-                       - You MUST extract these instructions/headers into the 'questionHeader' field.
+                val headerExtractionRule = if (shouldOmitHeaders) {
+                    """
+                    2. **CRITICAL USER OVERRIDE (HIGHEST PRIORITY) - OMIT ALL HEADERS / SET HEADERS TO NULL**:
+                       - User explicitly instructed: "$userInstructions".
+                       - You MUST set "questionHeader": "" and "section": "" for ALL questions extracted!
+                       - DO NOT analyze, extract, copy, or synthesize any question headers, instructions, directions, reading passages, or section headings from the document into 'questionHeader' or 'section'.
+                       - Leave both 'questionHeader': "" and 'section': "" as empty strings "" for every question.
+                    """.trimIndent()
+                } else {
+                    """
+                    2. **Question Header Extraction & Passage `<p>` Tag**:
+                       - Documents sometimes contain question headers, which are instructions, directions, reading passages, or guidelines applying to a number of questions (e.g. 'Choose one word Substitution (for question from 1 to 10)', 'Read Passages And Answer Questions (1 -10)', 'Directions (Q. 1 to 5): Read the following passage and answer the questions that follow: ...').
+                       - When present, extract these instructions/headers into the 'questionHeader' field.
                        - For reading comprehension passages or stories, wrap the passage content inside `<p>` or `<p name="Passage Title">` tags (e.g. `Directions (Q. 1 to 5): Read the passage:\n<p name="Passage Title">Passage body text here...</p>`). The app renders `<p>` tags as expandable passage cards and keeps related questions grouped together!
                        - If an instruction, passage, or direction applies to a group/range of questions, set that EXACT instruction/passage text in the 'questionHeader' field for ALL questions belonging to that group/range.
                        - DO NOT merge or append the question header instructions into the 'question' text; keep the 'question' field clean and dedicated to the individual question.
                        - If a question has no preceding instruction or group header, set 'questionHeader' to "".
+                    """.trimIndent()
+                }
+
+                val prompt = """
+                    $sourcePromptStr
+                    ${if (!userInstructions.isNullOrBlank()) "User's Instructions: \"$userInstructions\"\n" else ""}
+                    Rules for Extraction:
+                    1. Extract questions, options, correctIndex, explanation, detailedExplanation, path, format, and questionHeader from the source.
+                    $headerExtractionRule
                     3. **Math & Formula Formatting (STRICT MANDATE)**:
                        - Wrap ALL inline mathematical expressions, formulas, and variables in single dollar signs `${"$"}`...${"$"}` (e.g. `${"$"}E = mc^2${"$"}` or `${"$"}x = 1${"$"}` or `${"$"}\frac{1}{2}${"$"}`).
                        - Block equations MUST use double dollar signs `${"$$"}`...${"$$"}`.
@@ -636,7 +654,7 @@ class MainViewModel(
                         "detailedExplanation": "detailed explanation if present, or generate one (empty string \"\" if none)",
                         "path": "Topic/Subtopic based on PDF/document headers (empty string \"\" if none)",
                         "format": "text",
-                        "questionHeader": "Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Empty string \"\" if none.",
+                        "questionHeader": ${if (shouldOmitHeaders) "\"\" (User commanded to omit headers - MUST be empty string \"\")" else "\"Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Set for each question in the group. Empty string \\\"\\\" if none.\""},
                         "exam": "exam tags if present (e.g. 'SSC CGL 2023'), else \"\"",
                         "year": "exam year if present, else \"\""
                       }
@@ -691,12 +709,12 @@ class MainViewModel(
                     val explanation = com.example.ui.components.cleanExtractedMathText(rawExplanation)
                     val rawDetailed = obj.optCleanString("detailedExplanation")
                     val detailedExplanation = rawDetailed?.let { com.example.ui.components.cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                    val cleanedHeader = rawHeader?.let { com.example.ui.components.cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                    val cleanedHeader = if (shouldOmitHeaders) null else rawHeader?.let { com.example.ui.components.cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                     val exam = obj.optCleanString("exam") ?: ""
                     val year = obj.optCleanString("year") ?: ""
                     val format = obj.optCleanString("format")?.takeIf { it.equals("table", ignoreCase = true) } ?: "text"
                     val tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                    val section = cleanedHeader ?: obj.optCleanString("section") ?: ""
+                    val section = if (shouldOmitHeaders) "" else (cleanedHeader ?: obj.optCleanString("section") ?: "")
                     val path = obj.optCleanString("path") ?: ""
 
                     val updatedQ = com.example.data.QuestionEntity(
@@ -722,7 +740,14 @@ class MainViewModel(
                     updates.add(com.example.ui.components.PendingQuestionUpdate(-1L, updatedQ))
                 }
                 
-                val processedUpdates = com.example.ui.components.processExtractedQuestionHeaders(updates)
+                val processedUpdates = if (shouldOmitHeaders) {
+                    updates.map { pending ->
+                        val q = pending.updatedQuestion
+                        pending.copy(updatedQuestion = q.copy(questionHeader = null, section = ""))
+                    }
+                } else {
+                    com.example.ui.components.processExtractedQuestionHeaders(updates)
+                }
                 if (processedUpdates.isNotEmpty()) {
                     setPendingUpdates(context, chatContextId, processedUpdates)
                     addChatMessage(
@@ -1103,11 +1128,21 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         currentExamSettings = null
         _selectedTopic.value = null
         _onlyBookmarks.value = false
+        val now = System.currentTimeMillis()
         val statsMap = allStats.value.associateBy { it.questionId }
         val allQs = _allBookQuestionSummaries.value
-        val criticalQs = allQs.sortedByDescending { q ->
-            statsMap[q.id]?.wrong ?: 0
-        }.take(30) // Take top 30 most mistaken
+        val criticalQs = allQs
+            .filter { q -> (statsMap[q.id]?.wrong ?: 0) > 0 }
+            .sortedWith(
+                compareByDescending<com.example.data.QuestionSummary> { q ->
+                    val st = statsMap[q.id]
+                    st != null && !QuestionPoolProcessor.isQuestionMastered(st)
+                }.thenByDescending { q ->
+                    val st = statsMap[q.id]
+                    if (st != null) QuestionPoolProcessor.computeMistakeUrgencyScore(st, now) else 0f
+                }
+            )
+            .take(30)
         applySortingAndLimitToQuestions(criticalQs)
     }
 
@@ -1723,61 +1758,80 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             )
             repository.insertHistory(historyEntry)
 
-            // Update question stats
+            // Update question stats (including when remediating in Practice Mistakes mode
+            // so answered mistakes can advance their streak and graduate once mastered)
             val now = System.currentTimeMillis()
+            val hourMs = 3_600_000L
+            val dayMs = 86_400_000L
             val fullQuestions = repository.getQuestionsByBookAndIds(bookId, questionIds).resolveHeaders().associateBy { it.id }
             val gson = com.example.data.SharedGson.normal
-            
-            // Only update stats if it's a real quiz, not practice mistakes
-            if (parentId == null) {
-                questionIds.forEachIndexed { index, qId ->
-                    val ans = userAnswers[index]
-                    if (ans != null) {
-                        val key = "${bookId}_${qId}"
-                        var existing = allStats.value.find { it.questionKey == key }
-                        if (existing == null) {
-                            existing = QuestionStatEntity(questionKey = key, bookId = bookId, questionId = qId)
-                        }
-                        val currentQ = fullQuestions[qId]
-                        val isCorrect = if (currentQ != null) {
-                            val correctIds = gson.fromJson<List<String>>(currentQ.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                            val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQ.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                            val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                                correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                            } else {
-                                setOf(currentQ.correctIndex)
-                            }
-                            ans == correctIndices
-                        } else false
-                        
-                        val q = if (isCorrect == true) 4 else 1
-                        var newEase = existing.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f))
-                        if (newEase < 1.3f) newEase = 1.3f
-                        
-                        val newStreak = if (q < 3) 0 else existing.streak + 1
-                        val newInterval = when (newStreak) {
-                            0 -> 1
-                            1 -> 1
-                            2 -> 6
-                            else -> kotlin.math.round(existing.interval * newEase).toInt()
-                        }
-                        val newNextReview = now + newInterval * 24L * 60L * 60L * 1000L
 
-                        val updated = existing.copy(
-                            attempts = existing.attempts + 1,
-                            correct = if (isCorrect == true) existing.correct + 1 else existing.correct,
-                            wrong = if (isCorrect == false) existing.wrong + 1 else existing.wrong,
-                            lastSeen = now,
-                            easeFactor = newEase,
-                            streak = newStreak,
-                            interval = newInterval,
-                            nextReview = newNextReview
-                        )
-                        repository.insertStat(updated)
+            questionIds.forEachIndexed { index, qId ->
+                val ans = userAnswers.getOrNull(index)
+                if (ans != null) {
+                    val key = "${bookId}_${qId}"
+                    val existing = allStats.value.find { it.questionKey == key }
+                        ?: QuestionStatEntity(questionKey = key, bookId = bookId, questionId = qId)
+
+                    val currentQ = fullQuestions[qId]
+                    val isCorrect = if (currentQ != null) {
+                        val correctIds = gson.fromJson<List<String>>(
+                            currentQ.advancedCorrectIds ?: "[]",
+                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                        ) ?: emptyList()
+                        val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(
+                            currentQ.advancedOptions ?: "[]",
+                            object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type
+                        ) ?: emptyList()
+                        val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
+                            correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
+                        } else {
+                            setOf(currentQ.correctIndex)
+                        }
+                        ans == correctIndices
+                    } else false
+
+                    val q = if (isCorrect) 4 else 1
+                    val newEase = (existing.easeFactor + (0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f)))
+                        .coerceIn(1.3f, 3.0f)
+
+                    val newStreak = if (isCorrect) existing.streak + 1 else 0
+                    val updatedWrongCount = if (isCorrect) existing.wrong else existing.wrong + 1
+
+                    val newIntervalDays = when (newStreak) {
+                        0 -> 1
+                        1 -> 1
+                        2 -> 3
+                        3 -> 7
+                        else -> kotlin.math.round(existing.interval * newEase).toInt()
+                            .coerceIn(existing.interval + 1, 180)
                     }
+
+                    // Hybrid Intra-Day + Multi-Day Next Review Timestamp:
+                    // - Wrong (streak == 0): due in 10 minutes (active remediation in upcoming quizzes)
+                    // - 1st Correct after mistake (streak == 1, wrong > 0): due in 4 hours (same-day confirmation)
+                    // - 1st Correct on clean question (streak == 1, wrong == 0): due in 12 hours
+                    // - 2nd+ Consecutive Correct (streak >= 2): multi-day spaced repetition (3d -> 7d -> exponentially expanding)
+                    val newNextReview = when (newStreak) {
+                        0 -> now + (10L * 60_000L)
+                        1 -> if (updatedWrongCount > 0) now + (4L * hourMs) else now + (12L * hourMs)
+                        else -> now + (newIntervalDays * dayMs)
+                    }
+
+                    val updated = existing.copy(
+                        attempts = existing.attempts + 1,
+                        correct = if (isCorrect) existing.correct + 1 else existing.correct,
+                        wrong = updatedWrongCount,
+                        lastSeen = now,
+                        easeFactor = newEase,
+                        streak = newStreak,
+                        interval = newIntervalDays,
+                        nextReview = newNextReview
+                    )
+                    repository.insertStat(updated)
                 }
             }
-            
+
             // Advance sequence if autoSequence is on, but ONLY if not practice mistakes
             if (isActiveQuizStandardSequence && parentId == null && settingsManager.autoSequence && settingsManager.quizFlowMode == "sequence") {
                 val limit = _questionLimit.value
@@ -1791,6 +1845,11 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                         _sequenceOffset.value = 1
                     }
                 }
+            }
+
+            // Refresh the next quiz question pool so returning to HomeScreen reflects updated stats immediately
+            if (isActiveQuizStandardSequence) {
+                generateQuizQuestions()
             }
         }
     }

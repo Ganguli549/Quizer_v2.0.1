@@ -567,7 +567,7 @@ fun HomeScreen(
                         Text(books.find { it.id == currentBookId }?.name ?: "No book selected", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         
                         val bookStats = stats.filter { it.bookId == currentBookId }
-                        val learnedCount = bookStats.count { it.attempts >= 3 && (it.correct.toFloat() / it.attempts) >= 0.7f }
+                        val learnedCount = bookStats.count { com.example.ui.QuestionPoolProcessor.isQuestionMastered(it) }
                         val visitedCount = bookStats.count { it.attempts > 0 }
                         val unvisitedCount = maxOf(0, allQuestions.size - visitedCount)
                         val total = maxOf(1, allQuestions.size)

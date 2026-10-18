@@ -33,7 +33,10 @@ fun CustomModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         sheetGesturesEnabled = false,
-        contentWindowInsets = { WindowInsets.safeDrawing },
+        contentWindowInsets = { 
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
+                .union(WindowInsets.ime) 
+        },
         dragHandle = {
             Column(
                 modifier = Modifier
@@ -96,6 +99,8 @@ fun CustomModalBottomSheet(
             LaunchedEffect(view) {
                 val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
                 if (window != null) {
+                    androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+                    window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
                     window.navigationBarColor = android.graphics.Color.TRANSPARENT
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                         window.isNavigationBarContrastEnforced = false

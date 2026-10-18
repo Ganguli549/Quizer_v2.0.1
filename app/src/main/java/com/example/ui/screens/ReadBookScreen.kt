@@ -532,11 +532,19 @@ fun ReadBookScreen(
     val screenWidthPx = displayMetrics.widthPixels.toFloat()
     val screenHeightPx = displayMetrics.heightPixels.toFloat()
 
-    val onMiddleClickCoords: (Float, Float) -> Unit = { rawX, rawY ->
-        val inHorizontal = rawX >= screenWidthPx * 0.15f && rawX <= screenWidthPx * 0.85f
-        val inVertical = rawY >= screenHeightPx * 0.20f && rawY <= screenHeightPx * 0.80f
-        if (inHorizontal && inVertical) {
-            isBarsVisible = !isBarsVisible
+    val onMiddleClickCoords: (Float, Float) -> Unit = remember(screenWidthPx, screenHeightPx) {
+        { rawX, rawY ->
+            if (!isBarsVisible) {
+                // When in Full Screen: tapping ANYWHERE on the ReadBook content exits full screen
+                isBarsVisible = true
+            } else {
+                // When bars are visible: tapping in the middle zone enters full screen
+                val inHorizontal = rawX >= screenWidthPx * 0.12f && rawX <= screenWidthPx * 0.88f
+                val inVertical = rawY >= screenHeightPx * 0.15f && rawY <= screenHeightPx * 0.85f
+                if (inHorizontal && inVertical) {
+                    isBarsVisible = false
+                }
+            }
         }
     }
 
@@ -1083,12 +1091,17 @@ fun ReadBookScreen(
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
-                            val width = size.width.toFloat()
-                            val height = size.height.toFloat()
-                            val inHorizontal = offset.x >= width * 0.15f && offset.x <= width * 0.85f
-                            val inVertical = offset.y >= height * 0.20f && offset.y <= height * 0.80f
-                            if (inHorizontal && inVertical) {
-                                isBarsVisible = !isBarsVisible
+                            if (!isBarsVisible) {
+                                // When in Full Screen: tapping anywhere on headers, topics, images, dividers, or margins exits full screen
+                                isBarsVisible = true
+                            } else {
+                                val width = size.width.toFloat()
+                                val height = size.height.toFloat()
+                                val inHorizontal = offset.x >= width * 0.12f && offset.x <= width * 0.88f
+                                val inVertical = offset.y >= height * 0.15f && offset.y <= height * 0.85f
+                                if (inHorizontal && inVertical) {
+                                    isBarsVisible = false
+                                }
                             }
                         }
                     )
@@ -1163,7 +1176,10 @@ fun ReadBookScreen(
                                         rangeStr = item.range,
                                         textColor = themeColors.text,
                                         isQuizMode = false,
-                                        initiallyExpanded = true
+                                        initiallyExpanded = true,
+                                        searchQuery = searchQuery,
+                                        highlightColor = Color.Yellow,
+                                        onClickWithCoords = onMiddleClickCoords
                                     )
                                 }
                             }
@@ -1804,7 +1820,11 @@ fun ReadBookQuestionItem(
                 com.example.ui.components.TableRenderer(
                     tableData = tableData,
                     textColor = themeColors.text,
-                    customMenuItems = questionCustomMenuItems
+                    searchQuery = searchQuery,
+                    highlightColor = highlightColor,
+                    customMenuItems = questionCustomMenuItems,
+                    onClick = onTextClick,
+                    onClickWithCoords = onTextClickWithCoords
                 )
             }
         }
@@ -1856,10 +1876,12 @@ fun ReadBookQuestionItem(
         
         Spacer(modifier = Modifier.height(8.dp))
         
+        val isOptionClickable = inBookQuizMode && !isRevealed
+
         optionsList.forEachIndexed { displayIndex, (index, optionText) ->
             val isCorrect = correctIndices.contains(index)
             val isSelected = selectedOptionIndices.contains(index)
-            
+
             val textColor = if (isRevealed) {
                 if (isCorrect) Color(0xFF4CAF50)
                 else if (isSelected && !isCorrect) Color(0xFFE53935)
@@ -1867,56 +1889,60 @@ fun ReadBookQuestionItem(
             } else {
                 themeColors.text
             }
-            
+
+            val selectOptionAction = {
+                if (question.multipleCorrect) {
+                    selectedOptionIndices = selectedOptionIndices + index
+                    isRevealed = true
+                } else {
+                    selectedOptionIndices = setOf(index)
+                    isRevealed = true
+                }
+            }
+
             Row(
-                verticalAlignment = Alignment.Top,
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 2.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = inBookQuizMode && !isRevealed) {
-                        if (question.multipleCorrect) {
-                            selectedOptionIndices = selectedOptionIndices + index
-                            isRevealed = true
+                    .then(
+                        if (isOptionClickable) {
+                            Modifier.clickable { selectOptionAction() }
                         } else {
-                            selectedOptionIndices = setOf(index)
-                            isRevealed = true
+                            Modifier
                         }
-                    }
+                    )
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "${(65 + displayIndex).toChar()}.", 
-                    fontWeight = FontWeight.Normal, 
-                    color = textColor, 
-                    fontSize = 18.sp, 
-                    modifier = Modifier.padding(end = 8.dp)
+                    text = "${(65 + displayIndex).toChar()}.",
+                    fontWeight = FontWeight.Normal,
+                    color = textColor,
+                    fontSize = 18.sp,
+                    lineHeight = 24.sp,
+                    modifier = Modifier
+                        .align(Alignment.Top)
+                        .padding(end = 8.dp)
                 )
                 com.example.ui.components.SmartRichText(
                     text = optionText,
                     fontSize = 18.sp,
                     color = textColor,
+                    modifier = Modifier.weight(1f),
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
                     customMenuItems = questionCustomMenuItems,
-                    isSelectable = !inBookQuizMode || isRevealed,
-                    onClick = {
-                        if (inBookQuizMode && !isRevealed) {
-                            if (question.multipleCorrect) {
-                                selectedOptionIndices = selectedOptionIndices + index
-                                isRevealed = true
-                            } else {
-                                selectedOptionIndices = setOf(index)
-                                isRevealed = true
-                            }
-                        } else {
-                            onTextClick?.invoke()
-                        }
+                    isSelectable = !isOptionClickable,
+                    onClick = if (isOptionClickable) {
+                        { selectOptionAction() }
+                    } else {
+                        onTextClick
                     },
-                    onClickWithCoords = { rawX, rawY ->
-                        if (!inBookQuizMode || isRevealed) {
-                            onTextClickWithCoords?.invoke(rawX, rawY)
-                        }
+                    onClickWithCoords = if (isOptionClickable) {
+                        null
+                    } else {
+                        onTextClickWithCoords
                     }
                 )
             }
@@ -1997,7 +2023,15 @@ fun ReadBookQuestionItem(
                     }
                     if (expTableData != null) {
                         Spacer(modifier = Modifier.height(8.dp))
-                        com.example.ui.components.TableRenderer(expTableData, themeColors.text)
+                        com.example.ui.components.TableRenderer(
+                            tableData = expTableData,
+                            textColor = themeColors.text,
+                            searchQuery = searchQuery,
+                            highlightColor = highlightColor,
+                            customMenuItems = questionCustomMenuItems,
+                            onClick = onTextClick,
+                            onClickWithCoords = onTextClickWithCoords
+                        )
                     }
                 }
                 
