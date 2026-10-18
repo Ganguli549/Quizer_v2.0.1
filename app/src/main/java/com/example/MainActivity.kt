@@ -59,39 +59,8 @@ class MainActivity : ComponentActivity() {
             window.isNavigationBarContrastEnforced = false
         }
         
-        // Ensure system IME insets animations cleanly complete without FrameTracker timeouts
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            window.decorView.setWindowInsetsAnimationCallback(
-                object : android.view.WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-                    override fun onStart(
-                        animation: android.view.WindowInsetsAnimation,
-                        bounds: android.view.WindowInsetsAnimation.Bounds
-                    ): android.view.WindowInsetsAnimation.Bounds {
-                        com.example.ui.util.ImeCujHelper.scheduleFinish()
-                        return super.onStart(animation, bounds)
-                    }
+        // Permissions and other setup continue here.
 
-                    override fun onEnd(animation: android.view.WindowInsetsAnimation) {
-                        super.onEnd(animation)
-                        com.example.ui.util.ImeCujHelper.endImeCuj()
-                    }
-
-                    override fun onProgress(
-                        insets: android.view.WindowInsets,
-                        runningAnimations: MutableList<android.view.WindowInsetsAnimation>
-                    ): android.view.WindowInsets {
-                        return insets
-                    }
-                }
-            )
-        }
-        window.decorView.viewTreeObserver.addOnGlobalLayoutListener {
-            com.example.ui.util.ImeCujHelper.scheduleFinish()
-        }
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { v, insets ->
-            com.example.ui.util.ImeCujHelper.scheduleFinish()
-            androidx.core.view.ViewCompat.onApplyWindowInsets(v, insets)
-        }
         
         // We handle permissions in Compose now.
 

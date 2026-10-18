@@ -198,7 +198,7 @@ class DataParser {
                                 // Check if AI double-escaped a plain newline as \\n or \\r\\n inside JSON
                                 val afterSecondSlash = if (i + 2 < len) fixed.substring(i + 2) else ""
                                 if (afterSecondSlash.startsWith("r\\n")) {
-                                    val restAfterN = afterSecondSlash.substring(2) // starts with 'n'
+                                    val restAfterN = afterSecondSlash.substring(2)
                                     val isLatexN = restAfterN.startsWith("neq") || restAfterN.startsWith("nabla") ||
                                             restAfterN.startsWith("nearrow") || restAfterN.startsWith("neg") ||
                                             restAfterN.startsWith("nu") || restAfterN.startsWith("natural") ||
@@ -213,18 +213,18 @@ class DataParser {
                                         continue
                                     }
                                 } else if (afterSecondSlash.startsWith("n")) {
-                                    val restAfterN = afterSecondSlash // starts with 'n'
+                                    val restAfterN = afterSecondSlash
                                     val isLatexN = (restAfterN.startsWith("neq") && (restAfterN.length == 3 || !restAfterN[3].isLetter())) ||
                                             (restAfterN.startsWith("nabla") && (restAfterN.length == 5 || !restAfterN[5].isLetter())) ||
                                             (restAfterN.startsWith("nearrow") && (restAfterN.length == 7 || !restAfterN[7].isLetter())) ||
                                             (restAfterN.startsWith("neg") && (restAfterN.length == 3 || !restAfterN[3].isLetter())) ||
                                             (restAfterN.startsWith("nu") && (restAfterN.length == 2 || !restAfterN[2].isLetter())) ||
                                             (restAfterN.startsWith("natural") && (restAfterN.length == 7 || !restAfterN[7].isLetter())) ||
-                                            restAfterN.startsWith("nless") || restAfterN.startsWith("ngtr") ||
+                                            (restAfterN.startsWith("nless") || restAfterN.startsWith("ngtr") ||
                                             restAfterN.startsWith("nleq") || restAfterN.startsWith("ngeq") ||
                                             restAfterN.startsWith("nsubseteq") || restAfterN.startsWith("nsupseteq") ||
                                             restAfterN.startsWith("nmid") || restAfterN.startsWith("nparallel") ||
-                                            restAfterN.startsWith("nwarrow") ||
+                                            restAfterN.startsWith("nwarrow")) ||
                                             (restAfterN.startsWith("notin") && (restAfterN.length == 5 || !restAfterN[5].isLetter())) ||
                                             (restAfterN.startsWith("ne") && (restAfterN.length == 2 || (!restAfterN[2].isLetter() && restAfterN[2] != '.' && restAfterN[2] != ')'))) ||
                                             (restAfterN.startsWith("ni") && (restAfterN.length == 2 || (!restAfterN[2].isLetter() && restAfterN[2] != '.' && restAfterN[2] != ')'))) ||
@@ -235,7 +235,6 @@ class DataParser {
                                         continue
                                     }
                                 }
-                                // Otherwise preserve double-escaped backslash \\ for LaTeX commands
                                 sb.append("\\\\")
                                 i += 2
                             } else if (next == '"' || next == '/') {

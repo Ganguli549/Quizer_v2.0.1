@@ -797,6 +797,14 @@ fun EditQuestionDialog(
         },
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val view = androidx.compose.ui.platform.LocalView.current
+        androidx.compose.runtime.LaunchedEffect(view) {
+            val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+            if (window != null) {
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+                window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            }
+        }
         Scaffold(
             floatingActionButton = {
                 if (!isReviewMode) {

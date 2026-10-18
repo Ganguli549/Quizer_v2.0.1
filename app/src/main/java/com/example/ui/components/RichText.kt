@@ -225,10 +225,6 @@ private val NON_LATEX_ESCAPED_TAB_REGEX = Regex(
 private val HTML_TAG_REGEX = Regex("""<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>""")
 private val INLINE_SINGLE_DOLLAR_REGEX = Regex("""(?<!\$)\$(?!\$)([^\$]+?)\$(?!\$)""")
 
-/**
- * Converts literal two-character `\r\n`, `\n`, and `\t` sequences into actual newline/tab characters
- * whenever they are NOT part of a valid LaTeX command (such as `\neq`, `\nabla`, `\nu`, `\times`, `\theta`, `\text`).
- */
 fun unescapeLiteralNewlinesAndTabs(text: String): String {
     if (text.isEmpty() || !text.contains('\\')) return text
     return text
@@ -236,11 +232,6 @@ fun unescapeLiteralNewlinesAndTabs(text: String): String {
         .replace(NON_LATEX_ESCAPED_TAB_REGEX, "\t")
 }
 
-/**
- * Repairs strings where AI extraction or prior bare-LaTeX wrapping trapped a literal `\n`
- * or HTML tags inside `$ ... $` (e.g. `doubtful?$\nThe poverty$` or `word.$\n<strong>Ignominy</strong>$`),
- * and unescapes all non-LaTeX `\n` / `\r\n` / `\t` sequences.
- */
 fun repairCorruptedMathAndEscapes(raw: String): String {
     if (raw.isEmpty()) return raw
     var s = raw
@@ -257,10 +248,8 @@ fun repairCorruptedMathAndEscapes(raw: String): String {
                 val hasLatex = KNOWN_LATEX_COMMAND_REGEX.containsMatchIn(withoutHtml)
                 val hasSubSup = withoutHtml.contains('^') || withoutHtml.contains('_')
                 if (!hasLatex && !hasSubSup) {
-                    // Pure prose or HTML falsely wrapped in $...$ (e.g. `$\nThe poverty$`, `$\n<strong>Ignominy</strong>$`)
                     unescaped
                 } else if (unescaped.startsWith("\n") || unescaped.startsWith("\r")) {
-                    // Real math formula preceded by a line break inside $...$ (e.g. `$\n\frac{1}{2}$`) -> move newline outside $
                     val stripped = unescaped.trimStart('\r', '\n', ' ')
                     val lead = unescaped.substring(0, unescaped.length - stripped.length)
                     "$lead$$stripped$"
@@ -275,9 +264,6 @@ fun repairCorruptedMathAndEscapes(raw: String): String {
     return unescapeLiteralNewlinesAndTabs(s)
 }
 
-/**
- * Repairs a QuestionEntity's text fields if any field contains corrupted `$\n...$` or `$...<strong>...$` spans.
- */
 fun sanitizeCorruptedQuestionEntity(q: com.example.data.QuestionEntity): com.example.data.QuestionEntity {
     val fixedQuestion = repairCorruptedMathAndEscapes(q.question)
     val fixedExplanation = repairCorruptedMathAndEscapes(q.explanation)
@@ -318,19 +304,19 @@ fun restoreCorruptedLatexEscapes(text: String): String {
     // 2. Backspace \u0008 (ASCII 8) from unescaped \b in JSON (e.g. \beta, \bar, \binom, \begin, \mathbf)
     s = s.replace(Regex("""\u0008(?=[a-zA-Z])"""), "\\\\b")
 
-    // 3. Tab \t (\u0009) from unescaped \t in JSON before LaTeX command names (with strict word boundary)
+    // 3. Tab \t (\u0009) from unescaped \t in JSON before LaTeX command names
     s = s.replace(
-        Regex("""\u0009(?=(?:imes|heta|ext|extbf|extit|extrm|exttt|extsf|extcolor|an|anh|au|o|op|ilde|herefore|riangle|riangleq|riangleleft|riangleright|frac|binom|hickapprox|hicksim|woheadrightarrow|woheadleftarrow|ag)(?![a-zA-Z]))"""),
+        Regex("""\t(?=(?:imes|heta|ext|extbf|extit|extrm|an|au|o|op|ilde|herefore|riangle|frac|hick|wohead|ag)(?![a-zA-Z]))"""),
         "\\\\t"
     )
 
-    // 4. Carriage return \r (\u000d) before LaTeX command keywords (with strict word boundary)
+    // 4. Carriage return \r (\u000d) before LaTeX command keywords
     s = s.replace(
         Regex("""\r(?=(?:ight|ho|rightarrow|Rightarrow|rangle|rfloor|rceil|Re|root|mathrm|mathbf|mathit|mathcal|mathbb|rightharpoonup|rtimes)(?![a-zA-Z]))"""),
         "\\\\r"
     )
 
-    // 5. Newline \n (\u000a) before explicit multi-letter LaTeX command keywords (with strict word boundary so prose words like "equal" or list items like "i." are never corrupted)
+    // 5. Newline \n (\u000a) before explicit multi-letter LaTeX command keywords
     s = s.replace(
         Regex("""\n(?=(?:eq|abla|nearrow|neg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin)(?![a-zA-Z]))"""),
         "\\\\n"
@@ -345,12 +331,8 @@ fun cleanExtractedMathText(text: String): String {
     if (trimmed.equals("null", ignoreCase = true) || trimmed.equals("undefined", ignoreCase = true) || trimmed.equals("none", ignoreCase = true)) {
         return ""
     }
-    // 1. Repair any corrupted $\n...$ spans and unescape non-LaTeX literal \n / \r\n / \t first
     val repaired = repairCorruptedMathAndEscapes(text)
-    // 2. Normalize corrupted control-char escapes (\f -> \frac, \b -> \beta, etc.)
     val restored = restoreCorruptedLatexEscapes(repaired)
-    // 3. Run span-aware preprocessing: sanitizes math expressions in-place,
-    // converts \( ... \) to $...$, \[ ... \] to display $$, and bare LaTeX only in plain text
     return preprocessMathSpans(restored)
 }
 
@@ -359,7 +341,6 @@ fun sanitizeLatex(input: String): String {
 
     var s = restoreCorruptedLatexEscapes(input.trim())
 
-    // Convert any inline HTML formatting tags inside math mode into LaTeX equivalents and strip stray HTML tags
     s = s.replace(Regex("""(?is)<(strong|b)\b[^>]*>(.*?)</\1>""")) { "\\mathbf{${it.groupValues[2]}}" }
         .replace(Regex("""(?is)<(i|em)\b[^>]*>(.*?)</\1>""")) { "\\mathit{${it.groupValues[2]}}" }
         .replace(Regex("""(?is)<sub\b[^>]*>(.*?)</sub>""")) { "_{${it.groupValues[1]}}" }
@@ -1033,13 +1014,6 @@ fun preprocessMathSpans(raw: String): String {
     return out.toString()
 }
 
-/**
- * Apply bare-LaTeX auto-wrapping ONLY to plain-text spans outside existing formulas,
- * code spans, and code blocks.
- * - Triggers ONLY when `plainText` contains a genuine LaTeX math command (`KNOWN_LATEX_COMMAND_REGEX`).
- * - Never triggers on literal `\n`, HTML tags (`<strong>`, `<b>`, etc.), or English prose words.
- * - Preserves 100% of non-ASCII (e.g. Hindi/Devanagari) characters, %, \%, HTML tags, and nested braces.
- */
 private fun wrapBareLatexInPlainText(plainText: String): String {
     if (plainText.isEmpty()) return plainText
 
@@ -1062,15 +1036,15 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
 
     val nestedBraceGroup = """\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"""
     val tokenPattern = Regex(
-        """(<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>)""" + // Group 1: HTML tag (never treat < or > as math operator)
-        """|(\\(?:$KNOWN_LATEX_COMMAND_NAMES)(?![a-zA-Z])(?:\s*$nestedBraceGroup|\s*\[[^\[\]]*\]|\s*_$nestedBraceGroup|\s*_\w+|\s*\^$nestedBraceGroup|\s*\^\w+)*|\\[%&#_{}])""" + // Group 2: Known LaTeX command
-        """|([a-zA-Z]+)""" +                              // Group 3: ASCII Word
-        """|([0-9]+(?:\.[0-9]+)?)""" +                    // Group 4: Number
-        """|(_$nestedBraceGroup|_\w+|\^$nestedBraceGroup|\^\w+)""" + // Group 5: Sub/Super
-        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%])""" +      // Group 6: Operator / Punctuation
-        """|(\$)""" +                                     // Group 7: Dollar $
-        """|(\s+)""" +                                    // Group 8: Whitespace
-        """|(\\[a-zA-Z]+|[^\s\\a-zA-Z0-9_\^\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%\$]+)""" // Group 9: Non-ASCII prose or non-math token
+        """(<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>)""" +
+        """|(\\(?:$KNOWN_LATEX_COMMAND_NAMES)(?![a-zA-Z])(?:\s*$nestedBraceGroup|\s*\[[^\[\]]*\]|\s*_$nestedBraceGroup|\s*_\w+|\s*\^$nestedBraceGroup|\s*\^\w+)*|\\[%&#_{}])""" +
+        """|([a-zA-Z]+)""" +
+        """|([0-9]+(?:\.[0-9]+)?)""" +
+        """|(_$nestedBraceGroup|_\w+|\^$nestedBraceGroup|\^\w+)""" +
+        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%])""" +
+        """|(\$)""" +
+        """|(\s+)""" +
+        """|(\\[a-zA-Z]+|[^\s\\a-zA-Z0-9_\^\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%\$]+)"""
     )
 
     val matches = tokenPattern.findAll(plainText).toList()
@@ -1080,15 +1054,15 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
     val matchStrings = matches.map { it.value }
     val matchTypes = matches.map { m ->
         when {
-            m.groups[1] != null -> 9 // HTML tag (e.g. <strong>, </strong>, <br>)
+            m.groups[1] != null -> 9 // HTML tag
             m.groups[2] != null -> 1 // Known LaTeX command or escaped symbol
             m.groups[3] != null -> 2 // ASCII Word
             m.groups[4] != null -> 3 // Number
             m.groups[5] != null -> 4 // Sub/Super
-            m.groups[6] != null -> 5 // Operator / Punctuation (including %)
+            m.groups[6] != null -> 5 // Operator / Punctuation
             m.groups[7] != null -> 6 // Dollar $
             m.groups[8] != null -> 7 // Whitespace
-            else -> 8                // Non-ASCII prose (e.g. Hindi/Devanagari) or unknown \word
+            else -> 8                // Non-ASCII prose or unknown \word
         }
     }
 
@@ -1096,7 +1070,6 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
         val lower = word.lowercase()
         if (lower in proseWords) return false
         if (lower in allowedMultiLetterMathWords) return true
-        // Allow single-letter variables (x, y, z, A, B) or 2-3 letter variable products (ab, xy)
         return word.length <= 3
     }
 
@@ -1116,7 +1089,6 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
             var leadStart = result.length
             val prevText = result.toString()
 
-            // Capture leading `x = ` or unclosed parenthesized math prefix like `(0.08\% ` on the same line
             val leadMatch = Regex("""(?:[a-zA-Z0-9\(\)]+\s*=\s*|\([0-9\.\s\\%\+\-\*\/]+)$""").find(prevText)
             if (leadMatch != null) {
                 val leadStr = leadMatch.value
@@ -1143,17 +1115,14 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
                 val nxtType = matchTypes[i]
                 val nxtStr = matchStrings[i]
 
-                // Break on newline so inline $...$ never spans across multiple lines
                 if (nxtType == 7 && nxtStr.contains('\n')) {
                     break
                 }
 
-                // Break on HTML tags or non-ASCII prose words (e.g. Hindi/Devanagari text)
                 if (nxtType == 8 || nxtType == 9) {
                     break
                 }
 
-                // Break on English prose words
                 if (nxtType == 2 && !isAllowedMathWord(nxtStr)) {
                     break
                 }
@@ -1203,19 +1172,16 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
 fun formatRichTextLineBreaks(raw: String): String {
     if (raw.isBlank()) return raw
 
-    // 1. Repair any corrupted $\n...$ or $...<strong>...$ spans and unescape non-LaTeX \n / \r\n / \t BEFORE math preprocessing!
+    // 1. Repair any corrupted $\n...$ or $...<strong>...$ spans and unescape non-LaTeX \n / \r\n / \t BEFORE math preprocessing
     val repaired = repairCorruptedMathAndEscapes(raw)
 
     // 2. Restore corrupted control-character escapes from JSON (\f -> \frac, \b -> \beta, etc.)
     val restored = restoreCorruptedLatexEscapes(repaired)
 
-    // 3. Preprocess math spans: standardizes delimiters ($ for inline, $$ for display),
-    // sanitizes inner content without modifying outer delimiters or nesting dollars,
-    // and wraps bare LaTeX only in eligible plain text spans.
+    // 3. Preprocess math spans
     val text = preprocessMathSpans(restored)
 
-    // 4. Protect ALL mathematical expressions (both inline $...$ and display $$...$$) and code blocks
-    // so transformNonMathLineBreaks NEVER transforms or mangles content inside a protected mathematical expression!
+    // 4. Protect ALL mathematical expressions and code blocks
     val protectedPattern = Regex("(?s)(?:```[a-zA-Z]*[\\s\\S]*?```|`[^`]+`|\\$\\$[\\s\\S]+?\\$\\$|(?<![\\$\\w\\\\])\\$(?!\\$)(?:[^\\$\\n\\\\]|\\\\.)+?\\$(?![\\$0-9]))")
     val matches = protectedPattern.findAll(text).toList()
 
@@ -1253,8 +1219,7 @@ private fun transformNonMathLineBreaks(text: String): String {
     // 3. Normalize CRLF to LF
     s = s.replace("\r\n", "\n")
 
-    // 4. Ensure Markdown block boundaries (Headings, Horizontal Rules, Lists, Code Blocks, Blockquotes)
-    // are preceded by an empty line so CommonMark treats them as distinct blocks rather than inline text.
+    // 4. Ensure Markdown block boundaries are preceded by an empty line
     val lines = s.split("\n")
     val result = StringBuilder()
     for (i in lines.indices) {
@@ -1303,6 +1268,7 @@ private fun transformNonMathLineBreaks(text: String): String {
 
 object MathFormattingCache {
     private val formattedTextCache = android.util.LruCache<String, String>(1000)
+    private val spannableCache = android.util.LruCache<Triple<String, Int, Int>, Spannable>(600)
 
     fun getFormattedText(raw: String): String {
         if (raw.isBlank()) return raw
@@ -1313,16 +1279,20 @@ object MathFormattingCache {
         return formatted
     }
 
-    /**
-     * Always creates a fresh Spannable per view so stateful spans are never shared across multiple
-     * TextViews. Individual JLatexMathDrawables are cached inside LatexDrawableCache, making this fast.
-     */
     fun getSpannable(
         markwon: Markwon,
-        processedText: String
+        processedText: String,
+        markwonHash: Int,
+        textColorArgb: Int
     ): Spannable {
+        val key = Triple(processedText, markwonHash, textColorArgb)
+        val cached = spannableCache.get(key)
+        if (cached != null) return cached
+        
         val markdownNode = markwon.toMarkdown(processedText)
-        return if (markdownNode is Spannable) SpannableString(markdownNode) else SpannableString(markdownNode)
+        val spannable = if (markdownNode is Spannable) SpannableString(markdownNode) else SpannableString(markdownNode)
+        spannableCache.put(key, spannable)
+        return spannable
     }
 }
 
@@ -1345,6 +1315,144 @@ private class RichTextTouchBridge {
     var isSelectable: Boolean = true
     var isHorizontallyScrollable: Boolean = false
     var hadSelectionOnDown: Boolean = false
+}
+
+/**
+ * Self-contained TextView for RichText that owns its own [touchBridge] and [selectionCallback].
+ * This guarantees that when Jetpack Compose recycles the AndroidView across LazyColumn items
+ * via [onReset] + [update], touch callbacks are ALWAYS bound to the current visible item and
+ * never invoke stale closures from previously recycled items.
+ */
+private class RichTextView(context: android.content.Context) : TextView(context) {
+    val touchBridge = RichTextTouchBridge()
+    val selectionCallback = CustomSelectionActionModeCallback().also { it.textView = this }
+    var parsedSpannableTag: Any? = null
+
+    private val tapDetector = android.view.GestureDetector(
+        context,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
+                // 1. If the user tapped a ClickableSpan (e.g. zoomable inline image), let the span handle it
+                if (hasClickableSpanAt(this@RichTextView, e)) {
+                    return false
+                }
+                // 2. PDF/EPUB Reader behavior: if text is currently selected, a single tap clears
+                // the selection without toggling full-screen bars
+                if (touchBridge.isSelectable && (touchBridge.hadSelectionOnDown || hasSelection())) {
+                    val sp = text as? android.text.Spannable
+                    if (sp != null) {
+                        android.text.Selection.removeSelection(sp)
+                    }
+                    clearFocus()
+                    return true
+                }
+                // 3. Otherwise, fire the current composable's tap callbacks
+                touchBridge.onClickWithCoords?.invoke(e.rawX, e.rawY)
+                touchBridge.onClick?.invoke()
+                return true
+            }
+        }
+    )
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        // When RichText is non-selectable and non-horizontally-scrollable (e.g. clickable quiz options
+        // in ReadBookScreen and QuizScreen, or collapsed cards in BookmarksScreen and SearchScreen),
+        // do NOT consume touch events inside the AndroidView unless an inline ClickableSpan (image) was tapped.
+        // Returning false lets the parent Compose Row.clickable / Card.clickable handle 100% of taps
+        // natively with full ripple feedback and prevents any leak to outer full-screen pointerInput!
+        if (!touchBridge.isSelectable && !touchBridge.isHorizontallyScrollable) {
+            if (hasClickableSpanAt(this, event)) {
+                return super.dispatchTouchEvent(event)
+            }
+            return false
+        }
+
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            touchBridge.hadSelectionOnDown = hasSelection()
+        }
+
+        val hasTapCallbacks = touchBridge.onClick != null || touchBridge.onClickWithCoords != null
+        if (hasTapCallbacks) {
+            tapDetector.onTouchEvent(event)
+        }
+
+        val superHandled = super.dispatchTouchEvent(event)
+        return if (touchBridge.isHorizontallyScrollable) {
+            superHandled || hasTapCallbacks
+        } else {
+            superHandled
+        }
+    }
+}
+
+private fun bindRichTextView(
+    textView: RichTextView,
+    textColorArgb: Int,
+    fontSizeSp: Float,
+    fontSizePx: Float,
+    isSelectable: Boolean,
+    isHorizontallyScrollable: Boolean,
+    resolvedCustomItems: List<CustomTextMenuItem>,
+    markwon: Markwon,
+    spannableToDisplay: Spannable,
+    onClick: (() -> Unit)?,
+    onClickWithCoords: ((Float, Float) -> Unit)?
+) {
+    textView.touchBridge.onClick = onClick
+    textView.touchBridge.onClickWithCoords = onClickWithCoords
+    textView.touchBridge.isSelectable = isSelectable
+    textView.touchBridge.isHorizontallyScrollable = isHorizontallyScrollable
+
+    textView.setTextColor(textColorArgb)
+    if (textView.textSize != fontSizePx) {
+        textView.textSize = fontSizeSp
+    }
+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        textView.setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
+    }
+
+    textView.selectionCallback.textView = textView
+    textView.selectionCallback.customItems = resolvedCustomItems
+    textView.customSelectionActionModeCallback = textView.selectionCallback
+
+    if (textView.parsedSpannableTag != spannableToDisplay) {
+        markwon.setParsedMarkdown(textView, spannableToDisplay)
+        textView.parsedSpannableTag = spannableToDisplay
+    }
+
+    // Apply scrollability and selectability AFTER markwon.setParsedMarkdown so Markwon plugins
+    // never leave a non-selectable view with an active MovementMethod or clickable state.
+    if (isHorizontallyScrollable) {
+        textView.setHorizontallyScrolling(true)
+        if (textView.isTextSelectable) {
+            textView.setTextIsSelectable(false)
+        }
+        textView.movementMethod = null
+        textView.isClickable = false
+        textView.isLongClickable = false
+        textView.isFocusable = false
+        textView.layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    } else {
+        textView.setHorizontallyScrolling(false)
+        if (isSelectable) {
+            if (!textView.isTextSelectable) {
+                textView.setTextIsSelectable(true)
+            }
+        } else {
+            if (textView.isTextSelectable) {
+                textView.setTextIsSelectable(false)
+            }
+            textView.movementMethod = null
+            textView.isClickable = false
+            textView.isLongClickable = false
+            textView.isFocusable = false
+            textView.isFocusableInTouchMode = false
+        }
+    }
 }
 
 @Composable
@@ -1385,7 +1493,7 @@ fun RichText(
     var zoomableImageUrl by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
 
     val spannableToDisplay = remember(processedText, markwon, searchQuery, highlightColor, textColorArgb) {
-        val spannable = MathFormattingCache.getSpannable(markwon, processedText)
+        val spannable = MathFormattingCache.getSpannable(markwon, processedText, markwon.hashCode(), textColorArgb)
 
         if (searchQuery.isNotBlank()) {
             val lowerText = spannable.toString().lowercase()
@@ -1444,142 +1552,57 @@ fun RichText(
         }
     }
 
-    val customSelectionCallback = remember {
-        CustomSelectionActionModeCallback()
-    }
-    customSelectionCallback.customItems = resolvedCustomItems
-
-    val touchBridge = remember { RichTextTouchBridge() }.apply {
-        this.onClick = onClick
-        this.onClickWithCoords = onClickWithCoords
-        this.isSelectable = isSelectable
-        this.isHorizontallyScrollable = isHorizontallyScrollable
-    }
-
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
-            TextView(ctx).apply {
+            RichTextView(ctx).apply {
                 includeFontPadding = true
-                setTextColor(textColorArgb)
-                textSize = fontSize.value
-                if (isHorizontallyScrollable) {
-                    setHorizontallyScrolling(true)
-                    if (isTextSelectable) setTextIsSelectable(false)
-                    movementMethod = null
-                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                } else {
-                    if (isTextSelectable != isSelectable) {
-                        setTextIsSelectable(isSelectable)
-                    }
-                }
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
-                }
-                customSelectionCallback.textView = this
-                customSelectionActionModeCallback = customSelectionCallback
-                markwon.setParsedMarkdown(this, spannableToDisplay)
-                tag = spannableToDisplay
-
-                val gestureDetector = android.view.GestureDetector(
-                    ctx,
-                    object : android.view.GestureDetector.SimpleOnGestureListener() {
-                        override fun onSingleTapUp(e: android.view.MotionEvent): Boolean {
-                            // 1. If the user tapped a ClickableSpan (e.g. zoomable inline image), let the span handle it
-                            if (hasClickableSpanAt(this@apply, e)) {
-                                return false
-                            }
-                            // 2. PDF/EPUB Reader behavior: if text is currently selected, a single tap clears
-                            // the selection without toggling full-screen bars
-                            if (touchBridge.isSelectable && (touchBridge.hadSelectionOnDown || hasSelection())) {
-                                val sp = text as? android.text.Spannable
-                                if (sp != null) {
-                                    android.text.Selection.removeSelection(sp)
-                                }
-                                clearFocus()
-                                return true
-                            }
-                            // 3. Otherwise, fire the tap callbacks
-                            touchBridge.onClickWithCoords?.invoke(e.rawX, e.rawY)
-                            touchBridge.onClick?.invoke()
-                            return true
-                        }
-                    }
+                bindRichTextView(
+                    textView = this,
+                    textColorArgb = textColorArgb,
+                    fontSizeSp = fontSize.value,
+                    fontSizePx = fontSizePx,
+                    isSelectable = isSelectable,
+                    isHorizontallyScrollable = isHorizontallyScrollable,
+                    resolvedCustomItems = resolvedCustomItems,
+                    markwon = markwon,
+                    spannableToDisplay = spannableToDisplay,
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
                 )
-
-                setOnTouchListener { view, event ->
-                    val tv = view as TextView
-                    if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
-                        touchBridge.hadSelectionOnDown = tv.hasSelection()
-                    }
-                    val hasTapCallbacks = touchBridge.onClick != null || touchBridge.onClickWithCoords != null
-                    if (hasTapCallbacks) {
-                        gestureDetector.onTouchEvent(event)
-                    }
-                    when {
-                        touchBridge.isHorizontallyScrollable -> {
-                            val handledByTv = tv.onTouchEvent(event)
-                            handledByTv || hasTapCallbacks
-                        }
-                        !touchBridge.isSelectable -> {
-                            if (hasTapCallbacks) {
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        else -> {
-                            // Selectable TextView: let native TextView.onTouchEvent handle long-press selection,
-                            // selection handles, and ClickableSpans while GestureDetector catches single taps.
-                            false
-                        }
-                    }
-                }
             }
         },
         update = { textView ->
-            textView.setTextColor(textColorArgb)
-            if (textView.textSize != fontSizePx) {
-                textView.textSize = fontSize.value
-            }
-            if (isHorizontallyScrollable) {
-                textView.setHorizontallyScrolling(true)
-                if (textView.isTextSelectable) {
-                    textView.setTextIsSelectable(false)
-                }
-                textView.movementMethod = null
-                textView.layoutParams = android.widget.FrameLayout.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            if (textView is RichTextView) {
+                bindRichTextView(
+                    textView = textView,
+                    textColorArgb = textColorArgb,
+                    fontSizeSp = fontSize.value,
+                    fontSizePx = fontSizePx,
+                    isSelectable = isSelectable,
+                    isHorizontallyScrollable = isHorizontallyScrollable,
+                    resolvedCustomItems = resolvedCustomItems,
+                    markwon = markwon,
+                    spannableToDisplay = spannableToDisplay,
+                    onClick = onClick,
+                    onClickWithCoords = onClickWithCoords
                 )
-            } else {
-                // Only call setTextIsSelectable when the boolean actually changes so active text
-                // selections are never wiped out during parent recompositions!
-                if (textView.isTextSelectable != isSelectable) {
-                    textView.setTextIsSelectable(isSelectable)
-                }
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                textView.setTextClassifier(android.view.textclassifier.TextClassifier.NO_OP)
-            }
-            customSelectionCallback.textView = textView
-            customSelectionCallback.customItems = resolvedCustomItems
-            textView.customSelectionActionModeCallback = customSelectionCallback
-            if (textView.tag != spannableToDisplay) {
-                markwon.setParsedMarkdown(textView, spannableToDisplay)
-                textView.tag = spannableToDisplay
             }
         },
         onReset = { textView ->
             try {
+                if (textView is RichTextView) {
+                    textView.touchBridge.onClick = null
+                    textView.touchBridge.onClickWithCoords = null
+                    textView.touchBridge.hadSelectionOnDown = false
+                    textView.parsedSpannableTag = null
+                    textView.selectionCallback.customItems = emptyList()
+                }
+                textView.customSelectionActionModeCallback = null
                 val spannable = textView.text as? android.text.Spannable
                 if (spannable != null) {
                     android.text.Selection.removeSelection(spannable)
                 }
-                textView.tag = null
                 textView.clearFocus()
             } catch (e: Exception) {}
         }
