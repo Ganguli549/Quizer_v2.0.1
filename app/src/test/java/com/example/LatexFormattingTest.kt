@@ -299,4 +299,49 @@ class LatexFormattingTest {
         assertEquals("", cleanExtractedMathText("   "))
         assertEquals("Valid Explanation", cleanExtractedMathText("Valid Explanation"))
     }
+
+    @Test
+    fun testExtractedVocabQuestionsDoNotWrapNewlinesOrHtmlInMath() {
+        // Raw AI strings with literal \n (from double-escaped \\n in JSON)
+        val rawQ382 = "Which word in the given sentence is the ANTONYM of – doubtful?\\nThe poverty of his childhood played a decisive role in his adult life."
+        val cleanedQ382 = cleanExtractedMathText(rawQ382)
+        assertEquals(
+            "Which word in the given sentence is the ANTONYM of – doubtful?\nThe poverty of his childhood played a decisive role in his adult life.",
+            cleanedQ382
+        )
+        assertFalse("Must never wrap \\nThe poverty in dollar signs", cleanedQ382.contains("$"))
+
+        val rawQ384 = "Select the most appropriate ANTONYM of the given word.\\n<strong>Ignominy</strong>"
+        val cleanedQ384 = cleanExtractedMathText(rawQ384)
+        assertEquals(
+            "Select the most appropriate ANTONYM of the given word.\n<strong>Ignominy</strong>",
+            cleanedQ384
+        )
+        assertFalse("Must never wrap \\n<strong>Ignominy</strong> in dollar signs", cleanedQ384.contains("$"))
+    }
+
+    @Test
+    fun testAlreadyCorruptedDatabaseQuestionsAreSelfHealed() {
+        // Already-corrupted strings from screenshots 1000240392.jpg and 1000240397.jpg
+        val corruptedQ382 = "Which word in the given sentence is the ANTONYM of – doubtful?\$\\nThe poverty\$ of his childhood played a decisive role in his adult life."
+        val formattedQ382 = formatRichTextLineBreaks(corruptedQ382)
+        assertEquals(
+            "Which word in the given sentence is the ANTONYM of – doubtful?\nThe poverty of his childhood played a decisive role in his adult life.",
+            formattedQ382
+        )
+
+        val corruptedQ384 = "Select the most appropriate ANTONYM of the given word.\$\\n<strong>Ignominy</strong>\$"
+        val formattedQ384 = formatRichTextLineBreaks(corruptedQ384)
+        assertEquals(
+            "Select the most appropriate ANTONYM of the given word.\n<strong>Ignominy</strong>",
+            formattedQ384
+        )
+
+        val corruptedQ383 = "Select the most appropriate ANTONYM of the given word.\$\\nMeagre\$"
+        val formattedQ383 = formatRichTextLineBreaks(corruptedQ383)
+        assertEquals(
+            "Select the most appropriate ANTONYM of the given word.\nMeagre",
+            formattedQ383
+        )
+    }
 }

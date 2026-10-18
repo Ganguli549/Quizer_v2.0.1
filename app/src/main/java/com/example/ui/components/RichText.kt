@@ -52,7 +52,13 @@ class TextDrawable(private val text: String, private val textSize: Float, privat
     }
 
     private fun getSanitizedLines(): List<String> {
-        return text.replace("<br>", "\n").replace("<br/>", "\n").replace("\\n", "\n").split("\n")
+        return text
+            .replace("<br>", "\n")
+            .replace("<br/>", "\n")
+            .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
+            .replace(Regex("""<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>"""), "")
+            .split("\n")
     }
 
     override fun draw(canvas: Canvas) {
@@ -182,6 +188,127 @@ object LatexDrawableCache {
     }
 }
 
+private const val KNOWN_LATEX_COMMAND_NAMES =
+    "frac|dfrac|tfrac|cfrac|sqrt|root|sum|prod|coprod|int|iint|iiint|oint|lim|limsup|liminf|" +
+    "sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|coth|" +
+    "log|ln|lg|exp|det|dim|ker|hom|arg|deg|gcd|lcm|min|max|sup|inf|bmod|pmod|" +
+    "alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|varpi|" +
+    "rho|varrho|sigma|varsigma|tau|upsilon|phi|varphi|chi|psi|omega|" +
+    "Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega|" +
+    "times|div|pm|mp|cdot|cdots|ldots|ddots|vdots|ast|star|circ|bullet|oplus|ominus|otimes|oslash|odot|" +
+    "leq|geq|neq|approx|equiv|cong|sim|simeq|asymp|propto|ll|gg|prec|succ|preceq|succeq|" +
+    "subset|supset|subseteq|supseteq|nsubseteq|nsupseteq|in|notin|ni|cup|cap|setminus|uplus|sqsubset|sqsupset|sqsubseteq|sqsupseteq|sqcup|sqcap|" +
+    "wedge|vee|land|lor|neg|lnot|forall|exists|nexists|emptyset|varnothing|infty|partial|nabla|aleph|hbar|ell|wp|Re|Im|" +
+    "therefore|because|angle|measuredangle|sphericalangle|triangle|triangledown|triangleleft|triangleright|perp|parallel|nparallel|mid|nmid|" +
+    "rightarrow|leftarrow|leftrightarrow|Rightarrow|Leftarrow|Leftrightarrow|implies|impliedby|iff|to|mapsto|longmapsto|" +
+    "longrightarrow|longleftarrow|longleftrightarrow|Longrightarrow|Longleftarrow|Longleftrightarrow|" +
+    "uparrow|downarrow|updownarrow|Uparrow|Downarrow|Updownarrow|nearrow|searrow|swarrow|nwarrow|rightharpoonup|rightharpoondown|leftharpoonup|leftharpoondown|rightleftharpoons|" +
+    "vec|hat|widehat|bar|overline|underline|tilde|widetilde|dot|ddot|acute|grave|check|breve|mathring|" +
+    "mathbf|mathrm|mathit|mathcal|mathbb|mathfrak|mathsf|mathtt|textbf|textit|textrm|texttt|textsf|text|mbox|boldsymbol|bm|opt|operatorname|" +
+    "binom|tbinom|dbinom|choose|brack|brace|left|right|big|Big|bigg|Bigg|bigl|bigr|Bigl|Bigr|biggl|biggr|" +
+    "begin|end|array|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|aligned|align|gather|cases|" +
+    "lfloor|rfloor|lceil|rceil|langle|rangle|vert|Vert|backslash|" +
+    "degree|prime|quad|qquad|hspace|vspace|phantom|hphantom|vphantom|not|cancel|bcancel|xcancel|boxed|color|textcolor|" +
+    "le|ge|ne|lt|gt|dots|plusminus|natural|nless|ngtr|nleq|ngeq|ncong|nsim|nvdash|nvDash"
+
+private val KNOWN_LATEX_COMMAND_REGEX = Regex("""\\(?:$KNOWN_LATEX_COMMAND_NAMES)(?![a-zA-Z])""")
+
+private val NON_LATEX_ESCAPED_NEWLINE_REGEX = Regex(
+    """\\r\\n(?!(?:eq|abla|earrow|eg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin|exists|cong|sim|vdash|vDash|Leftarrow|Rightarrow|Leftrightarrow|leftarrow|rightarrow|leftrightarrow|ewline)(?![a-zA-Z])|(?:u|e|i|ot)(?![a-zA-Z.\):]))""" +
+    """|\\n(?!(?:eq|abla|earrow|eg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin|exists|cong|sim|vdash|vDash|Leftarrow|Rightarrow|Leftrightarrow|leftarrow|rightarrow|leftrightarrow|ewline)(?![a-zA-Z])|(?:u|e|i|ot)(?![a-zA-Z.\):]))"""
+)
+
+private val NON_LATEX_ESCAPED_TAB_REGEX = Regex(
+    """\\t(?!(?:imes|heta|ext|extbf|extit|extrm|exttt|extsf|extcolor|an|anh|au|o|op|ilde|herefore|riangle|riangleq|riangleleft|riangleright|frac|binom|hickapprox|hicksim|woheadrightarrow|woheadleftarrow|ag)(?![a-zA-Z]))"""
+)
+
+private val HTML_TAG_REGEX = Regex("""<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>""")
+private val INLINE_SINGLE_DOLLAR_REGEX = Regex("""(?<!\$)\$(?!\$)([^\$]+?)\$(?!\$)""")
+
+/**
+ * Converts literal two-character `\r\n`, `\n`, and `\t` sequences into actual newline/tab characters
+ * whenever they are NOT part of a valid LaTeX command (such as `\neq`, `\nabla`, `\nu`, `\times`, `\theta`, `\text`).
+ */
+fun unescapeLiteralNewlinesAndTabs(text: String): String {
+    if (text.isEmpty() || !text.contains('\\')) return text
+    return text
+        .replace(NON_LATEX_ESCAPED_NEWLINE_REGEX, "\n")
+        .replace(NON_LATEX_ESCAPED_TAB_REGEX, "\t")
+}
+
+/**
+ * Repairs strings where AI extraction or prior bare-LaTeX wrapping trapped a literal `\n`
+ * or HTML tags inside `$ ... $` (e.g. `doubtful?$\nThe poverty$` or `word.$\n<strong>Ignominy</strong>$`),
+ * and unescapes all non-LaTeX `\n` / `\r\n` / `\t` sequences.
+ */
+fun repairCorruptedMathAndEscapes(raw: String): String {
+    if (raw.isEmpty()) return raw
+    var s = raw
+    if (s.contains('$')) {
+        s = INLINE_SINGLE_DOLLAR_REGEX.replace(s) { m ->
+            val inner = m.groupValues[1]
+            val hasEscapedNl = NON_LATEX_ESCAPED_NEWLINE_REGEX.containsMatchIn(inner)
+            val hasRealNl = inner.contains('\n') || inner.contains('\r')
+            val hasHtml = HTML_TAG_REGEX.containsMatchIn(inner)
+
+            if (hasEscapedNl || hasRealNl || hasHtml) {
+                val unescaped = unescapeLiteralNewlinesAndTabs(inner)
+                val withoutHtml = unescaped.replace(HTML_TAG_REGEX, " ")
+                val hasLatex = KNOWN_LATEX_COMMAND_REGEX.containsMatchIn(withoutHtml)
+                val hasSubSup = withoutHtml.contains('^') || withoutHtml.contains('_')
+                if (!hasLatex && !hasSubSup) {
+                    // Pure prose or HTML falsely wrapped in $...$ (e.g. `$\nThe poverty$`, `$\n<strong>Ignominy</strong>$`)
+                    unescaped
+                } else if (unescaped.startsWith("\n") || unescaped.startsWith("\r")) {
+                    // Real math formula preceded by a line break inside $...$ (e.g. `$\n\frac{1}{2}$`) -> move newline outside $
+                    val stripped = unescaped.trimStart('\r', '\n', ' ')
+                    val lead = unescaped.substring(0, unescaped.length - stripped.length)
+                    "$lead$$stripped$"
+                } else {
+                    m.value
+                }
+            } else {
+                m.value
+            }
+        }
+    }
+    return unescapeLiteralNewlinesAndTabs(s)
+}
+
+/**
+ * Repairs a QuestionEntity's text fields if any field contains corrupted `$\n...$` or `$...<strong>...$` spans.
+ */
+fun sanitizeCorruptedQuestionEntity(q: com.example.data.QuestionEntity): com.example.data.QuestionEntity {
+    val fixedQuestion = repairCorruptedMathAndEscapes(q.question)
+    val fixedExplanation = repairCorruptedMathAndEscapes(q.explanation)
+    val fixedDetailed = q.detailedExplanation?.let { repairCorruptedMathAndEscapes(it) }
+    val fixedHeader = q.questionHeader?.let {
+        if (it.trimStart().startsWith("{")) it else repairCorruptedMathAndEscapes(it)
+    }
+    val fixedSection = if (q.section.trimStart().startsWith("{")) q.section else repairCorruptedMathAndEscapes(q.section)
+    val fixedBottomText = q.bottomText?.let { repairCorruptedMathAndEscapes(it) }
+
+    return if (
+        fixedQuestion != q.question ||
+        fixedExplanation != q.explanation ||
+        fixedDetailed != q.detailedExplanation ||
+        fixedHeader != q.questionHeader ||
+        fixedSection != q.section ||
+        fixedBottomText != q.bottomText
+    ) {
+        q.copy(
+            question = fixedQuestion,
+            explanation = fixedExplanation,
+            detailedExplanation = fixedDetailed,
+            questionHeader = fixedHeader,
+            section = fixedSection,
+            bottomText = fixedBottomText
+        )
+    } else {
+        q
+    }
+}
+
 fun restoreCorruptedLatexEscapes(text: String): String {
     if (text.isEmpty()) return text
     var s = text
@@ -191,21 +318,21 @@ fun restoreCorruptedLatexEscapes(text: String): String {
     // 2. Backspace \u0008 (ASCII 8) from unescaped \b in JSON (e.g. \beta, \bar, \binom, \begin, \mathbf)
     s = s.replace(Regex("""\u0008(?=[a-zA-Z])"""), "\\\\b")
 
-    // 3. Tab \t (\u0009) from unescaped \t in JSON before LaTeX command names
+    // 3. Tab \t (\u0009) from unescaped \t in JSON before LaTeX command names (with strict word boundary)
     s = s.replace(
-        Regex("""\u0009(?=imes|heta|ext|an|au|o(?![a-zA-Z])|op(?![a-zA-Z])|ilde|herefore|riangle|frac|hick|wohead)"""),
+        Regex("""\u0009(?=(?:imes|heta|ext|extbf|extit|extrm|exttt|extsf|extcolor|an|anh|au|o|op|ilde|herefore|riangle|riangleq|riangleleft|riangleright|frac|binom|hickapprox|hicksim|woheadrightarrow|woheadleftarrow|ag)(?![a-zA-Z]))"""),
         "\\\\t"
     )
 
-    // 4. Carriage return \r (\u000d) before LaTeX command keywords
+    // 4. Carriage return \r (\u000d) before LaTeX command keywords (with strict word boundary)
     s = s.replace(
-        Regex("""\r(?=ight|ho|rightarrow|Rightarrow|rangle|rfloor|rceil|Re|root|mathrm|mathbf|mathit|mathcal|mathbb|rightharpoonup|rtimes)"""),
+        Regex("""\r(?=(?:ight|ho|rightarrow|Rightarrow|rangle|rfloor|rceil|Re|root|mathrm|mathbf|mathit|mathcal|mathbb|rightharpoonup|rtimes)(?![a-zA-Z]))"""),
         "\\\\r"
     )
 
-    // 5. Newline \n (\u000a) before LaTeX command keywords
+    // 5. Newline \n (\u000a) before explicit multi-letter LaTeX command keywords (with strict word boundary so prose words like "equal" or list items like "i." are never corrupted)
     s = s.replace(
-        Regex("""\n(?=eq|abla|nearrow|neg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin|u(?![a-zA-Z])|e(?![a-zA-Z])|ot(?![a-zA-Z])|i(?![a-zA-Z]))"""),
+        Regex("""\n(?=(?:eq|abla|nearrow|neg|atural|less|gtr|leq|geq|subseteq|supseteq|mid|parallel|warrow|otin)(?![a-zA-Z]))"""),
         "\\\\n"
     )
 
@@ -218,17 +345,26 @@ fun cleanExtractedMathText(text: String): String {
     if (trimmed.equals("null", ignoreCase = true) || trimmed.equals("undefined", ignoreCase = true) || trimmed.equals("none", ignoreCase = true)) {
         return ""
     }
-    // Normalize corrupted escapes first
-    val s = restoreCorruptedLatexEscapes(text)
-    // Run span-aware preprocessing: sanitizes math expressions in-place,
+    // 1. Repair any corrupted $\n...$ spans and unescape non-LaTeX literal \n / \r\n / \t first
+    val repaired = repairCorruptedMathAndEscapes(text)
+    // 2. Normalize corrupted control-char escapes (\f -> \frac, \b -> \beta, etc.)
+    val restored = restoreCorruptedLatexEscapes(repaired)
+    // 3. Run span-aware preprocessing: sanitizes math expressions in-place,
     // converts \( ... \) to $...$, \[ ... \] to display $$, and bare LaTeX only in plain text
-    return preprocessMathSpans(s)
+    return preprocessMathSpans(restored)
 }
 
 fun sanitizeLatex(input: String): String {
     if (input.isBlank()) return input
 
     var s = restoreCorruptedLatexEscapes(input.trim())
+
+    // Convert any inline HTML formatting tags inside math mode into LaTeX equivalents and strip stray HTML tags
+    s = s.replace(Regex("""(?is)<(strong|b)\b[^>]*>(.*?)</\1>""")) { "\\mathbf{${it.groupValues[2]}}" }
+        .replace(Regex("""(?is)<(i|em)\b[^>]*>(.*?)</\1>""")) { "\\mathit{${it.groupValues[2]}}" }
+        .replace(Regex("""(?is)<sub\b[^>]*>(.*?)</sub>""")) { "_{${it.groupValues[1]}}" }
+        .replace(Regex("""(?is)<sup\b[^>]*>(.*?)</sup>""")) { "^{${it.groupValues[1]}}" }
+        .replace(HTML_TAG_REGEX, "")
 
     // Normalize over-escaped LaTeX commands (e.g. \\tan -> \tan, \\frac -> \frac, \\% -> \%),
     // but preserve valid LaTeX row-break sequences like \\ followed by whitespace/newline/closing bracket
@@ -900,32 +1036,41 @@ fun preprocessMathSpans(raw: String): String {
 /**
  * Apply bare-LaTeX auto-wrapping ONLY to plain-text spans outside existing formulas,
  * code spans, and code blocks.
- * Preserves 100% of non-ASCII (e.g. Hindi/Devanagari) characters, %, \%, and nested braces.
+ * - Triggers ONLY when `plainText` contains a genuine LaTeX math command (`KNOWN_LATEX_COMMAND_REGEX`).
+ * - Never triggers on literal `\n`, HTML tags (`<strong>`, `<b>`, etc.), or English prose words.
+ * - Preserves 100% of non-ASCII (e.g. Hindi/Devanagari) characters, %, \%, HTML tags, and nested braces.
  */
 private fun wrapBareLatexInPlainText(plainText: String): String {
     if (plainText.isEmpty()) return plainText
 
-    val latexTrigger = Regex("""\\[a-zA-Z]+""")
-    if (!latexTrigger.containsMatchIn(plainText)) return plainText
+    if (!KNOWN_LATEX_COMMAND_REGEX.containsMatchIn(plainText)) return plainText
 
     val proseWords = setOf(
         "and", "or", "if", "then", "is", "are", "was", "were", "where", "when", "which", "what", "how",
         "the", "a", "an", "this", "that", "these", "those", "for", "with", "from", "to", "in", "on", "at",
         "by", "of", "equal", "equals", "yields", "gives", "so", "such", "solution", "curve",
         "option", "options", "question", "statement", "value", "values", "constant", "constants",
-        "rewriting", "solving", "testing", "lies", "integrating", "differentiating", "find", "calculate"
+        "rewriting", "solving", "testing", "lies", "integrating", "differentiating", "find", "calculate",
+        "select", "word", "given", "sentence", "antonym", "synonym", "meaning", "appropriate", "most"
+    )
+
+    val allowedMultiLetterMathWords = setOf(
+        "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
+        "log", "ln", "lg", "exp", "lim", "sup", "inf", "max", "min", "det", "dim", "ker", "deg", "gcd", "lcm", "mod", "arg",
+        "dx", "dy", "dz", "dt", "du", "dv", "dr", "ds", "rhs", "lhs"
     )
 
     val nestedBraceGroup = """\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"""
     val tokenPattern = Regex(
-        """(\\[a-zA-Z]+(?:\s*$nestedBraceGroup|\s*\[[^\[\]]*\]|\s*_$nestedBraceGroup|\s*_\w+|\s*\^$nestedBraceGroup|\s*\^\w+)*|\\[%&#_{}])""" +
-        """|([a-zA-Z]+)""" +
-        """|([0-9]+(?:\.[0-9]+)?)""" +
-        """|(_$nestedBraceGroup|_\w+|\^$nestedBraceGroup|\^\w+)""" +
-        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%])""" +
-        """|(\$)""" +
-        """|(\s+)""" +
-        """|([^\s\\a-zA-Z0-9_\^\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%\$]+)"""
+        """(<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?>)""" + // Group 1: HTML tag (never treat < or > as math operator)
+        """|(\\(?:$KNOWN_LATEX_COMMAND_NAMES)(?![a-zA-Z])(?:\s*$nestedBraceGroup|\s*\[[^\[\]]*\]|\s*_$nestedBraceGroup|\s*_\w+|\s*\^$nestedBraceGroup|\s*\^\w+)*|\\[%&#_{}])""" + // Group 2: Known LaTeX command
+        """|([a-zA-Z]+)""" +                              // Group 3: ASCII Word
+        """|([0-9]+(?:\.[0-9]+)?)""" +                    // Group 4: Number
+        """|(_$nestedBraceGroup|_\w+|\^$nestedBraceGroup|\^\w+)""" + // Group 5: Sub/Super
+        """|([\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%])""" +      // Group 6: Operator / Punctuation
+        """|(\$)""" +                                     // Group 7: Dollar $
+        """|(\s+)""" +                                    // Group 8: Whitespace
+        """|(\\[a-zA-Z]+|[^\s\\a-zA-Z0-9_\^\+\-\*\/=><,;\.!|\(\)\[\]~\:\?%\$]+)""" // Group 9: Non-ASCII prose or non-math token
     )
 
     val matches = tokenPattern.findAll(plainText).toList()
@@ -935,15 +1080,24 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
     val matchStrings = matches.map { it.value }
     val matchTypes = matches.map { m ->
         when {
-            m.groups[1] != null -> 1 // LaTeX command or escaped symbol
-            m.groups[2] != null -> 2 // ASCII Word
-            m.groups[3] != null -> 3 // Number
-            m.groups[4] != null -> 4 // Sub/Super
-            m.groups[5] != null -> 5 // Operator / Punctuation (including %)
-            m.groups[6] != null -> 6 // Dollar $
-            m.groups[7] != null -> 7 // Whitespace
-            else -> 8                // Non-ASCII prose (e.g. Hindi/Devanagari) or other characters
+            m.groups[1] != null -> 9 // HTML tag (e.g. <strong>, </strong>, <br>)
+            m.groups[2] != null -> 1 // Known LaTeX command or escaped symbol
+            m.groups[3] != null -> 2 // ASCII Word
+            m.groups[4] != null -> 3 // Number
+            m.groups[5] != null -> 4 // Sub/Super
+            m.groups[6] != null -> 5 // Operator / Punctuation (including %)
+            m.groups[7] != null -> 6 // Dollar $
+            m.groups[8] != null -> 7 // Whitespace
+            else -> 8                // Non-ASCII prose (e.g. Hindi/Devanagari) or unknown \word
         }
+    }
+
+    fun isAllowedMathWord(word: String): Boolean {
+        val lower = word.lowercase()
+        if (lower in proseWords) return false
+        if (lower in allowedMultiLetterMathWords) return true
+        // Allow single-letter variables (x, y, z, A, B) or 2-3 letter variable products (ab, xy)
+        return word.length <= 3
     }
 
     var i = 0
@@ -953,7 +1107,7 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
         val t = matchTypes[i]
         val s = matchStrings[i]
 
-        if (t == 1 || t == 4 || (t == 6 && i + 1 < n && matchTypes[i + 1] == 1)) {
+        if (t == 1 || (t == 6 && i + 1 < n && matchTypes[i + 1] == 1)) {
             val hasOpeningDollar = (t == 6)
             if (hasOpeningDollar) {
                 i++
@@ -994,13 +1148,13 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
                     break
                 }
 
-                // Break on non-ASCII prose words (e.g. Hindi/Devanagari text)
-                if (nxtType == 8) {
+                // Break on HTML tags or non-ASCII prose words (e.g. Hindi/Devanagari text)
+                if (nxtType == 8 || nxtType == 9) {
                     break
                 }
 
                 // Break on English prose words
-                if (nxtType == 2 && proseWords.contains(nxtStr.lowercase())) {
+                if (nxtType == 2 && !isAllowedMathWord(nxtStr)) {
                     break
                 }
 
@@ -1012,8 +1166,9 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
                 if (nxtType == 5 && nxtStr == ".") {
                     if (i + 1 == n ||
                         matchTypes[i + 1] == 8 ||
+                        matchTypes[i + 1] == 9 ||
                         (matchTypes[i + 1] == 7 && matchStrings[i + 1].contains('\n')) ||
-                        (matchTypes[i + 1] == 2 && proseWords.contains(matchStrings[i + 1].lowercase()))
+                        (matchTypes[i + 1] == 2 && !isAllowedMathWord(matchStrings[i + 1]))
                     ) {
                         break
                     }
@@ -1048,15 +1203,18 @@ private fun wrapBareLatexInPlainText(plainText: String): String {
 fun formatRichTextLineBreaks(raw: String): String {
     if (raw.isBlank()) return raw
 
-    // 1. Restore corrupted escapes from JSON
-    val restored = restoreCorruptedLatexEscapes(raw)
+    // 1. Repair any corrupted $\n...$ or $...<strong>...$ spans and unescape non-LaTeX \n / \r\n / \t BEFORE math preprocessing!
+    val repaired = repairCorruptedMathAndEscapes(raw)
 
-    // 2. Preprocess math spans: standardizes delimiters ($ for inline, $$ for display),
+    // 2. Restore corrupted control-character escapes from JSON (\f -> \frac, \b -> \beta, etc.)
+    val restored = restoreCorruptedLatexEscapes(repaired)
+
+    // 3. Preprocess math spans: standardizes delimiters ($ for inline, $$ for display),
     // sanitizes inner content without modifying outer delimiters or nesting dollars,
     // and wraps bare LaTeX only in eligible plain text spans.
     val text = preprocessMathSpans(restored)
 
-    // 3. Protect ALL mathematical expressions (both inline $...$ and display $$...$$) and code blocks
+    // 4. Protect ALL mathematical expressions (both inline $...$ and display $$...$$) and code blocks
     // so transformNonMathLineBreaks NEVER transforms or mangles content inside a protected mathematical expression!
     val protectedPattern = Regex("(?s)(?:```[a-zA-Z]*[\\s\\S]*?```|`[^`]+`|\\$\\$[\\s\\S]+?\\$\\$|(?<![\\$\\w\\\\])\\$(?!\\$)(?:[^\\$\\n\\\\]|\\\\.)+?\\$(?![\\$0-9]))")
     val matches = protectedPattern.findAll(text).toList()

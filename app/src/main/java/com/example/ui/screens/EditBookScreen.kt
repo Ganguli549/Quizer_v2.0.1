@@ -101,7 +101,17 @@ fun EditBookScreen(
     fun loadQuestions() {
         if (currentBookId != "") {
             coroutineScope.launch(Dispatchers.IO) {
-                questions = viewModel.repository.getQuestionsForBookSync(currentBookId)
+                val rawList = viewModel.repository.getQuestionsForBookSync(currentBookId)
+                val repairedToSave = mutableListOf<QuestionEntity>()
+                val cleanedList = rawList.map { q ->
+                    val fixed = com.example.ui.components.sanitizeCorruptedQuestionEntity(q)
+                    if (fixed != q) repairedToSave.add(fixed)
+                    fixed
+                }
+                if (repairedToSave.isNotEmpty()) {
+                    viewModel.repository.insertQuestions(repairedToSave)
+                }
+                questions = cleanedList
             }
         }
     }

@@ -1692,8 +1692,21 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             _quizFlowMode.value = settingsManager.quizFlowMode
             _shuffleQuestions.value = settingsManager.shuffleQuestions
             _sequenceOffset.value = 1
-            _selectedTopic.value = null
             currentExamSettings = null
+            // Automatically repair any previously extracted questions that had $\n...$ or $...<strong>...$ corruption
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val existingQs = repository.getQuestionsForBookSync(bookId)
+                    val repairedQs = existingQs.mapNotNull { q ->
+                        val fixed = com.example.ui.components.sanitizeCorruptedQuestionEntity(q)
+                        if (fixed != q) fixed else null
+                    }
+                    if (repairedQs.isNotEmpty()) {
+                        repository.insertQuestions(repairedQs)
+                    }
+                } catch (_: Exception) {}
+            }
+
             generateQuizQuestions()
             if (lastSearchQuery.isNotBlank()) {
                 searchQuestions(lastSearchQuery)
