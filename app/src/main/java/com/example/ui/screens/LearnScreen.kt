@@ -41,48 +41,81 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
     val allQuestions by viewModel.allBookQuestionSummaries.collectAsState()
     val stats by viewModel.allStats.collectAsState()
     val favoriteTopics by viewModel.favoriteTopics.collectAsState()
-    
-    var expandedPaths by remember { mutableStateOf(setOf<String>()) }
-    var showLearnConfigDialog by remember { mutableStateOf(false) }
     val currentBookId by viewModel.currentBookId.collectAsState()
-    
-    LaunchedEffect(currentBookId) {
-        val saved = viewModel.settingsManager.getExamSettings(currentBookId + "_learn", 0)
-        if (saved != null) {
-            try {
-                viewModel.currentLearnSettings = com.example.data.SharedGson.normal.fromJson(saved, com.example.ui.ExamSettings::class.java)
-            } catch(e: Exception) {}
-        }
+
+    var expandedPaths by remember(currentBookId) {
+        mutableStateOf(viewModel.settingsManager.getLearnExpandedPaths(currentBookId))
+    }
+    var showLearnConfigDialog by remember { mutableStateOf(false) }
+
+    val handleBackToHome = {
+        viewModel.isLearnMode = false
+        viewModel.generateQuizQuestions()
+        onHome()
     }
 
-    
+    androidx.activity.compose.BackHandler {
+        handleBackToHome()
+    }
+
     val toggleExpand = { path: String ->
-        expandedPaths = if (expandedPaths.contains(path)) expandedPaths - path else expandedPaths + path
+        val updated = if (expandedPaths.contains(path)) expandedPaths - path else expandedPaths + path
+        expandedPaths = updated
+        viewModel.settingsManager.setLearnExpandedPaths(currentBookId, updated)
     }
 
     if (showLearnConfigDialog) {
-        var limit by remember { mutableStateOf(viewModel.settingsManager.learnQuestionLimit) }
-        val flow by remember { mutableStateOf(viewModel.settingsManager.learnFlowMode) } // Permanent progressive
-        
-        var shuffleQ by remember { mutableStateOf(viewModel.settingsManager.learnShuffleQuestions) }
-        var shuffleOpts by remember { mutableStateOf(viewModel.settingsManager.learnShuffleOptions) }
-        var useDistractors by remember { mutableStateOf(viewModel.settingsManager.learnUseDistractors) }
-        var questionFlow by remember { mutableStateOf(viewModel.settingsManager.learnQuestionFlow) }
-        
+        var limit by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnQuestionLimit(currentBookId))
+        }
+        var flow by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnFlowMode(currentBookId))
+        }
+        var shuffleQ by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnShuffleQuestions(currentBookId))
+        }
+        var shuffleOpts by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnShuffleOptions(currentBookId))
+        }
+        var useDistractors by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnUseDistractors(currentBookId))
+        }
+        var questionFlow by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getLearnQuestionFlow(currentBookId))
+        }
+
         AlertDialog(
             onDismissRequest = { showLearnConfigDialog = false },
             title = { Text("Learn Settings") },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text("Question Count", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState())) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .horizontalScroll(rememberScrollState())
+                    ) {
                         FilterChip(selected = limit == 10, onClick = { limit = 10 }, label = { Text("10") })
                         FilterChip(selected = limit == 25, onClick = { limit = 25 }, label = { Text("25") })
                         FilterChip(selected = limit == 50, onClick = { limit = 50 }, label = { Text("50") })
                         FilterChip(selected = limit == -1, onClick = { limit = -1 }, label = { Text("All") })
                     }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Question Flow Mode", style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        RadioButton(selected = flow == "progressive", onClick = { flow = "progressive" })
+                        Text("Progressive", modifier = Modifier.clickable { flow = "progressive" }.padding(end = 12.dp))
+                        RadioButton(selected = flow == "sequence", onClick = { flow = "sequence" })
+                        Text("Sequence", modifier = Modifier.clickable { flow = "sequence" })
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text("Advanced Quiz Options", style = MaterialTheme.typography.labelLarge)
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(
@@ -113,23 +146,29 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Scope selection automatically adjusts when you play a topic from the roadmap.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Learn configuration is remembered per book and isolated from Home Start Quiz.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    viewModel.settingsManager.learnQuestionLimit = limit
-                    // permanently progressive
-                    viewModel.settingsManager.learnFlowMode = "progressive"
-                    
-                    viewModel.settingsManager.learnShuffleQuestions = shuffleQ
-                    viewModel.settingsManager.learnShuffleOptions = shuffleOpts
-                    viewModel.settingsManager.learnUseDistractors = useDistractors
-                    viewModel.settingsManager.learnQuestionFlow = questionFlow
-                    
+                    viewModel.settingsManager.setLearnQuestionLimit(currentBookId, limit)
+                    viewModel.settingsManager.setLearnFlowMode(currentBookId, flow)
+                    viewModel.settingsManager.setLearnShuffleQuestions(currentBookId, shuffleQ)
+                    viewModel.settingsManager.setLearnShuffleOptions(currentBookId, shuffleOpts)
+                    viewModel.settingsManager.setLearnUseDistractors(currentBookId, useDistractors)
+                    viewModel.settingsManager.setLearnQuestionFlow(currentBookId, questionFlow)
                     showLearnConfigDialog = false
                 }) {
                     Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLearnConfigDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )
@@ -140,7 +179,7 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
             TopAppBar(
                 title = { Text("Learn Center", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = onHome) {
+                    IconButton(onClick = handleBackToHome) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                     }
                 },
@@ -159,58 +198,52 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         com.example.ui.components.ResponsiveContainer(modifier = Modifier.padding(padding)) {
-        Column(
-            modifier = Modifier
-                
-                .fillMaxSize()
-        ) {
-            Text(
-                text = "Roadmap & Topics",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-            
-            if (topicTreeRoot == null) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
-            } else {
-                val flatList = buildFlatList(topicTreeRoot!!.children.values.toList(), 0, expandedPaths)
-                if (flatList.isEmpty()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Text(
+                    text = "Roadmap & Topics",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+
+                if (topicTreeRoot == null) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No topics available in this book.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 } else {
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        contentPadding = PaddingValues(bottom = 24.dp)
-                    ) {
-                        items(flatList, key = { it.node.path }) { item ->
-                            TopicNodeCard(
-                                node = item.node,
-                                level = item.level,
-                                isExpanded = expandedPaths.contains(item.node.path),
-                                onToggleExpand = { toggleExpand(item.node.path) },
-                                onPlayTopic = {
-                                    viewModel.selectedCategories.value.forEach { c -> viewModel.toggleCategory(c) }
-                                    viewModel.setQuizQuestionsByTopic(item.node)
-                                    viewModel.currentExamSettings = viewModel.currentLearnSettings
-                                    onStartQuiz()
-                                },
-                                isFavorite = favoriteTopics.contains(item.node.path),
-                                onToggleFavorite = { viewModel.toggleFavoriteTopic(item.node.path) },
-                                isCompleted = item.node.masteryLevel == "Mastered"
-                            )
+                    val flatList = buildFlatList(topicTreeRoot!!.children.values.toList(), 0, expandedPaths)
+                    if (flatList.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No topics available in this book.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
+                        ) {
+                            items(flatList, key = { it.node.path }) { item ->
+                                TopicNodeCard(
+                                    node = item.node,
+                                    level = item.level,
+                                    isExpanded = expandedPaths.contains(item.node.path),
+                                    onToggleExpand = { toggleExpand(item.node.path) },
+                                    onPlayTopic = {
+                                        viewModel.startLearnTopicQuiz(item.node) {
+                                            onStartQuiz()
+                                        }
+                                    },
+                                    isFavorite = favoriteTopics.contains(item.node.path),
+                                    onToggleFavorite = { viewModel.toggleFavoriteTopic(item.node.path) },
+                                    isCompleted = item.node.masteryLevel == "Mastered"
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
-    
         }
     }
 }
@@ -257,7 +290,7 @@ fun TopicNodeCard(
                         modifier = Modifier.size(24.dp).padding(end = 8.dp)
                     ) {
                         Icon(
-                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack, // using arrow back and rotating or just KeyboardArrowRight
+                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Expand",
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.background(Color.Transparent).then(
@@ -268,7 +301,7 @@ fun TopicNodeCard(
                 } else {
                     Spacer(modifier = Modifier.width(24.dp))
                 }
-                
+
                 Text(
                     text = node.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -310,12 +343,12 @@ fun TopicNodeCard(
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             // Progress Bar
             val pctExplored = if (node.questionCount > 0) (node.attemptedCount.toFloat() / node.questionCount.toFloat()) else 0f
-            
+
             LinearProgressIndicator(
                 progress = { pctExplored },
                 modifier = Modifier
@@ -325,7 +358,7 @@ fun TopicNodeCard(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
             )
-            
+
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(

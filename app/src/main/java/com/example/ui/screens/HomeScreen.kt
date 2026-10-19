@@ -50,10 +50,10 @@ fun HomeScreen(
     val allCategories = allQuestions.map { it.category }.distinct()
     
     val sequenceOffset by viewModel.sequenceOffset.collectAsState()
-    var mode by remember { mutableStateOf(viewModel.settingsManager.quizMode) }
+    var mode by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getQuizMode(currentBookId)) }
     var showExamConfigDialog by remember { mutableStateOf(false) }
     val flowMode by viewModel.quizFlowMode.collectAsState()
-    var questionTimer by remember { mutableStateOf(viewModel.settingsManager.questionTimerSeconds) }
+    var questionTimer by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getQuestionTimerSeconds(currentBookId)) }
     
     val context = androidx.compose.ui.platform.LocalContext.current
     val fixRequiredMessage by viewModel.fixRequiredMessage.collectAsState()
@@ -108,53 +108,9 @@ fun HomeScreen(
             },
             confirmButton = {
                 Button(onClick = {
-                    coroutineScope.launch {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            val id = identity.id ?: ""
-                            // Move to trash
-                            try {
-                                val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
-                                val quizerDir = java.io.File(basePath, "Quizer")
-                                val trashDir = java.io.File(quizerDir, ".trash")
-                                if (!trashDir.exists()) trashDir.mkdirs()
-                                
-                                val possibleFiles = quizerDir.listFiles { file -> file.isFile && (file.name.endsWith(".qbook") || file.name.endsWith(".js")) } ?: emptyArray()
-                                for (pf in possibleFiles) {
-                                    var match = false
-                                    if (pf.name.endsWith(".qbook")) {
-                                        try {
-                                            java.util.zip.ZipFile(pf).use { zip ->
-                                                val metaEntry = zip.getEntry("book_meta.json")
-                                                if (metaEntry != null) {
-                                                    val reader = zip.getInputStream(metaEntry).bufferedReader()
-                                                    val jsonStr = com.example.data.DataParser.autoFixJson(reader.readText())
-                                                    val m = com.example.data.SharedGson.lenient.fromJson(jsonStr, com.example.data.QBookMeta::class.java)
-                                                    if (m?.id == id) match = true
-                                                }
-                                            }
-                                        } catch(e: Exception){}
-                                    } else {
-                                        if (pf.nameWithoutExtension == id) match = true
-                                    }
-                                    if (match) {
-                                        val timestamp = System.currentTimeMillis()
-                                        pf.copyTo(java.io.File(trashDir, "${timestamp}_${pf.name}"), overwrite = true)
-                                        pf.delete()
-                                    }
-                                }
-                            } catch(e: Exception){}
-                            
-                            viewModel.repository.deleteQuestionsForBook(id)
-                            viewModel.repository.deleteAssociatedDataForBook(id)
-                            viewModel.repository.deleteBook(id)
-                            viewModel.settingsManager.clearBookSettings(id)
-                            if (viewModel.currentBookId.value == id) {
-                                viewModel.selectBook(id, forceRefresh = true)
-                            }
-                        }
-                        viewModel.addCustomBook(context, uri)
-                        showReplaceDialog = null
-                    }
+                    val id = identity.id ?: ""
+                    showReplaceDialog = null
+                    viewModel.replaceBook(context, id, uri)
                 }) { Text("Replace") }
             },
             dismissButton = {
@@ -395,7 +351,7 @@ fun HomeScreen(
     if (showExamConfigDialog) {
         com.example.ui.components.ExamConfigDialog(
             bookId = currentBookId,
-            questionLimit = questionLimit ?: 0,
+            questionLimit = questionLimit ?: questions.size,
             settingsManager = viewModel.settingsManager,
             onDismiss = { showExamConfigDialog = false },
             onStart = { settings ->
@@ -410,7 +366,9 @@ fun HomeScreen(
     }
 
     if (showCategoryDialog) {
-        var expandedPaths by remember { mutableStateOf(setOf<String>()) }
+        var expandedPaths by remember(currentBookId) {
+            mutableStateOf(viewModel.settingsManager.getHomeExpandedPaths(currentBookId))
+        }
         
         AlertDialog(
             onDismissRequest = { showCategoryDialog = false },
@@ -457,7 +415,11 @@ fun HomeScreen(
                             ) {
                                 if (item.node.children.isNotEmpty()) {
                                     IconButton(
-                                        onClick = { expandedPaths = if (isExpanded) expandedPaths - item.node.path else expandedPaths + item.node.path },
+                                        onClick = {
+                                            val updated = if (isExpanded) expandedPaths - item.node.path else expandedPaths + item.node.path
+                                            expandedPaths = updated
+                                            viewModel.settingsManager.setHomeExpandedPaths(currentBookId, updated)
+                                        },
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
@@ -638,26 +600,34 @@ fun HomeScreen(
                                     )
                                     
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    var autoSequence by remember { mutableStateOf(viewModel.settingsManager.autoSequence) }
+                                    var autoSequence by remember(currentBookId) {
+                                        mutableStateOf(viewModel.settingsManager.getAutoSequence(currentBookId))
+                                    }
                                     Checkbox(
                                         checked = autoSequence,
-                                        onCheckedChange = { 
+                                        onCheckedChange = {
                                             autoSequence = it
-                                            viewModel.settingsManager.autoSequence = it
+                                            viewModel.settingsManager.setAutoSequence(currentBookId, it)
                                         }
                                     )
                                     Text("Auto")
                                 }
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.height(16.dp))
                         Text("Mode", style = MaterialTheme.typography.labelLarge)
                         Row {
-                            RadioButton(selected = mode == "practice", onClick = { mode = "practice"; viewModel.settingsManager.quizMode = "practice" })
+                            RadioButton(
+                                selected = mode == "practice",
+                                onClick = { mode = "practice"; viewModel.settingsManager.setQuizMode(currentBookId, "practice") }
+                            )
                             Text("Practice", modifier = Modifier.padding(top = 12.dp, start = 8.dp, end = 16.dp))
-                            
-                            RadioButton(selected = mode == "exam", onClick = { mode = "exam"; viewModel.settingsManager.quizMode = "exam" })
+
+                            RadioButton(
+                                selected = mode == "exam",
+                                onClick = { mode = "exam"; viewModel.settingsManager.setQuizMode(currentBookId, "exam") }
+                            )
                             Text("Exam", modifier = Modifier.padding(top = 12.dp, start = 8.dp))
                         }
                     }
@@ -715,11 +685,11 @@ fun HomeScreen(
                         
                         if (showOptions) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            
+
                             val shuffleQ by viewModel.shuffleQuestions.collectAsState()
-                            var shuffleOpts by remember { mutableStateOf(viewModel.settingsManager.shuffleOptions) }
-                            var useDistractors by remember { mutableStateOf(viewModel.settingsManager.useDistractors) }
-                            var questionFlow by remember { mutableStateOf(viewModel.settingsManager.questionFlow) }
+                            var shuffleOpts by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getShuffleOptions(currentBookId)) }
+                            var useDistractors by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getUseDistractors(currentBookId)) }
+                            var questionFlow by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getQuestionFlow(currentBookId)) }
 
                             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                             androidx.compose.foundation.layout.FlowRow(
@@ -734,36 +704,35 @@ fun HomeScreen(
                                 )
                                 FilterChip(
                                     selected = shuffleOpts,
-                                    onClick = { shuffleOpts = !shuffleOpts; viewModel.settingsManager.shuffleOptions = shuffleOpts },
+                                    onClick = { shuffleOpts = !shuffleOpts; viewModel.settingsManager.setShuffleOptions(currentBookId, shuffleOpts) },
                                     label = { Text("Shuffle Options") }
                                 )
                                 FilterChip(
                                     selected = useDistractors,
-                                    onClick = { useDistractors = !useDistractors; viewModel.settingsManager.useDistractors = useDistractors },
+                                    onClick = { useDistractors = !useDistractors; viewModel.settingsManager.setUseDistractors(currentBookId, useDistractors) },
                                     label = { Text("Dynamic Distractors") }
                                 )
                                 FilterChip(
                                     selected = questionFlow,
-                                    onClick = { questionFlow = !questionFlow; viewModel.settingsManager.questionFlow = questionFlow },
+                                    onClick = { questionFlow = !questionFlow; viewModel.settingsManager.setQuestionFlow(currentBookId, questionFlow) },
                                     label = { Text("Question Flow") }
                                 )
                             }
 
+                            var autoNextSeconds by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getAutoNextSeconds(currentBookId)) }
 
-                            var autoNextSeconds by remember { mutableStateOf(viewModel.settingsManager.autoNextSeconds) }
-                            
                             if (mode != "exam") {
-                                var correctMark by remember { mutableStateOf(viewModel.settingsManager.correctMark) }
-                                var wrongMark by remember { mutableStateOf(viewModel.settingsManager.wrongMark) }
-                                
+                                var correctMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getCorrectMark(currentBookId)) }
+                                var wrongMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getWrongMark(currentBookId)) }
+
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("Marking Scheme", style = MaterialTheme.typography.labelLarge)
                                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     val correctMarks = listOf(1f, 2f, 3f, 4f)
                                     correctMarks.forEach { m ->
                                         FilterChip(
-                                            selected = correctMark == m, 
-                                            onClick = { correctMark = m; viewModel.settingsManager.correctMark = m; }, 
+                                            selected = correctMark == m,
+                                            onClick = { correctMark = m; viewModel.settingsManager.setCorrectMark(currentBookId, m) },
                                             label = { Text("+$m") }
                                         )
                                     }
@@ -771,8 +740,8 @@ fun HomeScreen(
                                     val wrongMarks = listOf(0f, 0.25f, 0.5f, 0.66f, 1f)
                                     wrongMarks.forEach { m ->
                                         FilterChip(
-                                            selected = wrongMark == m, 
-                                            onClick = { wrongMark = m; viewModel.settingsManager.wrongMark = m; }, 
+                                            selected = wrongMark == m,
+                                            onClick = { wrongMark = m; viewModel.settingsManager.setWrongMark(currentBookId, m) },
                                             label = { Text("-$m") }
                                         )
                                     }
@@ -786,13 +755,13 @@ fun HomeScreen(
                                     autoNexts.forEach { t ->
                                         FilterChip(
                                             selected = autoNextSeconds == t,
-                                            onClick = { autoNextSeconds = t; viewModel.settingsManager.autoNextSeconds = t },
+                                            onClick = { autoNextSeconds = t; viewModel.settingsManager.setAutoNextSeconds(currentBookId, t) },
                                             label = { Text(if (t == 0) "Off" else "${t}s") }
                                         )
                                     }
                                 }
                             }
-                            
+
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Per Question:", modifier = Modifier.padding(top = 10.dp, end = 4.dp), style = MaterialTheme.typography.bodyMedium)
@@ -800,16 +769,16 @@ fun HomeScreen(
                                 qTimes.forEach { t ->
                                     FilterChip(
                                         selected = questionTimer == t,
-                                        onClick = { 
-                                            if (questionTimer == 0 && t > 0) { 
+                                        onClick = {
+                                            if (questionTimer == 0 && t > 0) {
                                                 questionFlow = true
-                                                viewModel.settingsManager.questionFlow = true 
+                                                viewModel.settingsManager.setQuestionFlow(currentBookId, true)
                                             } else if (t == 0) {
                                                 questionFlow = false
-                                                viewModel.settingsManager.questionFlow = false
+                                                viewModel.settingsManager.setQuestionFlow(currentBookId, false)
                                             }
                                             questionTimer = t
-                                            viewModel.settingsManager.questionTimerSeconds = t 
+                                            viewModel.settingsManager.setQuestionTimerSeconds(currentBookId, t)
                                         },
                                         label = { Text(if (t == 0) "Off" else "${t}s") }
                                     )
@@ -817,19 +786,19 @@ fun HomeScreen(
                                 var customTime by remember(questionTimer) { mutableStateOf(if (qTimes.contains(questionTimer)) "" else questionTimer.toString()) }
                                 OutlinedTextField(
                                     value = customTime,
-                                    onValueChange = { newVal -> 
+                                    onValueChange = { newVal ->
                                         val filtered = newVal.filter { it.isDigit() }
                                         customTime = filtered
-                                        filtered.toIntOrNull()?.let { 
+                                        filtered.toIntOrNull()?.let {
                                             if (questionTimer == 0 && it > 0) {
                                                 questionFlow = true
-                                                viewModel.settingsManager.questionFlow = true
+                                                viewModel.settingsManager.setQuestionFlow(currentBookId, true)
                                             } else if (it == 0) {
                                                 questionFlow = false
-                                                viewModel.settingsManager.questionFlow = false
+                                                viewModel.settingsManager.setQuestionFlow(currentBookId, false)
                                             }
                                             questionTimer = it
-                                            viewModel.settingsManager.questionTimerSeconds = it 
+                                            viewModel.settingsManager.setQuestionTimerSeconds(currentBookId, it)
                                         }
                                     },
                                     placeholder = { Text("Custom") },
@@ -837,9 +806,7 @@ fun HomeScreen(
                                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Done)
                                 )
-                                
                             }
-
                         }
                     }
                 }

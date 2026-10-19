@@ -186,6 +186,10 @@ object LatexDrawableCache {
         cache.put(key, created)
         return created
     }
+
+    fun clearCache() {
+        cache.evictAll()
+    }
 }
 
 private const val KNOWN_LATEX_COMMAND_NAMES =
@@ -1268,7 +1272,12 @@ private fun transformNonMathLineBreaks(text: String): String {
 
 object MathFormattingCache {
     private val formattedTextCache = android.util.LruCache<String, String>(1000)
-    private val spannableCache = android.util.LruCache<Triple<String, Int, Int>, Spannable>(600)
+    private val spannableCache = android.util.LruCache<Triple<String, Int, Int>, SpannableString>(600)
+
+    fun clearCache() {
+        formattedTextCache.evictAll()
+        spannableCache.evictAll()
+    }
 
     fun getFormattedText(raw: String): String {
         if (raw.isBlank()) return raw
@@ -1279,6 +1288,11 @@ object MathFormattingCache {
         return formatted
     }
 
+    /**
+     * Caches the clean base SpannableString produced by Markwon and ALWAYS returns a fresh
+     * SpannableString copy so caller-added spans (such as search BackgroundColorSpans or
+     * image ClickableSpans) never mutate or pollute the cached template.
+     */
     fun getSpannable(
         markwon: Markwon,
         processedText: String,
@@ -1287,12 +1301,14 @@ object MathFormattingCache {
     ): Spannable {
         val key = Triple(processedText, markwonHash, textColorArgb)
         val cached = spannableCache.get(key)
-        if (cached != null) return cached
-        
+        if (cached != null) {
+            return SpannableString(cached)
+        }
+
         val markdownNode = markwon.toMarkdown(processedText)
-        val spannable = if (markdownNode is Spannable) SpannableString(markdownNode) else SpannableString(markdownNode)
-        spannableCache.put(key, spannable)
-        return spannable
+        val cleanBase = SpannableString(markdownNode)
+        spannableCache.put(key, cleanBase)
+        return SpannableString(cleanBase)
     }
 }
 
@@ -1327,6 +1343,7 @@ private class RichTextView(context: android.content.Context) : TextView(context)
     val touchBridge = RichTextTouchBridge()
     val selectionCallback = CustomSelectionActionModeCallback().also { it.textView = this }
     var parsedSpannableTag: Any? = null
+    var boundSearchQuery: String = ""
 
     private val tapDetector = android.view.GestureDetector(
         context,
@@ -1395,6 +1412,7 @@ private fun bindRichTextView(
     resolvedCustomItems: List<CustomTextMenuItem>,
     markwon: Markwon,
     spannableToDisplay: Spannable,
+    searchQuery: String,
     onClick: (() -> Unit)?,
     onClickWithCoords: ((Float, Float) -> Unit)?
 ) {
@@ -1416,9 +1434,10 @@ private fun bindRichTextView(
     textView.selectionCallback.customItems = resolvedCustomItems
     textView.customSelectionActionModeCallback = textView.selectionCallback
 
-    if (textView.parsedSpannableTag != spannableToDisplay) {
+    if (textView.parsedSpannableTag !== spannableToDisplay || textView.boundSearchQuery != searchQuery) {
         markwon.setParsedMarkdown(textView, spannableToDisplay)
         textView.parsedSpannableTag = spannableToDisplay
+        textView.boundSearchQuery = searchQuery
     }
 
     // Apply scrollability and selectability AFTER markwon.setParsedMarkdown so Markwon plugins
@@ -1567,6 +1586,7 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
+                    searchQuery = searchQuery,
                     onClick = onClick,
                     onClickWithCoords = onClickWithCoords
                 )
@@ -1584,6 +1604,7 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
+                    searchQuery = searchQuery,
                     onClick = onClick,
                     onClickWithCoords = onClickWithCoords
                 )
@@ -1596,6 +1617,7 @@ fun RichText(
                     textView.touchBridge.onClickWithCoords = null
                     textView.touchBridge.hadSelectionOnDown = false
                     textView.parsedSpannableTag = null
+                    textView.boundSearchQuery = ""
                     textView.selectionCallback.customItems = emptyList()
                 }
                 textView.customSelectionActionModeCallback = null

@@ -146,10 +146,7 @@ class QuizRepository(context: Context) {
     suspend fun deleteBook(bookId: String) {
         db.bookDao().deleteBook(bookId)
         db.questionDao().deleteQuestionsForBook(bookId)
-        db.statDao().deleteStatsForBook(bookId)
-        db.historyDao().deleteHistoryForBook(bookId)
-        db.bookmarkDao().deleteBookmarksForBook(bookId)
-        db.learningPlanDao().deleteLearningPlanForBook(bookId)
+        deleteAssociatedDataForBook(bookId)
     }
 
     suspend fun deleteQuestionsInRange(bookId: String, startId: Long, endId: Long) {
@@ -167,6 +164,9 @@ class QuizRepository(context: Context) {
         db.historyDao().deleteHistoryForBook(bookId)
         db.bookmarkDao().deleteBookmarksForBook(bookId)
         db.learningPlanDao().deleteLearningPlanForBook(bookId)
+        db.chatDao().clearChatsForBook(bookId)
+        db.chatDao().clearChatsForBook("${bookId}_read")
+        db.chatDao().clearChatsForBook("${bookId}_edit")
     }
 
     suspend fun clearDatabase() {

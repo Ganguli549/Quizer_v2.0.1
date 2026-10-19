@@ -850,24 +850,24 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     private val _onlyBookmarks = MutableStateFlow(false)
     val onlyBookmarks = _onlyBookmarks.asStateFlow()
 
-    private val _quizFlowMode = MutableStateFlow(settingsManager.quizFlowMode)
+    private val _quizFlowMode = MutableStateFlow(settingsManager.getQuizFlowMode(initialBookId))
     val quizFlowMode = _quizFlowMode.asStateFlow()
 
     fun setQuizFlowMode(mode: String) {
         if (_quizFlowMode.value != mode) {
             _quizFlowMode.value = mode
-            settingsManager.quizFlowMode = mode
+            settingsManager.setQuizFlowMode(_currentBookId.value, mode)
             generateQuizQuestions()
         }
     }
 
-    private val _shuffleQuestions = MutableStateFlow(settingsManager.shuffleQuestions)
+    private val _shuffleQuestions = MutableStateFlow(settingsManager.getShuffleQuestions(initialBookId))
     val shuffleQuestions = _shuffleQuestions.asStateFlow()
 
     fun setShuffleQuestions(shuffle: Boolean) {
         if (_shuffleQuestions.value != shuffle) {
             _shuffleQuestions.value = shuffle
-            settingsManager.shuffleQuestions = shuffle
+            settingsManager.setShuffleQuestions(_currentBookId.value, shuffle)
             generateQuizQuestions()
         }
     }
@@ -880,8 +880,10 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     fun setQuizQuestionsForBookmarks() {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        resetTransientQuizSessionState()
         val bookmarkedIds = bookmarks.value.map { it.questionId }
         val allQs = _allBookQuestionSummaries.value
         val bookmarkedQs = allQs.filter { it.id in bookmarkedIds }
@@ -1084,19 +1086,37 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     
     private val _selectedTopic = MutableStateFlow<TopicNode?>(null)
 
+    fun resetTransientQuizSessionState() {
+        activeCurrentIndex = 0
+        activeQTimes = mutableMapOf()
+        activeSelectedAnswers = mutableMapOf()
+        activeLockedAnswers = mutableMapOf()
+        activeTimeRemainingMs = -1L
+        activeQuizSessionId = System.currentTimeMillis()
+    }
+
     fun setQuizQuestionsByTopic(topic: TopicNode) {
+        startLearnTopicQuiz(topic, onReady = null)
+    }
+
+    fun startLearnTopicQuiz(topic: TopicNode, onReady: (() -> Unit)? = null) {
+        isLearnMode = true
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        currentPracticeMistakesParentId = null
+        resetTransientQuizSessionState()
         _selectedTopic.value = topic
         _onlyBookmarks.value = false
         val allQs = _allBookQuestionSummaries.value
         val questionsInTopic = allQs.filter { it.id in topic.questionIds }
-        applySortingAndLimitToQuestions(questionsInTopic)
+        applySortingAndLimitToQuestions(questionsInTopic, onReady)
     }
 
     fun setQuizQuestionsForDailyRevision() {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        resetTransientQuizSessionState()
         _selectedTopic.value = null
         _onlyBookmarks.value = false
         val now = System.currentTimeMillis()
@@ -1110,8 +1130,10 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     fun setQuizQuestionsForWeakTopics() {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        resetTransientQuizSessionState()
         _selectedTopic.value = null
         _onlyBookmarks.value = false
         val statsMap = allStats.value.associateBy { it.questionId }
@@ -1124,8 +1146,10 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     fun setQuizQuestionsForCritical() {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        resetTransientQuizSessionState()
         _selectedTopic.value = null
         _onlyBookmarks.value = false
         val now = System.currentTimeMillis()
@@ -1159,29 +1183,45 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         return QuestionPoolProcessor.process(pool, flowMode, isShuffle, limit, offset, statsMap)
     }
 
-    private fun applySortingAndLimitToQuestions(baseList: List<com.example.data.QuestionSummary>) {
-        val currentFlow = if (isLearnMode) settingsManager.learnFlowMode else _quizFlowMode.value
-        val currentShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else _shuffleQuestions.value
-        val currentLimit = if (isLearnMode) settingsManager.learnQuestionLimit else -1
-        
-        val filtered = processQuestionPool(baseList, currentFlow, currentShuffle, currentLimit)
+    private fun applySortingAndLimitToQuestions(
+        baseList: List<com.example.data.QuestionSummary>,
+        onReady: (() -> Unit)? = null
+    ) {
+        val bookId = _currentBookId.value
+        val currentFlow = if (isLearnMode) settingsManager.getLearnFlowMode(bookId) else _quizFlowMode.value
+        val currentShuffle = if (isLearnMode) settingsManager.getLearnShuffleQuestions(bookId) else _shuffleQuestions.value
+        val rawLearnLimit = settingsManager.getLearnQuestionLimit(bookId)
+        val currentLimit: Int? = if (isLearnMode) {
+            if (rawLearnLimit > 0) rawLearnLimit else null
+        } else {
+            null
+        }
 
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        quizGenJob?.cancel()
+        quizGenJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val filtered = processQuestionPool(baseList, currentFlow, currentShuffle, currentLimit)
             val idsToFetch = filtered.map { it.id }
             val indexMap = idsToFetch.withIndex().associate { it.value to it.index }
-            val fullQuestions = repository.getQuestionsByBookAndIds(_currentBookId.value, idsToFetch).resolveHeaders()
+            val fullQuestions = repository.getQuestionsByBookAndIds(bookId, idsToFetch).resolveHeaders()
             if (isActive) {
                 _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
                 activeQuizSessionId = System.currentTimeMillis()
-            } // Preserve order
+                if (onReady != null) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        onReady.invoke()
+                    }
+                }
+            }
         }
     }
-    
-    private val _sequenceOffset = MutableStateFlow(1)
+
+    private val _sequenceOffset = MutableStateFlow(settingsManager.getSequenceOffset(initialBookId))
     val sequenceOffset = _sequenceOffset.asStateFlow()
-    
+
     fun setSequenceOffset(offset: Int) {
-        _sequenceOffset.value = offset
+        val coerced = offset.coerceAtLeast(1)
+        _sequenceOffset.value = coerced
+        settingsManager.setSequenceOffset(_currentBookId.value, coerced)
         generateQuizQuestions()
     }
     
@@ -1231,8 +1271,8 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 allQs
             }
             
-            val currentFlowMode = if (isLearnMode) settingsManager.learnFlowMode else _quizFlowMode.value
-            val isShuffle = if (isLearnMode) settingsManager.learnShuffleQuestions else _shuffleQuestions.value
+            val currentFlowMode = _quizFlowMode.value
+            val isShuffle = _shuffleQuestions.value
             
             filtered = processQuestionPool(filtered, currentFlowMode, isShuffle, limit, offset)
 
@@ -1247,8 +1287,10 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
     
     fun setQuizQuestionsByIds(bookId: String, ids: List<Long>) {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentExamSettings = null
+        resetTransientQuizSessionState()
         _selectedTopic.value = null
         _onlyBookmarks.value = false
         quizGenJob?.cancel()
@@ -1263,9 +1305,11 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     fun practiceWrongQuiz(historyId: Long?) {
+        isLearnMode = false
         isActiveQuizStandardSequence = false
         currentPracticeMistakesParentId = historyId
         currentExamSettings = null
+        resetTransientQuizSessionState()
         val entry = history.value.find { it.historyId == historyId } ?: return
         val qIdsRaw = com.example.data.SharedGson.normal.fromJson(entry.questionIds, Array<Double>::class.java).map { it.toLong() }
         val gson = com.example.data.SharedGson.normal
@@ -1380,7 +1424,8 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     var activeTimeRemainingMs = -1L
 
     fun saveActiveQuizState(currentIndex: Int, selectedAnswers: Map<Int, Set<Int>>, lockedAnswers: Map<Int, Boolean>, timeRemainingMs: Long, qTimes: Map<Int, Long> = emptyMap()) {
-        val state = mapOf(
+        if (isLearnMode || currentPracticeMistakesParentId != null) return
+        val state = mutableMapOf<String, Any>(
             "bookId" to currentBookId.value,
             "questions" to _quizQuestions.value.map { it.id },
             "currentIndex" to currentIndex,
@@ -1388,8 +1433,12 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             "lockedAnswers" to lockedAnswers,
             "timeRemainingMs" to timeRemainingMs,
             "qTimes" to qTimes,
-            "sessionId" to activeQuizSessionId
+            "sessionId" to activeQuizSessionId,
+            "quizMode" to settingsManager.getQuizMode(currentBookId.value)
         )
+        currentExamSettings?.let {
+            state["examSettingsJson"] = com.example.data.SharedGson.normal.toJson(it)
+        }
         settingsManager.setActiveQuizState(currentBookId.value, com.example.data.SharedGson.normal.toJson(state))
         _activeQuizTrigger.value++
     }
@@ -1459,12 +1508,18 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 
                 activeTimeRemainingMs = (state["timeRemainingMs"] as Double).toLong()
                 activeQuizSessionId = (state["sessionId"] as? Double)?.toLong() ?: 0L
-                if (settingsManager.quizMode == "exam") {
+                val savedQuizMode = (state["quizMode"] as? String) ?: settingsManager.getQuizMode(bookId)
+                val savedExamJson = state["examSettingsJson"] as? String
+                if (savedExamJson != null) {
+                    currentExamSettings = com.example.data.SharedGson.normal.fromJson(savedExamJson, ExamSettings::class.java)
+                } else if (savedQuizMode == "exam") {
                     val limit = qIds.size
                     val settingsStr = settingsManager.getExamSettings(bookId, limit)
                     if (settingsStr != null) {
                         currentExamSettings = com.example.data.SharedGson.normal.fromJson(settingsStr, ExamSettings::class.java)
                     }
+                } else {
+                    currentExamSettings = null
                 }
                 return true
             } catch (e: Exception) {
@@ -1536,17 +1591,18 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     private val _learningPlan = MutableStateFlow<LearningPlanEntity?>(null)
     val learningPlan = _learningPlan.asStateFlow()
 
-    private val _favoriteTopics = MutableStateFlow(settingsManager.favoriteTopics)
+    private val _favoriteTopics = MutableStateFlow(settingsManager.getFavoriteTopics(initialBookId))
     val favoriteTopics = _favoriteTopics.asStateFlow()
 
     fun toggleFavoriteTopic(path: String) {
-        val currentFavorites = settingsManager.favoriteTopics.toMutableSet()
+        val bookId = _currentBookId.value
+        val currentFavorites = settingsManager.getFavoriteTopics(bookId).toMutableSet()
         if (currentFavorites.contains(path)) {
             currentFavorites.remove(path)
         } else {
             currentFavorites.add(path)
         }
-        settingsManager.favoriteTopics = currentFavorites
+        settingsManager.setFavoriteTopics(bookId, currentFavorites)
         _favoriteTopics.value = currentFavorites
     }
 
@@ -1689,9 +1745,12 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             _questionLimit.value = if (limit == 0) null else limit
             
             _onlyBookmarks.value = false
-            _quizFlowMode.value = settingsManager.quizFlowMode
-            _shuffleQuestions.value = settingsManager.shuffleQuestions
-            _sequenceOffset.value = 1
+            _quizFlowMode.value = settingsManager.getQuizFlowMode(bookId)
+            _shuffleQuestions.value = settingsManager.getShuffleQuestions(bookId)
+            _sequenceOffset.value = settingsManager.getSequenceOffset(bookId)
+            _favoriteTopics.value = settingsManager.getFavoriteTopics(bookId)
+            _selectedTopic.value = null
+            isLearnMode = false
             currentExamSettings = null
             // Automatically repair any previously extracted questions that had $\n...$ or $...<strong>...$ corruption
             viewModelScope.launch(Dispatchers.IO) {
@@ -1845,18 +1904,18 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 }
             }
 
-            // Advance sequence if autoSequence is on, but ONLY if not practice mistakes
-            if (isActiveQuizStandardSequence && parentId == null && settingsManager.autoSequence && settingsManager.quizFlowMode == "sequence") {
+            // Advance sequence if autoSequence is on, but ONLY if not practice mistakes and not Learn Mode
+            if (isActiveQuizStandardSequence && !isLearnMode && parentId == null &&
+                settingsManager.getAutoSequence(bookId) && settingsManager.getQuizFlowMode(bookId) == "sequence"
+            ) {
                 val limit = _questionLimit.value
                 val offset = _sequenceOffset.value
                 if (limit != null) {
                     val nextOffset = offset + limit
                     val maxValue = _allBookQuestionSummaries.value.size
-                    if (nextOffset <= maxValue) {
-                        _sequenceOffset.value = nextOffset
-                    } else {
-                        _sequenceOffset.value = 1
-                    }
+                    val updatedOffset = if (nextOffset <= maxValue) nextOffset else 1
+                    _sequenceOffset.value = updatedOffset
+                    settingsManager.setSequenceOffset(bookId, updatedOffset)
                 }
             }
 
@@ -1896,79 +1955,124 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         _verificationMessage.value = "Import cancelled due to syntax errors."
     }
 
+    private fun clearBookRuntimeCaches(context: android.content.Context, bookId: String) {
+        val contextIds = listOf(bookId, "${bookId}_read", "${bookId}_edit")
+        for (cid in contextIds) {
+            activeAiTasks.remove(cid)
+            cancelNotification(context, cid.hashCode())
+            aiProcessingJobs[cid]?.cancel()
+            aiProcessingJobs.remove(cid)
+        }
+        _chatHistory.value = _chatHistory.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+        _pendingUpdates.value = _pendingUpdates.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+        _sessionAttachments.value = _sessionAttachments.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+        _aiPromptTexts.value = _aiPromptTexts.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+        _aiProcessingStatus.value = _aiProcessingStatus.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+        _aiProcessingProgress.value = _aiProcessingProgress.value.toMutableMap().apply { contextIds.forEach { remove(it) } }
+
+        com.example.ui.components.MathFormattingCache.clearCache()
+        com.example.ui.components.LatexDrawableCache.clearCache()
+    }
+
+    private suspend fun purgeBookDataAndCaches(context: android.content.Context, bookId: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                val quizerDir = java.io.File(basePath, "Quizer")
+                val bookDir = java.io.File(quizerDir, bookId)
+                val trashDir = java.io.File(quizerDir, ".trash")
+
+                if (!trashDir.exists()) trashDir.mkdirs()
+                val dateFormat = java.text.SimpleDateFormat("yy.MM.dd_HH.mm.ss", java.util.Locale.getDefault())
+                val timestamp = dateFormat.format(java.util.Date())
+
+                val possibleFiles = quizerDir.listFiles { file ->
+                    file.isFile && (file.name.endsWith(".qbook", ignoreCase = true) || file.name.endsWith(".js", ignoreCase = true))
+                } ?: emptyArray()
+
+                for (pf in possibleFiles) {
+                    var match = false
+                    if (pf.name.endsWith(".qbook", ignoreCase = true)) {
+                        try {
+                            java.util.zip.ZipFile(pf).use { zip ->
+                                val metaEntry = zip.getEntry("book_meta.json")
+                                if (metaEntry != null) {
+                                    val reader = zip.getInputStream(metaEntry).bufferedReader()
+                                    val jsonStr = com.example.data.DataParser.autoFixJson(reader.readText())
+                                    val meta = com.example.data.SharedGson.lenient.fromJson(jsonStr, com.example.data.QBookMeta::class.java)
+                                    if (meta?.id == bookId) match = true
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    } else if (pf.nameWithoutExtension == bookId) {
+                        match = true
+                    }
+
+                    if (match) {
+                        pf.copyTo(java.io.File(trashDir, "${timestamp}_${pf.name}"), overwrite = true)
+                        pf.delete()
+                    }
+                }
+
+                // Permanently delete extracted book folder (images, backup_questions.json), RestorePoints, and Updates
+                if (bookDir.exists()) {
+                    bookDir.deleteRecursively()
+                }
+                val restoreDir = java.io.File(quizerDir, "RestorePoints/$bookId")
+                if (restoreDir.exists()) {
+                    restoreDir.deleteRecursively()
+                }
+                val updatesDir = java.io.File(quizerDir, "Updates")
+                if (updatesDir.exists()) {
+                    updatesDir.listFiles { f -> f.name.startsWith("${bookId}_") }?.forEach { it.delete() }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            repository.deleteBook(bookId)
+            repository.deleteQuestionsForBook(bookId)
+            repository.deleteAssociatedDataForBook(bookId)
+            settingsManager.clearBookSettings(bookId)
+        }
+
+        clearBookRuntimeCaches(context, bookId)
+        _activeQuizTrigger.value++
+    }
+
     fun deleteBook(context: android.content.Context, bookId: String) {
         viewModelScope.launch {
             val updatedRemoved = settingsManager.removedBooks.toMutableSet()
             updatedRemoved.add(bookId)
             settingsManager.removedBooks = updatedRemoved
-            
-            // Move core book files to .trash, but permanently delete cache/restore points
-            withContext(Dispatchers.IO) {
-                try {
-                    val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
-                    val quizerDir = java.io.File(basePath, "Quizer")
-                    val bookDir = java.io.File(quizerDir, bookId)
-                    val trashDir = java.io.File(quizerDir, ".trash")
-                    
-                    if (!trashDir.exists()) trashDir.mkdirs()
-                    val dateFormat = java.text.SimpleDateFormat("yy.MM.dd_HH.mm.ss", java.util.Locale.getDefault())
-                    val timestamp = dateFormat.format(java.util.Date())
-                    
-                    val candidateFiles = mutableListOf<java.io.File>()
-                    if (quizerDir.exists()) {
-                        quizerDir.listFiles { f -> f.isFile && f.name.endsWith(".qbook") }?.let { candidateFiles.addAll(it) }
-                    }
 
-                    for (pf in candidateFiles) {
-                        var match = (pf.name == "${bookId}.qbook" || pf.nameWithoutExtension == bookId)
-                        if (!match) {
-                            try {
-                                val identity = com.example.data.DataParser.peekIdentity(context, android.net.Uri.fromFile(pf))
-                                if (identity?.id == bookId) match = true
-                            } catch (e: Exception) {}
-                        }
-                        if (match) {
-                            try {
-                                pf.copyTo(java.io.File(trashDir, "${timestamp}_${pf.name}"), overwrite = true)
-                                pf.delete()
-                            } catch (e: Exception) {}
-                        }
-                    }
+            purgeBookDataAndCaches(context, bookId)
 
-                    try {
-                        if (bookDir.exists()) {
-                            bookDir.deleteRecursively()
-                        }
-                        val restoreDir = java.io.File(quizerDir, "RestorePoints/$bookId")
-                        if (restoreDir.exists()) {
-                            restoreDir.deleteRecursively()
-                        }
-                        val updatesDir = java.io.File(quizerDir, "Updates")
-                        if (updatesDir.exists()) {
-                            updatesDir.listFiles { f -> f.name.startsWith("${bookId}_") }?.forEach { it.delete() }
-                        }
-                    } catch(e: Exception) {}
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-            
-            repository.deleteBook(bookId)
-            repository.deleteQuestionsForBook(bookId)
-            repository.deleteAssociatedDataForBook(bookId)
-            settingsManager.clearBookSettings(bookId)
             if (currentBookId.value == bookId) {
-                val newBooks = repository.getAllBooksSync()
+                val newBooks = withContext(Dispatchers.IO) { repository.getAllBooksSync() }
                 if (newBooks.isNotEmpty()) {
-                    selectBook(newBooks.first().id)
+                    selectBook(newBooks.first().id, forceRefresh = true)
                 } else {
                     _currentBookId.value = ""
                     settingsManager.lastSelectedBookId = ""
                     _allBookQuestionSummaries.value = emptyList()
                     _topicTreeRoot.value = null
+                    _selectedPaths.value = emptySet()
+                    _selectedCategories.value = emptySet()
+                    _questionLimit.value = null
+                    _favoriteTopics.value = emptySet()
+                    currentExamSettings = null
                     generateQuizQuestions()
                 }
             }
+        }
+    }
+
+    fun replaceBook(context: android.content.Context, bookId: String, uri: android.net.Uri) {
+        viewModelScope.launch {
+            purgeBookDataAndCaches(context, bookId)
+            _currentBookId.value = bookId
+            addCustomBook(context, uri)
         }
     }
 

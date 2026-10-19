@@ -1,0 +1,6 @@
+{
+  "name": "Quizer",
+  "description": "Quizer - A comprehensive quiz, reading, and learning application",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

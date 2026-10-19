@@ -414,6 +414,10 @@ fun ReadBookScreen(
     
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    androidx.activity.compose.BackHandler(enabled = isSearchActive) {
+        isSearchActive = false
+        searchQuery = ""
+    }
     
     val listState = remember(currentBookId) {
         androidx.compose.foundation.lazy.LazyListState(
@@ -550,7 +554,19 @@ fun ReadBookScreen(
 
     LaunchedEffect(currentBookId) {
         if (currentBookId != "") {
-            allQuestions = viewModel.repository.getQuestionsForBookSync(currentBookId).resolveHeaders()
+            allQuestions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val rawList = viewModel.repository.getQuestionsForBookSync(currentBookId)
+                val repairedToSave = mutableListOf<QuestionEntity>()
+                val cleanedList = rawList.map { q ->
+                    val fixed = com.example.ui.components.sanitizeCorruptedQuestionEntity(q)
+                    if (fixed != q) repairedToSave.add(fixed)
+                    fixed
+                }
+                if (repairedToSave.isNotEmpty()) {
+                    viewModel.repository.insertQuestions(repairedToSave)
+                }
+                cleanedList.resolveHeaders()
+            }
             currentBook = viewModel.repository.getBookSync(currentBookId)
             try {
                 val type = object : TypeToken<List<String>>() {}.type

@@ -91,29 +91,51 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
     }
 
     val currentQuestion = questions[currentIndex]
-    val isPracticeMode = viewModel.settingsManager.quizMode == "practice" || viewModel.currentPracticeMistakesParentId != null
-    val currentUseDistractors = if (viewModel.isLearnMode) viewModel.settingsManager.learnUseDistractors else viewModel.settingsManager.useDistractors
-    val currentShuffleOptions = if (viewModel.isLearnMode) viewModel.settingsManager.learnShuffleOptions else viewModel.settingsManager.shuffleOptions
-    val currentQuestionFlow = if (viewModel.isLearnMode) viewModel.settingsManager.learnQuestionFlow else viewModel.settingsManager.questionFlow
-    var timeRemainingMs by remember { 
-        mutableStateOf(if (viewModel.activeTimeRemainingMs >= 0) viewModel.activeTimeRemainingMs else {
-            val examSecs = viewModel.currentExamSettings?.let {
-                when (it.timerPreset) {
-                    "Off" -> 0
-                    "15m" -> 15 * 60
-                    "30m" -> 30 * 60
-                    "60m" -> 60 * 60
-                    "Custom" -> it.customTimerMinutes * 60
-                    "Auto" -> if (viewModel.questionLimit.value == null || viewModel.questionLimit.value == 0) 0 else (viewModel.questionLimit.value!! * 36)
-                    else -> 0
-                }
-            }
-            val secs = examSecs ?: (viewModel.settingsManager.timerMinutes * 60)
-            if (!isPracticeMode && secs > 0) secs * 1000L else 0L
-        }) 
+    val bookId = currentQuestion.bookId
+    val isPracticeMode = viewModel.isLearnMode ||
+        viewModel.settingsManager.getQuizMode(bookId) == "practice" ||
+        viewModel.currentPracticeMistakesParentId != null
+    val currentUseDistractors = if (viewModel.isLearnMode) {
+        viewModel.settingsManager.getLearnUseDistractors(bookId)
+    } else {
+        viewModel.settingsManager.getUseDistractors(bookId)
     }
-    val questionTimerTarget = viewModel.settingsManager.questionTimerSeconds * 1000L
-    var questionTimeRemainingMs by remember(currentIndex) { 
+    val currentShuffleOptions = if (viewModel.isLearnMode) {
+        viewModel.settingsManager.getLearnShuffleOptions(bookId)
+    } else {
+        viewModel.settingsManager.getShuffleOptions(bookId)
+    }
+    val currentQuestionFlow = if (viewModel.isLearnMode) {
+        viewModel.settingsManager.getLearnQuestionFlow(bookId)
+    } else {
+        viewModel.settingsManager.getQuestionFlow(bookId)
+    }
+    val effectiveExamQuestionCount = viewModel.questionLimit.value?.takeIf { it > 0 } ?: questions.size
+    var timeRemainingMs by remember {
+        mutableStateOf(
+            if (viewModel.activeTimeRemainingMs >= 0) viewModel.activeTimeRemainingMs else {
+                val examSecs = viewModel.currentExamSettings?.let {
+                    when (it.timerPreset) {
+                        "Off" -> 0
+                        "15m" -> 15 * 60
+                        "30m" -> 30 * 60
+                        "60m" -> 60 * 60
+                        "Custom" -> it.customTimerMinutes * 60
+                        "Auto" -> effectiveExamQuestionCount * 36
+                        else -> 0
+                    }
+                }
+                val secs = examSecs ?: (viewModel.settingsManager.timerMinutes * 60)
+                if (!isPracticeMode && secs > 0) secs * 1000L else 0L
+            }
+        )
+    }
+    val questionTimerTarget = if (viewModel.isLearnMode) {
+        0L
+    } else {
+        viewModel.settingsManager.getQuestionTimerSeconds(bookId) * 1000L
+    }
+    var questionTimeRemainingMs by remember(currentIndex) {
         mutableStateOf(if (questionTimerTarget > 0 && lockedAnswers[currentIndex] != true) questionTimerTarget else 0L)
     }
 
@@ -122,22 +144,28 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
         showCancelDialog = true
     }
 
-
-
     DisposableEffect(Unit) {
         onDispose {
-            if (!isSubmitted.value) {
+            if (!isSubmitted.value && !viewModel.isLearnMode && viewModel.currentPracticeMistakesParentId == null) {
                 viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value)
             }
         }
     }
-    
+
     val submitQuiz = {
         if (!isSubmitted.value) {
             isSubmitted.value = true
             if (hapticEnabled) viewModel.soundHapticManager.hapticQuizComplete()
-            val correctMark = viewModel.currentExamSettings?.customCorrectMarks ?: viewModel.settingsManager.correctMark
-        val wrongMark = viewModel.currentExamSettings?.customWrongMarks ?: viewModel.settingsManager.wrongMark
+            val correctMark = if (viewModel.isLearnMode) {
+                1f
+            } else {
+                viewModel.currentExamSettings?.customCorrectMarks ?: viewModel.settingsManager.getCorrectMark(bookId)
+            }
+            val wrongMark = if (viewModel.isLearnMode) {
+                0f
+            } else {
+                viewModel.currentExamSettings?.customWrongMarks ?: viewModel.settingsManager.getWrongMark(bookId)
+            }
         var rawScore = 0f
         var correct = 0
         var wrong = 0
@@ -312,7 +340,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
         }
     }
 
-    val autoNextDelay = viewModel.settingsManager.autoNextSeconds
+    val autoNextDelay = if (viewModel.isLearnMode) 0 else viewModel.settingsManager.getAutoNextSeconds(bookId)
     LaunchedEffect(autoNextTrigger) {
         if (autoNextTrigger > 0 && isPracticeMode && autoNextDelay > 0 && currentIndex < questions.size - 1) {
             kotlinx.coroutines.delay(autoNextDelay * 1000L)
@@ -339,7 +367,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         val ans = selectedAnswers[index]
                         val isAnswered = ans != null && !(ans.contains(-1)) && ans.isNotEmpty()
                         val isCurrent = index == currentIndex
-                        val isPracticing = viewModel.settingsManager.quizMode == "practice"
+                        val isPracticing = isPracticeMode
                         
                         val correctIndices = androidx.compose.runtime.remember(question.id) {
                             val gson = com.example.data.SharedGson.normal
