@@ -248,6 +248,7 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
     }
 }
 
+
 @Composable
 fun TopicNodeCard(
     node: TopicNode,
@@ -290,7 +291,7 @@ fun TopicNodeCard(
                         modifier = Modifier.size(24.dp).padding(end = 8.dp)
                     ) {
                         Icon(
-                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack, // using arrow back and rotating or just KeyboardArrowRight
                             contentDescription = "Expand",
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.background(Color.Transparent).then(
@@ -301,7 +302,7 @@ fun TopicNodeCard(
                 } else {
                     Spacer(modifier = Modifier.width(24.dp))
                 }
-
+                
                 Text(
                     text = node.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -343,12 +344,12 @@ fun TopicNodeCard(
                     )
                 }
             }
-
+            
             Spacer(modifier = Modifier.height(12.dp))
-
+            
             // Progress Bar
             val pctExplored = if (node.questionCount > 0) (node.attemptedCount.toFloat() / node.questionCount.toFloat()) else 0f
-
+            
             LinearProgressIndicator(
                 progress = { pctExplored },
                 modifier = Modifier
@@ -358,7 +359,7 @@ fun TopicNodeCard(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
             )
-
+            
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(

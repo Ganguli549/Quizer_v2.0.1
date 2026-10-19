@@ -554,19 +554,7 @@ fun ReadBookScreen(
 
     LaunchedEffect(currentBookId) {
         if (currentBookId != "") {
-            allQuestions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val rawList = viewModel.repository.getQuestionsForBookSync(currentBookId)
-                val repairedToSave = mutableListOf<QuestionEntity>()
-                val cleanedList = rawList.map { q ->
-                    val fixed = com.example.ui.components.sanitizeCorruptedQuestionEntity(q)
-                    if (fixed != q) repairedToSave.add(fixed)
-                    fixed
-                }
-                if (repairedToSave.isNotEmpty()) {
-                    viewModel.repository.insertQuestions(repairedToSave)
-                }
-                cleanedList.resolveHeaders()
-            }
+            allQuestions = viewModel.repository.getQuestionsForBookSync(currentBookId).resolveHeaders()
             currentBook = viewModel.repository.getBookSync(currentBookId)
             try {
                 val type = object : TypeToken<List<String>>() {}.type

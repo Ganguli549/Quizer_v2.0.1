@@ -1412,9 +1412,9 @@ private fun bindRichTextView(
     resolvedCustomItems: List<CustomTextMenuItem>,
     markwon: Markwon,
     spannableToDisplay: Spannable,
-    searchQuery: String,
     onClick: (() -> Unit)?,
-    onClickWithCoords: ((Float, Float) -> Unit)?
+    onClickWithCoords: ((Float, Float) -> Unit)?,
+    searchQuery: String
 ) {
     textView.touchBridge.onClick = onClick
     textView.touchBridge.onClickWithCoords = onClickWithCoords
@@ -1586,9 +1586,9 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
-                    searchQuery = searchQuery,
                     onClick = onClick,
-                    onClickWithCoords = onClickWithCoords
+                    onClickWithCoords = onClickWithCoords,
+                    searchQuery = searchQuery
                 )
             }
         },
@@ -1604,9 +1604,9 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
-                    searchQuery = searchQuery,
                     onClick = onClick,
-                    onClickWithCoords = onClickWithCoords
+                    onClickWithCoords = onClickWithCoords,
+                    searchQuery = searchQuery
                 )
             }
         },

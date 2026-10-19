@@ -685,11 +685,11 @@ fun HomeScreen(
                         
                         if (showOptions) {
                             Spacer(modifier = Modifier.height(8.dp))
-
+                            
                             val shuffleQ by viewModel.shuffleQuestions.collectAsState()
-                            var shuffleOpts by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getShuffleOptions(currentBookId)) }
-                            var useDistractors by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getUseDistractors(currentBookId)) }
-                            var questionFlow by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getQuestionFlow(currentBookId)) }
+                            var shuffleOpts by remember { mutableStateOf(viewModel.settingsManager.shuffleOptions) }
+                            var useDistractors by remember { mutableStateOf(viewModel.settingsManager.useDistractors) }
+                            var questionFlow by remember { mutableStateOf(viewModel.settingsManager.questionFlow) }
 
                             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                             androidx.compose.foundation.layout.FlowRow(
@@ -719,33 +719,34 @@ fun HomeScreen(
                                 )
                             }
 
-                            var autoNextSeconds by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getAutoNextSeconds(currentBookId)) }
 
-                            if (mode != "exam") {
-                                var correctMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getCorrectMark(currentBookId)) }
-                                var wrongMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getWrongMark(currentBookId)) }
+                            var autoNextSeconds by remember { mutableStateOf(viewModel.settingsManager.autoNextSeconds) }
+                            
+                                if (mode != "exam") {
+                                    var correctMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getCorrectMark(currentBookId)) }
+                                    var wrongMark by remember(currentBookId) { mutableStateOf(viewModel.settingsManager.getWrongMark(currentBookId)) }
 
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Marking Scheme", style = MaterialTheme.typography.labelLarge)
-                                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    val correctMarks = listOf(1f, 2f, 3f, 4f)
-                                    correctMarks.forEach { m ->
-                                        FilterChip(
-                                            selected = correctMark == m,
-                                            onClick = { correctMark = m; viewModel.settingsManager.setCorrectMark(currentBookId, m) },
-                                            label = { Text("+$m") }
-                                        )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Marking Scheme", style = MaterialTheme.typography.labelLarge)
+                                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        val correctMarks = listOf(1f, 2f, 3f, 4f)
+                                        correctMarks.forEach { m ->
+                                            FilterChip(
+                                                selected = correctMark == m,
+                                                onClick = { correctMark = m; viewModel.settingsManager.setCorrectMark(currentBookId, m) },
+                                                label = { Text("+$m") }
+                                            )
+                                        }
+                                        VerticalDivider(modifier = Modifier.height(32.dp))
+                                        val wrongMarks = listOf(0f, 0.25f, 0.5f, 0.66f, 1f)
+                                        wrongMarks.forEach { m ->
+                                            FilterChip(
+                                                selected = wrongMark == m,
+                                                onClick = { wrongMark = m; viewModel.settingsManager.setWrongMark(currentBookId, m) },
+                                                label = { Text("-$m") }
+                                            )
+                                        }
                                     }
-                                    VerticalDivider(modifier = Modifier.height(32.dp))
-                                    val wrongMarks = listOf(0f, 0.25f, 0.5f, 0.66f, 1f)
-                                    wrongMarks.forEach { m ->
-                                        FilterChip(
-                                            selected = wrongMark == m,
-                                            onClick = { wrongMark = m; viewModel.settingsManager.setWrongMark(currentBookId, m) },
-                                            label = { Text("-$m") }
-                                        )
-                                    }
-                                }
 
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text("Timers", style = MaterialTheme.typography.labelLarge)
@@ -761,7 +762,7 @@ fun HomeScreen(
                                     }
                                 }
                             }
-
+                            
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Per Question:", modifier = Modifier.padding(top = 10.dp, end = 4.dp), style = MaterialTheme.typography.bodyMedium)
@@ -806,7 +807,9 @@ fun HomeScreen(
                                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Done)
                                 )
+                                
                             }
+
                         }
                     }
                 }
