@@ -32,6 +32,7 @@ fun CustomModalBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
+        sheetGesturesEnabled = false,
         contentWindowInsets = { 
             WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Vertical)
                 .union(WindowInsets.ime) 

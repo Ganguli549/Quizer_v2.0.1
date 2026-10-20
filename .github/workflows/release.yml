@@ -26,88 +26,43 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
 
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
-      - name: Prepare and Verify Keystore
+      - name: Prepare Keystore
         env:
-          SECRET_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          SECRET_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          SECRET_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          STORE_PASS="${SECRET_KEYSTORE_PASSWORD:-android}"
-          ALIAS="${SECRET_KEY_ALIAS:-upload}"
-          KEY_PASS="${SECRET_KEY_PASSWORD:-$STORE_PASS}"
-
-          rm -f release.keystore
-
-          if [ -n "$SECRET_KEYSTORE_BASE64" ]; then
+          if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding KEYSTORE_BASE64 from GitHub secret..."
-            echo "$SECRET_KEYSTORE_BASE64" | tr -d ' \t\r\n' | base64 --decode --ignore-garbage > release.keystore || rm -f release.keystore
+            echo "$KEYSTORE_BASE64" | base64 --decode --ignore-garbage > release.keystore
           elif [ -f "debug.keystore.base64" ]; then
-            echo "Using repository debug.keystore.base64..."
-            tr -d ' \t\r\n' < debug.keystore.base64 | base64 --decode --ignore-garbage > release.keystore || rm -f release.keystore
+            echo "Using repository debug.keystore.base64 as fallback release key..."
+            base64 --decode --ignore-garbage debug.keystore.base64 > release.keystore
           elif [ -f "debug.keystore" ]; then
             echo "Using repository debug.keystore..."
             cp debug.keystore release.keystore
-          fi
-
-          # Verify that release.keystore exists and is readable with STORE_PASS
-          if [ -s "release.keystore" ] && keytool -list -keystore release.keystore -storepass "$STORE_PASS" >/dev/null 2>&1; then
-            if keytool -list -keystore release.keystore -storepass "$STORE_PASS" -alias "$ALIAS" >/dev/null 2>&1; then
-              echo "Verified keystore alias: $ALIAS"
-            elif keytool -list -keystore release.keystore -storepass "$STORE_PASS" -alias "androiddebugkey" >/dev/null 2>&1; then
-              echo "Switching keystore alias to androiddebugkey"
-              ALIAS="androiddebugkey"
-            elif keytool -list -keystore release.keystore -storepass "$STORE_PASS" -alias "upload" >/dev/null 2>&1; then
-              echo "Switching keystore alias to upload"
-              ALIAS="upload"
-            else
-              DETECTED_ALIAS=$(keytool -list -v -keystore release.keystore -storepass "$STORE_PASS" | awk '/Alias name:/ {print $3; exit}')
-              if [ -n "$DETECTED_ALIAS" ]; then
-                echo "Detected keystore alias: $DETECTED_ALIAS"
-                ALIAS="$DETECTED_ALIAS"
-              else
-                rm -f release.keystore
-              fi
-            fi
           else
-            echo "Keystore missing or password mismatch; generating fresh fallback release.keystore..."
-            rm -f release.keystore
+            echo "Generating fallback release keystore..."
+            keytool -genkey -v -keystore release.keystore -alias upload -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
           fi
-
-          if [ ! -s "release.keystore" ]; then
-            STORE_PASS="android"
-            ALIAS="upload"
-            KEY_PASS="android"
-            keytool -genkeypair -v \
-              -keystore release.keystore \
-              -alias "$ALIAS" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass "$STORE_PASS" \
-              -keypass "$KEY_PASS" \
-              -dname "CN=Android Release,O=Android,C=US"
-          fi
-
-          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/release.keystore" >> "$GITHUB_ENV"
-          echo "KEYSTORE_PASSWORD=${STORE_PASS}" >> "$GITHUB_ENV"
-          echo "KEY_ALIAS=${ALIAS}" >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=${KEY_PASS}" >> "$GITHUB_ENV"
 
       - name: Build Release APK
         env:
-          JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true -Xmx3072m -XX:MaxMetaspaceSize=1024m"
         run: |
-          ./gradlew assembleRelease \
-            -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8 -Djava.awt.headless=true" \
-            --stacktrace \
-            --no-daemon
+          export KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-android}"
+          export KEY_ALIAS="${KEY_ALIAS:-upload}"
+          export KEY_PASSWORD="${KEY_PASSWORD:-android}"
+          ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
