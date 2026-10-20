@@ -16,8 +16,6 @@ android {
     targetSdk = 36
     versionCode = 8
     versionName = "3.0.1"
-
-    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
@@ -62,7 +60,6 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -139,36 +136,9 @@ dependencies {
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
-  testImplementation(libs.androidx.compose.ui.test.junit4)
-  testImplementation(libs.androidx.core)
-  testImplementation(libs.androidx.junit)
-  testImplementation(libs.junit)
-  testImplementation(libs.kotlinx.coroutines.test)
-  testImplementation(libs.robolectric)
-  androidTestImplementation(platform(libs.androidx.compose.bom))
-  androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-  androidTestImplementation(libs.androidx.espresso.core)
-  androidTestImplementation(libs.androidx.junit)
-  androidTestImplementation(libs.androidx.runner)
-  debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
 
-afterEvaluate {
-  tasks.named("assembleDebug") {
-    doLast {
-      val preserved = file("${projectDir}/quizer-preserved.apk")
-      if (preserved.exists()) {
-        val rootOut = file("${rootDir}/.build-outputs/app-debug.apk")
-        val buildOut = file("${layout.buildDirectory.get()}/outputs/apk/debug/app-debug.apk")
-        preserved.copyTo(rootOut, overwrite = true)
-        if (buildOut.parentFile.exists()) {
-          preserved.copyTo(buildOut, overwrite = true)
-        }
-      }
-    }
-  }
-}
 

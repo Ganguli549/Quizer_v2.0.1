@@ -1273,7 +1273,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             
             val currentFlowMode = _quizFlowMode.value
             val isShuffle = _shuffleQuestions.value
-
+            
             filtered = processQuestionPool(filtered, currentFlowMode, isShuffle, limit, offset)
 
             val idsToFetch = filtered.map { it.id }
@@ -1734,16 +1734,16 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             pendingQuizGenerationTrigger = true
             _currentBookId.value = bookId
             settingsManager.lastSelectedBookId = bookId
-
+            
             val paths = settingsManager.getSelectedPaths(bookId)
             _selectedPaths.value = paths
-
+            
             val categories = settingsManager.getSelectedCategories(bookId)
             _selectedCategories.value = categories
-
+            
             val limit = settingsManager.getQuestionLimit(bookId)
             _questionLimit.value = if (limit == 0) null else limit
-
+            
             _onlyBookmarks.value = false
             _quizFlowMode.value = settingsManager.getQuizFlowMode(bookId)
             _shuffleQuestions.value = settingsManager.getShuffleQuestions(bookId)
@@ -1752,8 +1752,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             _selectedTopic.value = null
             isLearnMode = false
             currentExamSettings = null
-
-            // Automatically repair any previously extracted questions that had $...$ or $...<strong>...$ corruption
+            // Automatically repair any previously extracted questions that had $\n...$ or $...<strong>...$ corruption
             viewModelScope.launch(Dispatchers.IO) {
                 try {
                     val existingQs = repository.getQuestionsForBookSync(bookId)

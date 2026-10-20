@@ -172,6 +172,10 @@ class AlignedLatexSpan(
 object LatexDrawableCache {
     private val cache = android.util.LruCache<Triple<String, Int, Int>, Drawable>(600)
 
+    fun clearCache() {
+        cache.evictAll()
+    }
+
     fun getOrCreate(rawLatex: String, fontSizePx: Float, textColorArgb: Int): Drawable {
         val cleanKey = rawLatex.trim()
         val sizeKey = (fontSizePx * 10f).roundToInt()
@@ -185,10 +189,6 @@ object LatexDrawableCache {
             }
         cache.put(key, created)
         return created
-    }
-
-    fun clearCache() {
-        cache.evictAll()
     }
 }
 
@@ -1412,9 +1412,9 @@ private fun bindRichTextView(
     resolvedCustomItems: List<CustomTextMenuItem>,
     markwon: Markwon,
     spannableToDisplay: Spannable,
+    searchQuery: String,
     onClick: (() -> Unit)?,
-    onClickWithCoords: ((Float, Float) -> Unit)?,
-    searchQuery: String
+    onClickWithCoords: ((Float, Float) -> Unit)?
 ) {
     textView.touchBridge.onClick = onClick
     textView.touchBridge.onClickWithCoords = onClickWithCoords
@@ -1586,9 +1586,9 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
+                    searchQuery = searchQuery,
                     onClick = onClick,
-                    onClickWithCoords = onClickWithCoords,
-                    searchQuery = searchQuery
+                    onClickWithCoords = onClickWithCoords
                 )
             }
         },
@@ -1604,9 +1604,9 @@ fun RichText(
                     resolvedCustomItems = resolvedCustomItems,
                     markwon = markwon,
                     spannableToDisplay = spannableToDisplay,
+                    searchQuery = searchQuery,
                     onClick = onClick,
-                    onClickWithCoords = onClickWithCoords,
-                    searchQuery = searchQuery
+                    onClickWithCoords = onClickWithCoords
                 )
             }
         },

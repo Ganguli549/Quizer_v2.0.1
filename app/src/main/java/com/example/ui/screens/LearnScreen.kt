@@ -248,7 +248,6 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
     }
 }
 
-
 @Composable
 fun TopicNodeCard(
     node: TopicNode,
@@ -291,7 +290,7 @@ fun TopicNodeCard(
                         modifier = Modifier.size(24.dp).padding(end = 8.dp)
                     ) {
                         Icon(
-                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack, // using arrow back and rotating or just KeyboardArrowRight
+                            imageVector = if (isExpanded) Icons.Default.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Expand",
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.background(Color.Transparent).then(
