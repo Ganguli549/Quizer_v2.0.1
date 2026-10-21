@@ -274,90 +274,162 @@ fun HomeScreen(
     }
 
     if (showBookDialog) {
-        var localBooks by remember(books) { mutableStateOf(books) }
+        var localBooks by remember { mutableStateOf(books) }
         var draggedBookKey by remember { mutableStateOf<String?>(null) }
-        var dragOffsetY by remember { mutableFloatStateOf(0f) }
+        var settlingBookKey by remember { mutableStateOf<String?>(null) }
+        var settleAnim by remember {
+            mutableStateOf<androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>?>(null)
+        }
+        // Stationary viewport Y of the user's finger inside the outer Box wrapping LazyColumn
+        var latestFingerViewportY by remember { mutableFloatStateOf(0f) }
+        // Target visual top Y of the dragged card in LazyColumn viewport coordinates (px)
+        var draggedVisualTop by remember { mutableFloatStateOf(0f) }
+        // Finger offset from the top of the card at the moment drag started (px)
+        var grabOffsetInCard by remember { mutableFloatStateOf(0f) }
+        // Measured height of the dragged card (px)
+        var draggedCardHeightPx by remember { mutableFloatStateOf(0f) }
+
         val listState = rememberLazyListState()
         val haptic = LocalHapticFeedback.current
         val dragCoroutineScope = rememberCoroutineScope()
         val density = LocalDensity.current
-        var itemHeightPx by remember { mutableFloatStateOf(0f) }
 
         LaunchedEffect(books) {
-            if (draggedBookKey == null) {
+            if (draggedBookKey == null && settlingBookKey == null) {
                 localBooks = books
             }
         }
 
         fun startDrag(id: String) {
+            settlingBookKey = null
+            settleAnim = null
+            val itemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }
+            val initialTop = itemInfo?.offset?.toFloat() ?: 0f
+            val initialSize = itemInfo?.size?.toFloat() ?: with(density) { 76.dp.toPx() }
+
+            draggedCardHeightPx = initialSize
+            grabOffsetInCard = (latestFingerViewportY - initialTop).coerceIn(0f, initialSize)
+            draggedVisualTop = initialTop
             draggedBookKey = id
-            dragOffsetY = 0f
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         }
 
-        fun handleDrag(deltaY: Float) {
-            dragOffsetY += deltaY
+        fun handleDragToViewportY(fingerViewportY: Float) {
             val currentKey = draggedBookKey ?: return
             var currIdx = localBooks.indexOfFirst { it.id == currentKey }
             if (currIdx == -1) return
 
-            val spacingPx = with(density) { 8.dp.toPx() }
-            val effectiveItemHeight = (if (itemHeightPx > 0f) itemHeightPx else with(density) { 76.dp.toPx() }) + spacingPx
-            val threshold = effectiveItemHeight * 0.5f
+            val layoutInfo = listState.layoutInfo
+            val viewportHeight = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset)
+                .toFloat()
+                .coerceAtLeast(1f)
 
-            while (dragOffsetY > threshold && currIdx < localBooks.lastIndex) {
-                val targetIndex = currIdx + 1
-                val mutable = localBooks.toMutableList()
-                val item = mutable.removeAt(currIdx)
-                mutable.add(targetIndex, item)
-                localBooks = mutable
-                dragOffsetY -= effectiveItemHeight
-                currIdx = targetIndex
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            val currItemInfo = layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
+            if (currItemInfo != null && currItemInfo.size > 0) {
+                draggedCardHeightPx = currItemInfo.size.toFloat()
             }
 
-            while (dragOffsetY < -threshold && currIdx > 0) {
-                val targetIndex = currIdx - 1
-                val mutable = localBooks.toMutableList()
-                val item = mutable.removeAt(currIdx)
-                mutable.add(targetIndex, item)
-                localBooks = mutable
-                dragOffsetY += effectiveItemHeight
-                currIdx = targetIndex
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            }
+            val contentBottom = layoutInfo.visibleItemsInfo
+                .maxOfOrNull { it.offset + it.size }
+                ?.toFloat() ?: viewportHeight
+            val maxTop = (minOf(viewportHeight, contentBottom) - draggedCardHeightPx).coerceAtLeast(0f)
 
-            val currentItemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
-            if (currentItemInfo != null) {
-                val viewportHeight = listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
-                val itemVisualTop = currentItemInfo.offset + dragOffsetY
-                val itemVisualBottom = itemVisualTop + currentItemInfo.size
-                if (itemVisualBottom > viewportHeight - 30) {
-                    dragCoroutineScope.launch { listState.scrollBy(25f) }
-                } else if (itemVisualTop < 30) {
-                    dragCoroutineScope.launch { listState.scrollBy(-25f) }
+            // Position the dragged card 1:1 under the finger in stationary viewport coordinates
+            draggedVisualTop = (fingerViewportY - grabOffsetInCard).coerceIn(0f, maxTop)
+            val draggedCenterY = draggedVisualTop + (draggedCardHeightPx * 0.5f)
+
+            // Compare draggedCenterY against physical slot positions in LazyColumn
+            val visibleSlots = layoutInfo.visibleItemsInfo.sortedBy { it.index }
+            var swapped = false
+
+            while (currIdx < localBooks.lastIndex) {
+                val nextSlot = visibleSlots.firstOrNull { it.index == currIdx + 1 } ?: break
+                val nextThreshold = nextSlot.offset + (nextSlot.size * 0.52f)
+                if (draggedCenterY > nextThreshold) {
+                    val mutable = localBooks.toMutableList()
+                    val moved = mutable.removeAt(currIdx)
+                    mutable.add(currIdx + 1, moved)
+                    localBooks = mutable
+                    currIdx += 1
+                    swapped = true
+                } else {
+                    break
                 }
+            }
+
+            if (!swapped) {
+                while (currIdx > 0) {
+                    val prevSlot = visibleSlots.firstOrNull { it.index == currIdx - 1 } ?: break
+                    val prevThreshold = prevSlot.offset + (prevSlot.size * 0.48f)
+                    if (draggedCenterY < prevThreshold) {
+                        val mutable = localBooks.toMutableList()
+                        val moved = mutable.removeAt(currIdx)
+                        mutable.add(currIdx - 1, moved)
+                        localBooks = mutable
+                        currIdx -= 1
+                        swapped = true
+                    } else {
+                        break
+                    }
+                }
+            }
+
+            if (swapped) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+
+            // Smooth auto-scroll when dragging near the top or bottom edge of a scrollable book list
+            val edgeZonePx = with(density) { 36.dp.toPx() }
+            val scrollStepPx = with(density) { 14.dp.toPx() }
+            if (draggedVisualTop + draggedCardHeightPx > viewportHeight - edgeZonePx && listState.canScrollForward) {
+                dragCoroutineScope.launch { listState.scrollBy(scrollStepPx) }
+            } else if (draggedVisualTop < edgeZonePx && listState.canScrollBackward) {
+                dragCoroutineScope.launch { listState.scrollBy(-scrollStepPx) }
             }
         }
 
         fun endDrag() {
-            val key = draggedBookKey
+            val key = draggedBookKey ?: return
+            val targetIdx = localBooks.indexOfFirst { it.id == key }
+            val targetSlotOffset = listState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == targetIdx }?.offset?.toFloat()
+                ?: listState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.key == key }?.offset?.toFloat()
+                ?: draggedVisualTop
+            val releaseDeltaY = draggedVisualTop - targetSlotOffset
+
+            // Construct Animatable synchronously with releaseDeltaY so there is zero 1-frame snap on release
+            val anim = androidx.compose.animation.core.Animatable(releaseDeltaY)
+            settleAnim = anim
             draggedBookKey = null
-            dragOffsetY = 0f
-            if (key != null) {
-                val order = localBooks.map { it.id }
-                viewModel.reorderBooks(order)
+            settlingBookKey = key
+
+            val order = localBooks.map { it.id }
+            viewModel.reorderBooks(order)
+
+            dragCoroutineScope.launch {
+                try {
+                    anim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                        )
+                    )
+                } finally {
+                    if (settlingBookKey == key) {
+                        settlingBookKey = null
+                        settleAnim = null
+                    }
+                }
             }
         }
 
-        fun cancelDrag() {
-            draggedBookKey = null
-            dragOffsetY = 0f
-            localBooks = books
-        }
-
         androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showBookDialog = false },
+            onDismissRequest = {
+                if (draggedBookKey != null) endDrag()
+                showBookDialog = false
+            },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
@@ -386,14 +458,64 @@ fun HomeScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 500.dp)) {
+                    // Outer stationary Box tracks pointer Y in fixed viewport coordinates on PointerEventPass.Initial
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .heightIn(max = 500.dp)
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(
+                                        pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
+                                        requireUnconsumed = false
+                                    )
+                                    latestFingerViewportY = down.position.y
+                                    try {
+                                        while (true) {
+                                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            latestFingerViewportY = change.position.y
+                                            if (!change.pressed) {
+                                                if (draggedBookKey != null) {
+                                                    change.consume()
+                                                    endDrag()
+                                                }
+                                                break
+                                            }
+                                            if (draggedBookKey != null) {
+                                                change.consume()
+                                                handleDragToViewportY(change.position.y)
+                                            }
+                                        }
+                                    } finally {
+                                        if (draggedBookKey != null) {
+                                            endDrag()
+                                        }
+                                    }
+                                }
+                            }
+                    ) {
                         LazyColumn(
                             state = listState,
+                            userScrollEnabled = draggedBookKey == null,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             items(localBooks, key = { it.id }) { book ->
                                 val isSelected = book.id == currentBookId
                                 val isDragging = book.id == draggedBookKey
+                                val isSettling = book.id == settlingBookKey
+                                val isElevated = isDragging || isSettling
+
+                                val animatedScale by androidx.compose.animation.core.animateFloatAsState(
+                                    targetValue = if (isDragging) 1.03f else 1f,
+                                    animationSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                                    ),
+                                    label = "dragCardScale"
+                                )
+
                                 Card(
                                     colors = if (isSelected) {
                                         androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
@@ -401,24 +523,41 @@ fun HomeScreen(
                                         androidx.compose.material3.CardDefaults.cardColors()
                                     },
                                     elevation = androidx.compose.material3.CardDefaults.cardElevation(
-                                        defaultElevation = if (isDragging) 8.dp else 1.dp
+                                        defaultElevation = if (isElevated) 8.dp else 1.dp
                                     ),
+                                    // CRITICAL: .zIndex and .animateItem MUST be placed BEFORE .padding(vertical = 4.dp)
+                                    // so LazyColumn receives their ParentDataModifiers directly!
                                     modifier = Modifier
+                                        .zIndex(if (isElevated) 10f else 1f)
+                                        .animateItem(
+                                            fadeInSpec = null,
+                                            placementSpec = if (isElevated) {
+                                                null
+                                            } else {
+                                                androidx.compose.animation.core.spring(
+                                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                                                    stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                                                )
+                                            },
+                                            fadeOutSpec = null
+                                        )
                                         .fillMaxWidth()
                                         .padding(vertical = 4.dp)
-                                        .zIndex(if (isDragging) 10f else 1f)
                                         .graphicsLayer {
-                                            translationY = if (isDragging) dragOffsetY else 0f
-                                            scaleX = if (isDragging) 1.03f else 1f
-                                            scaleY = if (isDragging) 1.03f else 1f
-                                            shadowElevation = if (isDragging) 16f else 0f
-                                        }
-                                        .onSizeChanged { size ->
-                                            if (size.height > 0) {
-                                                itemHeightPx = size.height.toFloat()
+                                            translationY = when {
+                                                isDragging -> {
+                                                    val currentLayoutOffset = listState.layoutInfo.visibleItemsInfo
+                                                        .firstOrNull { it.key == book.id }?.offset?.toFloat()
+                                                        ?: draggedVisualTop
+                                                    draggedVisualTop - currentLayoutOffset
+                                                }
+                                                isSettling -> settleAnim?.value ?: 0f
+                                                else -> 0f
                                             }
+                                            scaleX = animatedScale
+                                            scaleY = animatedScale
+                                            shadowElevation = if (isElevated) 16f else 0f
                                         }
-                                        .animateItem()
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -441,7 +580,7 @@ fun HomeScreen(
                                                 .weight(1f)
                                                 .pointerInput(book.id) {
                                                     awaitEachGesture {
-                                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                                        awaitFirstDown(requireUnconsumed = false)
                                                         val longPressTimeout = viewConfiguration.longPressTimeoutMillis
                                                         var isLong = false
                                                         val up = try {
@@ -455,16 +594,7 @@ fun HomeScreen(
 
                                                         if (isLong) {
                                                             startDrag(book.id)
-                                                            while (true) {
-                                                                val event = awaitPointerEvent()
-                                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                                                if (!change.pressed) break
-                                                                val dy = change.position.y - change.previousPosition.y
-                                                                change.consume()
-                                                                handleDrag(dy)
-                                                            }
-                                                            endDrag()
-                                                        } else if (up != null && !up.isConsumed && draggedBookKey == null) {
+                                                        } else if (up != null && !up.isConsumed && draggedBookKey == null && settlingBookKey == null) {
                                                             viewModel.selectBook(book.id)
                                                             showBookDialog = false
                                                         }
@@ -472,8 +602,17 @@ fun HomeScreen(
                                                 }
                                                 .padding(horizontal = 6.dp, vertical = 6.dp)
                                         ) {
-                                            Text(book.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                            Text("${book.totalQuestions} Questions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                book.name,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                maxLines = 1,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                "${book.totalQuestions} Questions",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                         IconButton(
                                             onClick = { detailBook = book },
@@ -490,7 +629,6 @@ fun HomeScreen(
                                         ) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete")
                                         }
-
                                     }
                                 }
                             }
@@ -498,7 +636,12 @@ fun HomeScreen(
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { showBookDialog = false }) { Text("Close") }
+                        TextButton(onClick = {
+                            if (draggedBookKey != null) endDrag()
+                            showBookDialog = false
+                        }) {
+                            Text("Close")
+                        }
                     }
                 }
             }
