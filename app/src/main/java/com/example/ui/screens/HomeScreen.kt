@@ -23,11 +23,18 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import com.example.ui.MainViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -273,6 +280,8 @@ fun HomeScreen(
         val listState = rememberLazyListState()
         val haptic = LocalHapticFeedback.current
         val dragCoroutineScope = rememberCoroutineScope()
+        val density = LocalDensity.current
+        var itemHeightPx by remember { mutableFloatStateOf(0f) }
 
         LaunchedEffect(books) {
             if (draggedBookKey == null) {
@@ -280,26 +289,90 @@ fun HomeScreen(
             }
         }
 
+        fun startDrag(id: String) {
+            draggedBookKey = id
+            dragOffsetY = 0f
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+
+        fun handleDrag(deltaY: Float) {
+            dragOffsetY += deltaY
+            val currentKey = draggedBookKey ?: return
+            var currIdx = localBooks.indexOfFirst { it.id == currentKey }
+            if (currIdx == -1) return
+
+            val spacingPx = with(density) { 8.dp.toPx() }
+            val effectiveItemHeight = (if (itemHeightPx > 0f) itemHeightPx else with(density) { 76.dp.toPx() }) + spacingPx
+            val threshold = effectiveItemHeight * 0.5f
+
+            while (dragOffsetY > threshold && currIdx < localBooks.lastIndex) {
+                val targetIndex = currIdx + 1
+                val mutable = localBooks.toMutableList()
+                val item = mutable.removeAt(currIdx)
+                mutable.add(targetIndex, item)
+                localBooks = mutable
+                dragOffsetY -= effectiveItemHeight
+                currIdx = targetIndex
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+
+            while (dragOffsetY < -threshold && currIdx > 0) {
+                val targetIndex = currIdx - 1
+                val mutable = localBooks.toMutableList()
+                val item = mutable.removeAt(currIdx)
+                mutable.add(targetIndex, item)
+                localBooks = mutable
+                dragOffsetY += effectiveItemHeight
+                currIdx = targetIndex
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+
+            val currentItemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
+            if (currentItemInfo != null) {
+                val viewportHeight = listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                val itemVisualTop = currentItemInfo.offset + dragOffsetY
+                val itemVisualBottom = itemVisualTop + currentItemInfo.size
+                if (itemVisualBottom > viewportHeight - 30) {
+                    dragCoroutineScope.launch { listState.scrollBy(25f) }
+                } else if (itemVisualTop < 30) {
+                    dragCoroutineScope.launch { listState.scrollBy(-25f) }
+                }
+            }
+        }
+
+        fun endDrag() {
+            val key = draggedBookKey
+            draggedBookKey = null
+            dragOffsetY = 0f
+            if (key != null) {
+                val order = localBooks.map { it.id }
+                viewModel.reorderBooks(order)
+            }
+        }
+
+        fun cancelDrag() {
+            draggedBookKey = null
+            dragOffsetY = 0f
+            localBooks = books
+        }
+
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { showBookDialog = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
-                modifier = Modifier.fillMaxWidth(0.9f).padding(vertical = 24.dp),
+                modifier = Modifier.fillMaxWidth(0.92f).padding(vertical = 24.dp),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp
             ) {
-                Column(modifier = Modifier.padding(24.dp)) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Select Book", style = MaterialTheme.typography.headlineSmall)
-                            Text("Long press & drag to reorder", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text("Select Book", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             IconButton(onClick = {
                                 filePickerLauncher.launch(arrayOf("*/*"))
@@ -316,78 +389,17 @@ fun HomeScreen(
                     Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 500.dp)) {
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .pointerInput(localBooks) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { offset ->
-                                            val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
-                                                offset.y.toInt() in item.offset..(item.offset + item.size)
-                                            }
-                                            if (hitItem != null) {
-                                                draggedBookKey = hitItem.key as? String
-                                                dragOffsetY = 0f
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            }
-                                        },
-                                        onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            dragOffsetY += dragAmount.y
-
-                                            val currentKey = draggedBookKey ?: return@detectDragGesturesAfterLongPress
-                                            val currentItemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
-                                            if (currentItemInfo != null) {
-                                                val currentCenter = currentItemInfo.offset + dragOffsetY + (currentItemInfo.size / 2f)
-                                                val targetItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { other ->
-                                                    other.key != currentKey &&
-                                                        currentCenter >= other.offset &&
-                                                        currentCenter <= (other.offset + other.size)
-                                                }
-                                                if (targetItem != null) {
-                                                    val fromIndex = localBooks.indexOfFirst { it.id == currentKey }
-                                                    val toIndex = localBooks.indexOfFirst { it.id == targetItem.key }
-                                                    if (fromIndex != -1 && toIndex != -1 && fromIndex != toIndex) {
-                                                        val mutable = localBooks.toMutableList()
-                                                        val item = mutable.removeAt(fromIndex)
-                                                        mutable.add(toIndex, item)
-                                                        localBooks = mutable
-                                                        dragOffsetY += (currentItemInfo.offset - targetItem.offset)
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    }
-                                                }
-
-                                                val viewportHeight = listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
-                                                val itemVisualTop = currentItemInfo.offset + dragOffsetY
-                                                val itemVisualBottom = itemVisualTop + currentItemInfo.size
-                                                if (itemVisualBottom > viewportHeight - 20) {
-                                                    dragCoroutineScope.launch { listState.scrollBy(20f) }
-                                                } else if (itemVisualTop < 20) {
-                                                    dragCoroutineScope.launch { listState.scrollBy(-20f) }
-                                                }
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            val key = draggedBookKey
-                                            draggedBookKey = null
-                                            dragOffsetY = 0f
-                                            if (key != null) {
-                                                val order = localBooks.map { it.id }
-                                                viewModel.reorderBooks(order)
-                                            }
-                                        },
-                                        onDragCancel = {
-                                            draggedBookKey = null
-                                            dragOffsetY = 0f
-                                            localBooks = books
-                                        }
-                                    )
-                                }
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             items(localBooks, key = { it.id }) { book ->
                                 val isSelected = book.id == currentBookId
                                 val isDragging = book.id == draggedBookKey
                                 Card(
-                                    colors = if (isSelected) androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.CardDefaults.cardColors(),
+                                    colors = if (isSelected) {
+                                        androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                    } else {
+                                        androidx.compose.material3.CardDefaults.cardColors()
+                                    },
                                     elevation = androidx.compose.material3.CardDefaults.cardElevation(
                                         defaultElevation = if (isDragging) 8.dp else 1.dp
                                     ),
@@ -401,12 +413,17 @@ fun HomeScreen(
                                             scaleY = if (isDragging) 1.03f else 1f
                                             shadowElevation = if (isDragging) 16f else 0f
                                         }
+                                        .onSizeChanged { size ->
+                                            if (size.height > 0) {
+                                                itemHeightPx = size.height.toFloat()
+                                            }
+                                        }
                                         .animateItem()
                                 ) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(8.dp),
+                                            .padding(horizontal = 6.dp, vertical = 4.dp),
                                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                                     ) {
                                         IconButton(
@@ -422,14 +439,47 @@ fun HomeScreen(
                                         Column(
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clickable(enabled = draggedBookKey == null) {
-                                                    viewModel.selectBook(book.id)
-                                                    showBookDialog = false
+                                                .pointerInput(book.id) {
+                                                    awaitEachGesture {
+                                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                                        val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+                                                        var isLong = false
+                                                        val up = try {
+                                                            withTimeout(longPressTimeout) {
+                                                                waitForUpOrCancellation()
+                                                            }
+                                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                                            isLong = true
+                                                            null
+                                                        }
+
+                                                        if (isLong) {
+                                                            startDrag(book.id)
+                                                            while (true) {
+                                                                val event = awaitPointerEvent()
+                                                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                                if (!change.pressed) break
+                                                                val dy = change.position.y - change.previousPosition.y
+                                                                change.consume()
+                                                                handleDrag(dy)
+                                                            }
+                                                            endDrag()
+                                                        } else if (up != null && !up.isConsumed && draggedBookKey == null) {
+                                                            viewModel.selectBook(book.id)
+                                                            showBookDialog = false
+                                                        }
+                                                    }
                                                 }
-                                                .padding(horizontal = 8.dp)
+                                                .padding(horizontal = 6.dp, vertical = 6.dp)
                                         ) {
                                             Text(book.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                             Text("${book.totalQuestions} Questions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        IconButton(
+                                            onClick = { detailBook = book },
+                                            enabled = draggedBookKey == null
+                                        ) {
+                                            Icon(Icons.Default.Info, contentDescription = "Details")
                                         }
                                         IconButton(
                                             onClick = {
@@ -440,12 +490,7 @@ fun HomeScreen(
                                         ) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete")
                                         }
-                                        IconButton(
-                                            onClick = { detailBook = book },
-                                            enabled = draggedBookKey == null
-                                        ) {
-                                            Icon(Icons.Default.Info, contentDescription = "Details")
-                                        }
+
                                     }
                                 }
                             }
