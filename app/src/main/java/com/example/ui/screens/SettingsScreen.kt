@@ -566,41 +566,48 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
 @Composable
 fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToUsage: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var geminiApiKeys by remember { mutableStateOf("") }
-    var imageGenApiUrl by remember { mutableStateOf("") }
-    var imageGenApiKey by remember { mutableStateOf("") }
-    var imageGenModel by remember { mutableStateOf("") }
-    var selectedModel by remember { mutableStateOf("gemini-flash-lite-latest") }
+    val prefs = remember(context) { com.example.data.SecurePrefs.get(context) }
+
+    var geminiApiKeys by remember {
+        mutableStateOf(prefs.getString("gemini_api_keys", prefs.getString("gemini_api_key", "")) ?: "")
+    }
+    var imageGenApiUrl by remember {
+        mutableStateOf(prefs.getString("image_gen_api_url", "") ?: "")
+    }
+    var imageGenApiKey by remember {
+        mutableStateOf(prefs.getString("image_gen_api_key", "") ?: "")
+    }
+    var imageGenModel by remember {
+        mutableStateOf(prefs.getString("image_gen_model", "flux") ?: "flux")
+    }
+    var selectedModel by remember {
+        mutableStateOf(prefs.getString("gemini_model", "gemini-flash-lite-latest") ?: "gemini-flash-lite-latest")
+    }
     var expandedModelDropdown by remember { mutableStateOf(false) }
-    
-    var models by remember { mutableStateOf(listOf(
-        "gemini-flash-lite-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash-8b"
-    )) }
+
+    var models by remember {
+        mutableStateOf(
+            listOf(
+                "gemini-flash-lite-latest",
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+                "gemini-1.5-flash-8b"
+            )
+        )
+    }
     var isLoadingModels by remember { mutableStateOf(false) }
     var imageModels by remember { mutableStateOf(listOf("flux", "turbo", "sana")) }
     var expandedImageModelDropdown by remember { mutableStateOf(false) }
-    
-    LaunchedEffect(Unit) {
-        val prefs = com.example.data.SecurePrefs.get(context)
-        geminiApiKeys = prefs.getString("gemini_api_keys", prefs.getString("gemini_api_key", "")) ?: ""
-        imageGenApiUrl = prefs.getString("image_gen_api_url", "") ?: ""
-        imageGenApiKey = prefs.getString("image_gen_api_key", "") ?: ""
-        imageGenModel = prefs.getString("image_gen_model", "flux") ?: "flux" 
-        selectedModel = prefs.getString("gemini_model", "gemini-flash-lite-latest") ?: "gemini-flash-lite-latest"
-    }
 
     val coroutineScope = rememberCoroutineScope()
-    val saveAndFetch = {
-        com.example.data.SecurePrefs.get(context).edit()
-            .putString("gemini_api_keys", geminiApiKeys)
-            .putString("image_gen_api_url", imageGenApiUrl)
-            .putString("image_gen_api_key", imageGenApiKey)
-            .putString("image_gen_model", imageGenModel)
-            .apply()
-        
+
+    val syncBackupIfAutoSave = {
+        if (prefs.getBoolean("auto_save_enabled", true)) {
+            com.example.data.BackupManager.backupAiSettingsAndUsageAsync(context)
+        }
+    }
+
+    val fetchModelsOnly: () -> Unit = {
         coroutineScope.launch {
             isLoadingModels = true
             val fetchedModels = com.example.data.GeminiHelper.getAvailableModels(context)
@@ -608,8 +615,7 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                 models = fetchedModels
                 if (selectedModel !in models) {
                     selectedModel = models.firstOrNull() ?: "gemini-flash-lite-latest"
-                    com.example.data.SecurePrefs.get(context)
-                        .edit().putString("gemini_model", selectedModel).apply()
+                    prefs.edit().putString("gemini_model", selectedModel).apply()
                 }
             }
             val fetchedImageModels = com.example.data.GeminiHelper.getAvailableImageModels(context)
@@ -617,16 +623,27 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                 imageModels = fetchedImageModels
                 if (imageGenModel !in imageModels) {
                     imageGenModel = imageModels.firstOrNull() ?: "flux"
-                    com.example.data.SecurePrefs.get(context)
-                        .edit().putString("image_gen_model", imageGenModel).apply()
+                    prefs.edit().putString("image_gen_model", imageGenModel).apply()
                 }
             }
             isLoadingModels = false
         }
     }
 
+    val saveAndFetch: () -> Unit = {
+        prefs.edit()
+            .putString("gemini_api_keys", geminiApiKeys)
+            .putString("image_gen_api_url", imageGenApiUrl)
+            .putString("image_gen_api_key", imageGenApiKey)
+            .putString("image_gen_model", imageGenModel)
+            .putString("gemini_model", selectedModel)
+            .apply()
+        syncBackupIfAutoSave()
+        fetchModelsOnly()
+    }
+
     LaunchedEffect(Unit) {
-        saveAndFetch()
+        fetchModelsOnly()
     }
     
     Scaffold(
@@ -704,8 +721,8 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                     value = imageGenModel,
                     onValueChange = { 
                         imageGenModel = it
-                        com.example.data.SecurePrefs.get(context)
-                            .edit().putString("image_gen_model", it).apply()
+                        prefs.edit().putString("image_gen_model", it).apply()
+                        syncBackupIfAutoSave()
                     },
                     label = { Text("Image Model (e.g. flux, dall-e-3)") },
                     modifier = Modifier.fillMaxWidth().menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryEditable, true),
@@ -722,8 +739,8 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                             onClick = {
                                 imageGenModel = selectionOption
                                 expandedImageModelDropdown = false
-                                com.example.data.SecurePrefs.get(context)
-                                    .edit().putString("image_gen_model", selectionOption).apply()
+                                prefs.edit().putString("image_gen_model", selectionOption).apply()
+                                syncBackupIfAutoSave()
                             }
                         )
                     }
@@ -734,8 +751,8 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                 value = imageGenApiUrl,
                 onValueChange = { 
                     imageGenApiUrl = it
-                    com.example.data.SecurePrefs.get(context)
-                        .edit().putString("image_gen_api_url", it).apply()
+                    prefs.edit().putString("image_gen_api_url", it).apply()
+                    syncBackupIfAutoSave()
                 },
                 label = { Text("API URL (Optional, leave blank for Pollinations)") },
                 modifier = Modifier.fillMaxWidth()
@@ -745,8 +762,8 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                 value = imageGenApiKey,
                 onValueChange = { 
                     imageGenApiKey = it
-                    com.example.data.SecurePrefs.get(context)
-                        .edit().putString("image_gen_api_key", it).apply()
+                    prefs.edit().putString("image_gen_api_key", it).apply()
+                    syncBackupIfAutoSave()
                 },
                 label = { Text("API Key (Optional)") },
                 modifier = Modifier.fillMaxWidth()
@@ -791,8 +808,8 @@ fun AiSettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToU
                             onClick = {
                                 selectedModel = selectionOption
                                 expandedModelDropdown = false
-                                com.example.data.SecurePrefs.get(context)
-                                    .edit().putString("gemini_model", selectionOption).apply()
+                                prefs.edit().putString("gemini_model", selectionOption).apply()
+                                syncBackupIfAutoSave()
                             }
                         )
                     }

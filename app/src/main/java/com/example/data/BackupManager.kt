@@ -1,37 +1,101 @@
 package com.example.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Environment
 import android.util.Log
+import android.util.Xml
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
+@Serializable
+data class AiAndSecureSettingsBackup(
+    val version: Int = 1,
+    val timestamp: Long = System.currentTimeMillis(),
+    val geminiApiKeys: String = "",
+    val legacyGeminiApiKey: String = "",
+    val geminiModel: String = "gemini-flash-lite-latest",
+    val imageGenModel: String = "flux",
+    val imageGenApiUrl: String = "",
+    val imageGenApiKey: String = "",
+    val apiUsageDataJson: String = "{}",
+    val autoSaveEnabled: Boolean = true,
+    val readingTheme: Int = 0,
+    val extraStrings: Map<String, String> = emptyMap(),
+    val extraBooleans: Map<String, Boolean> = emptyMap(),
+    val extraInts: Map<String, Int> = emptyMap(),
+    val extraLongs: Map<String, Long> = emptyMap(),
+    val extraFloats: Map<String, Float> = emptyMap()
+)
+
 object BackupManager {
+    private const val AI_SETTINGS_BACKUP_FILE = "quizer_ai_and_secure_settings.json"
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        prettyPrint = true
+    }
+
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Lightweight async helper that updates `quizer_ai_and_secure_settings.json` inside `Quizer/Backups`
+     * whenever AI settings or AI usage change and a backup folder already exists.
+     */
+    fun backupAiSettingsAndUsageAsync(context: Context) {
+        val appContext = context.applicationContext ?: context
+        backgroundScope.launch {
+            try {
+                val backupFolder = File(Environment.getExternalStorageDirectory(), "Quizer/Backups")
+                if (backupFolder.exists() || hasBackup()) {
+                    if (!backupFolder.exists()) backupFolder.mkdirs()
+                    MediaScannerHelper.ensureNoMediaInDir(backupFolder)
+                    writeAiAndSecureSettingsBackup(appContext, backupFolder)
+                }
+            } catch (e: Exception) {
+                Log.w("BackupManager", "Failed to sync AI settings/usage to backup", e)
+            }
+        }
+    }
+
     fun createBackup(context: Context): Boolean {
         return try {
-            // 1. Flush WAL with TRUNCATE so that the main database file is 100% up-to-date and complete
-            val checkpointOk = AppDatabase.checkpoint(context)
-            if (!checkpointOk) {
-                Log.e("BackupManager", "WAL checkpoint failed or returned busy, aborting backup creation")
-                return false
-            }
-
-            val dbFile = context.getDatabasePath("quizer_database")
-            if (!dbFile.exists() || dbFile.length() == 0L) return false
-
             val backupFolder = File(Environment.getExternalStorageDirectory(), "Quizer/Backups")
             if (!backupFolder.exists() && !backupFolder.mkdirs()) {
                 Log.e("BackupManager", "Failed to create backup directory: ${backupFolder.absolutePath}")
                 return false
             }
+            MediaScannerHelper.ensureNoMediaInDir(backupFolder)
 
-            // 2. Write to a temporary file first
+            // 1. Always export AI settings, API keys, models, and AI Usage statistics from SecurePrefs
+            val aiBackupOk = writeAiAndSecureSettingsBackup(context, backupFolder)
+
+            // 2. Flush WAL with TRUNCATE so that the main database file is 100% up-to-date and complete
+            val checkpointOk = AppDatabase.checkpoint(context)
+            if (!checkpointOk) {
+                Log.e("BackupManager", "WAL checkpoint failed or returned busy, aborting DB backup creation")
+                return false
+            }
+
+            val dbFile = context.getDatabasePath("quizer_database")
+            if (!dbFile.exists() || dbFile.length() == 0L) return aiBackupOk
+
+            // 3. Write database to a temporary file first
             val tempBackup = File(backupFolder, "quizer_database_temp.tmp")
             if (tempBackup.exists()) tempBackup.delete()
             copyFile(dbFile, tempBackup)
 
-            // 3. Verify SQLite integrity of candidate backup before finalizing
+            // 4. Verify SQLite integrity of candidate backup before finalizing
             val isIntact = verifySqliteIntegrity(tempBackup)
             if (!isIntact) {
                 tempBackup.delete()
@@ -42,7 +106,6 @@ object BackupManager {
             val destDbFile = File(backupFolder, "quizer_database")
             val renamed = tempBackup.renameTo(destDbFile)
             if (!renamed) {
-                // Fallback copy if rename fails across file systems
                 copyFile(tempBackup, destDbFile)
                 tempBackup.delete()
             }
@@ -56,7 +119,8 @@ object BackupManager {
             File(backupFolder, "quizer_database-wal").delete()
             File(backupFolder, "quizer_database-shm").delete()
 
-            // 4. Backup ordinary shared prefs, strictly EXCLUDING Keystore-bound EncryptedSharedPreferences (QuizerPrefs.xml)
+            // 5. Backup ordinary shared prefs XML files (excluding hardware Keystore-bound QuizerPrefs.xml,
+            // which is portably backed up via quizer_ai_and_secure_settings.json in Step 1)
             val sharedPrefsFolder = File(context.applicationInfo.dataDir, "shared_prefs")
             if (sharedPrefsFolder.exists()) {
                 sharedPrefsFolder.listFiles()?.forEach { file ->
@@ -69,6 +133,193 @@ object BackupManager {
         } catch (e: Exception) {
             Log.e("BackupManager", "Error creating backup", e)
             false
+        }
+    }
+
+    private fun writeAiAndSecureSettingsBackup(context: Context, backupFolder: File): Boolean {
+        return try {
+            val prefs = SecurePrefs.get(context)
+            val allEntries = prefs.all
+
+            val extraStrings = mutableMapOf<String, String>()
+            val extraBooleans = mutableMapOf<String, Boolean>()
+            val extraInts = mutableMapOf<String, Int>()
+            val extraLongs = mutableMapOf<String, Long>()
+            val extraFloats = mutableMapOf<String, Float>()
+
+            for ((k, v) in allEntries) {
+                if (k == "isFirstRun" || k == "is_first_launch") continue
+                when (v) {
+                    is String -> extraStrings[k] = v
+                    is Boolean -> extraBooleans[k] = v
+                    is Int -> extraInts[k] = v
+                    is Long -> extraLongs[k] = v
+                    is Float -> extraFloats[k] = v
+                }
+            }
+
+            val payload = AiAndSecureSettingsBackup(
+                version = 1,
+                timestamp = System.currentTimeMillis(),
+                geminiApiKeys = prefs.getString("gemini_api_keys", "") ?: "",
+                legacyGeminiApiKey = prefs.getString("gemini_api_key", "") ?: "",
+                geminiModel = prefs.getString("gemini_model", "gemini-flash-lite-latest") ?: "gemini-flash-lite-latest",
+                imageGenModel = prefs.getString("image_gen_model", "flux") ?: "flux",
+                imageGenApiUrl = prefs.getString("image_gen_api_url", "") ?: "",
+                imageGenApiKey = prefs.getString("image_gen_api_key", "") ?: "",
+                apiUsageDataJson = UsageTracker.exportUsageJson(context),
+                autoSaveEnabled = prefs.getBoolean("auto_save_enabled", true),
+                readingTheme = prefs.getInt("reading_theme", 0),
+                extraStrings = extraStrings,
+                extraBooleans = extraBooleans,
+                extraInts = extraInts,
+                extraLongs = extraLongs,
+                extraFloats = extraFloats
+            )
+
+            val tempJsonFile = File(backupFolder, "${AI_SETTINGS_BACKUP_FILE}.tmp")
+            val destJsonFile = File(backupFolder, AI_SETTINGS_BACKUP_FILE)
+            tempJsonFile.writeText(json.encodeToString(payload))
+            if (!tempJsonFile.renameTo(destJsonFile)) {
+                copyFile(tempJsonFile, destJsonFile)
+                tempJsonFile.delete()
+            }
+            true
+        } catch (e: Exception) {
+            Log.e("BackupManager", "Failed to write AI settings & usage backup", e)
+            false
+        }
+    }
+
+    private fun restoreAiAndSecureSettingsBackup(context: Context, backupFolder: File) {
+        try {
+            val aiBackupFile = File(backupFolder, AI_SETTINGS_BACKUP_FILE)
+            if (!aiBackupFile.exists() || aiBackupFile.length() == 0L) return
+
+            val rawJson = aiBackupFile.readText()
+            val payload = json.decodeFromString<AiAndSecureSettingsBackup>(rawJson)
+            val prefs = SecurePrefs.get(context)
+            val editor = prefs.edit()
+
+            // Restore generic SecurePrefs entries first
+            for ((k, v) in payload.extraStrings) {
+                if (k != UsageTracker.USAGE_KEY) editor.putString(k, v)
+            }
+            for ((k, v) in payload.extraBooleans) {
+                if (k != "isFirstRun" && k != "is_first_launch") editor.putBoolean(k, v)
+            }
+            for ((k, v) in payload.extraInts) {
+                editor.putInt(k, v)
+            }
+            for ((k, v) in payload.extraLongs) {
+                editor.putLong(k, v)
+            }
+            for ((k, v) in payload.extraFloats) {
+                editor.putFloat(k, v)
+            }
+
+            // Explicitly restore AI Settings keys
+            if (payload.geminiApiKeys.isNotBlank() || !prefs.contains("gemini_api_keys")) {
+                editor.putString("gemini_api_keys", payload.geminiApiKeys)
+            }
+            if (payload.legacyGeminiApiKey.isNotBlank()) {
+                editor.putString("gemini_api_key", payload.legacyGeminiApiKey)
+            }
+            if (payload.geminiModel.isNotBlank()) {
+                editor.putString("gemini_model", payload.geminiModel)
+            }
+            if (payload.imageGenModel.isNotBlank()) {
+                editor.putString("image_gen_model", payload.imageGenModel)
+            }
+            if (payload.imageGenApiUrl.isNotBlank() || !prefs.contains("image_gen_api_url")) {
+                editor.putString("image_gen_api_url", payload.imageGenApiUrl)
+            }
+            if (payload.imageGenApiKey.isNotBlank() || !prefs.contains("image_gen_api_key")) {
+                editor.putString("image_gen_api_key", payload.imageGenApiKey)
+            }
+
+            editor.putBoolean("auto_save_enabled", payload.autoSaveEnabled)
+            editor.putInt("reading_theme", payload.readingTheme)
+            editor.putBoolean("isFirstRun", false)
+            editor.putBoolean("is_first_launch", false)
+            editor.apply()
+
+            // Restore and merge AI Usage statistics (requests, tokens, per-model breakdown, and history log)
+            UsageTracker.restoreOrMergeUsageJson(context, payload.apiUsageDataJson)
+        } catch (e: Exception) {
+            Log.e("BackupManager", "Failed to restore AI settings & usage backup", e)
+        }
+    }
+
+    /**
+     * Parses a backed-up Android SharedPreferences XML file and applies its entries directly to
+     * the live in-memory [SharedPreferences] instance so restored settings take effect immediately
+     * without requiring a cold process restart.
+     */
+    private fun applySharedPrefsXmlToMemory(context: Context, xmlFile: File) {
+        val prefName = xmlFile.nameWithoutExtension
+        if (prefName.isBlank() || prefName.contains("QuizerPrefs")) return
+        try {
+            val sp = context.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+            val editor = sp.edit()
+            FileInputStream(xmlFile).use { inputStream ->
+                val parser = Xml.newPullParser()
+                parser.setInput(inputStream, "UTF-8")
+                var eventType = parser.eventType
+                var currentSetKey: String? = null
+                var currentSetValues: MutableSet<String>? = null
+
+                while (eventType != XmlPullParser.END_DOCUMENT) {
+                    when (eventType) {
+                        XmlPullParser.START_TAG -> {
+                            val tagName = parser.name
+                            val key = parser.getAttributeValue(null, "name")
+                            when (tagName) {
+                                "string" -> {
+                                    if (key != null && currentSetKey == null) {
+                                        editor.putString(key, parser.nextText())
+                                    } else if (currentSetKey != null) {
+                                        currentSetValues?.add(parser.nextText())
+                                    }
+                                }
+                                "boolean" -> {
+                                    val value = parser.getAttributeValue(null, "value")?.toBoolean() ?: false
+                                    if (key != null) editor.putBoolean(key, value)
+                                }
+                                "int" -> {
+                                    val value = parser.getAttributeValue(null, "value")?.toIntOrNull()
+                                    if (key != null && value != null) editor.putInt(key, value)
+                                }
+                                "long" -> {
+                                    val value = parser.getAttributeValue(null, "value")?.toLongOrNull()
+                                    if (key != null && value != null) editor.putLong(key, value)
+                                }
+                                "float" -> {
+                                    val value = parser.getAttributeValue(null, "value")?.toFloatOrNull()
+                                    if (key != null && value != null) editor.putFloat(key, value)
+                                }
+                                "set" -> {
+                                    if (key != null) {
+                                        currentSetKey = key
+                                        currentSetValues = LinkedHashSet()
+                                    }
+                                }
+                            }
+                        }
+                        XmlPullParser.END_TAG -> {
+                            if (parser.name == "set" && currentSetKey != null) {
+                                editor.putStringSet(currentSetKey, currentSetValues ?: emptySet())
+                                currentSetKey = null
+                                currentSetValues = null
+                            }
+                        }
+                    }
+                    eventType = parser.next()
+                }
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            Log.w("BackupManager", "Failed to sync $prefName.xml into in-memory SharedPreferences", e)
         }
     }
 
@@ -103,9 +354,18 @@ object BackupManager {
             if (!backupFolder.exists()) return false
 
             val backupDbFile = File(backupFolder, "quizer_database")
-            if (!backupDbFile.exists() || backupDbFile.length() == 0L) return false
+            val aiBackupFile = File(backupFolder, AI_SETTINGS_BACKUP_FILE)
+            val hasDbBackup = backupDbFile.exists() && backupDbFile.length() > 0L
+            val hasAiBackup = aiBackupFile.exists() && aiBackupFile.length() > 0L
 
-            // 1. Verify candidate backup BEFORE touching live files!
+            if (!hasDbBackup && !hasAiBackup) return false
+
+            if (!hasDbBackup && hasAiBackup) {
+                restoreAiAndSecureSettingsBackup(context, backupFolder)
+                return true
+            }
+
+            // 1. Verify candidate database backup BEFORE touching live files!
             val isBackupValid = verifySqliteIntegrity(backupDbFile)
             if (!isBackupValid) {
                 Log.e("BackupManager", "Cannot restore: candidate backup failed integrity check")
@@ -141,12 +401,12 @@ object BackupManager {
             if (walFile.exists()) copyFile(walFile, rollbackWal)
 
             try {
-                // 3. Remove live files
+                // 3. Remove live database files
                 walFile.delete()
                 shmFile.delete()
                 dbFile.delete()
 
-                // 4. Copy verified backup
+                // 4. Copy verified database backup
                 copyFile(backupDbFile, dbFile)
 
                 val backupWal = File(backupFolder, "quizer_database-wal")
@@ -154,15 +414,19 @@ object BackupManager {
                     copyFile(backupWal, walFile)
                 }
 
-                // 5. Restore non-encrypted shared prefs
+                // 5. Restore non-encrypted shared prefs both on disk and in live memory
                 if (!prefsDestFolder.exists()) prefsDestFolder.mkdirs()
                 backupFolder.listFiles()?.forEach { file ->
                     if (file.name.endsWith(".xml") && !file.name.contains("QuizerPrefs")) {
                         copyFile(file, File(prefsDestFolder, file.name))
+                        applySharedPrefsXmlToMemory(context, file)
                     }
                 }
 
-                // 6. Reopen Room database and verify it opens cleanly
+                // 6. Restore AI Settings (API keys, models, image gen config) and AI Usages into SecurePrefs
+                restoreAiAndSecureSettingsBackup(context, backupFolder)
+
+                // 7. Reopen Room database and verify it opens cleanly
                 val newDb = AppDatabase.getDatabase(context)
                 var integrityOk = false
                 newDb.openHelper.writableDatabase.query("PRAGMA integrity_check").use { cursor ->
@@ -191,7 +455,6 @@ object BackupManager {
                     copyFile(rollbackWal, walFile)
                     rollbackWal.delete()
                 }
-                // Rollback shared preferences
                 if (prefsRollbackFolder.exists()) {
                     prefsRollbackFolder.listFiles()?.forEach { file ->
                         copyFile(file, File(prefsDestFolder, file.name))
@@ -210,13 +473,18 @@ object BackupManager {
     fun hasBackup(): Boolean {
         val backupFolder = File(Environment.getExternalStorageDirectory(), "Quizer/Backups")
         val dbFile = File(backupFolder, "quizer_database")
-        return dbFile.exists() && dbFile.length() > 0
+        val aiFile = File(backupFolder, AI_SETTINGS_BACKUP_FILE)
+        return (dbFile.exists() && dbFile.length() > 0) || (aiFile.exists() && aiFile.length() > 0)
     }
 
     fun clearBackup() {
         val backupFolder = File(Environment.getExternalStorageDirectory(), "Quizer/Backups")
         if (backupFolder.exists()) {
-            backupFolder.listFiles()?.forEach { it.delete() }
+            backupFolder.listFiles()?.forEach { file ->
+                if (file.name != ".nomedia") {
+                    file.delete()
+                }
+            }
         }
     }
 

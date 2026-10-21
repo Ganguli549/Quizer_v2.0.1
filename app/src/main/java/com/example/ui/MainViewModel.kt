@@ -146,8 +146,16 @@ class MainViewModel(
                 }
                 withContext(Dispatchers.Main) {
                     if (success) {
+                        // Refresh in-memory StateFlows from the newly restored SettingsManager
+                        _themeState.value = settingsManager.appTheme
+                        _themeModeState.value = settingsManager.appThemeMode
+                        _isMatteModeState.value = settingsManager.isMatteMode
+                        _appIconState.value = settingsManager.appIcon
+                        _timerSoundEnabledState.value = settingsManager.timerSoundEnabled
+                        _clickSoundEnabledState.value = settingsManager.clickSoundEnabled
+                        _hapticFeedbackEnabledState.value = settingsManager.hapticFeedbackEnabled
                         repository.notifyDatabaseReplaced()
-                        android.widget.Toast.makeText(context, "Backup restored successfully", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Backup restored!", android.widget.Toast.LENGTH_SHORT).show()
                     } else {
                         android.widget.Toast.makeText(context, "Failed to restore backup", android.widget.Toast.LENGTH_LONG).show()
                     }
@@ -815,7 +823,20 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
 
 
 
-    val books = repository.books.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    private val _bookOrder = MutableStateFlow(settingsManager.getBookOrder())
+    val books = combine(repository.books, _bookOrder) { rawBooks, order ->
+        if (order.isEmpty()) {
+            rawBooks
+        } else {
+            val orderMap = order.withIndex().associate { it.value to it.index }
+            rawBooks.sortedWith(compareBy({ orderMap[it.id] ?: (Int.MAX_VALUE - 1000) }, { it.name }))
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun reorderBooks(newOrder: List<String>) {
+        _bookOrder.value = newOrder
+        settingsManager.setBookOrder(newOrder)
+    }
     
     private val _verificationStatus = MutableStateFlow<String?>(null)
     val verificationStatus = _verificationStatus.asStateFlow()

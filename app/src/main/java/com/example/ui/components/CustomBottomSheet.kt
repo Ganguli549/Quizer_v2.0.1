@@ -41,7 +41,7 @@ fun CustomModalBottomSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.6.dp, bottom = 4.dp)
+                    .padding(top = 2.dp, bottom = 4.dp)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
@@ -88,7 +88,7 @@ fun CustomModalBottomSheet(
                         .height(4.dp)
                         .background(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                            shape = MaterialTheme.shapes.extraLarge
+                            shape = androidx.compose.foundation.shape.CircleShape
                         )
                 )
             }

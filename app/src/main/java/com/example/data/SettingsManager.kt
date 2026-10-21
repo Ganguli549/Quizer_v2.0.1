@@ -551,6 +551,26 @@ class SettingsManager(val context: Context) {
         prefs.edit().putBoolean("show_bookmarks_$bookId", value).apply()
     }
 
+    fun getBookOrder(): List<String> {
+        val raw = prefs.getString("custom_book_order", null) ?: return emptyList()
+        return try {
+            val jsonArray = org.json.JSONArray(raw)
+            val list = mutableListOf<String>()
+            for (i in 0 until jsonArray.length()) {
+                list.add(jsonArray.getString(i))
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun setBookOrder(order: List<String>) {
+        val jsonArray = org.json.JSONArray()
+        order.forEach { jsonArray.put(it) }
+        prefs.edit().putString("custom_book_order", jsonArray.toString()).apply()
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
         try {
@@ -627,6 +647,11 @@ class SettingsManager(val context: Context) {
             editor.remove("last_selected_book_id")
         }
         editor.apply()
+
+        val currentOrder = getBookOrder()
+        if (currentOrder.contains(bookId)) {
+            setBookOrder(currentOrder.filter { it != bookId })
+        }
 
         // 3. Remove persisted document URI mapping for this book
         try {

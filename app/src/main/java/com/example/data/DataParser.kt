@@ -376,6 +376,8 @@ class DataParser {
         fun extractImagesFromQBook(file: File, destDir: File, context: Context? = null) {
             try {
                 if (!destDir.exists()) destDir.mkdirs()
+                // Place .nomedia BEFORE extracting images so Android MediaObserver never indexes them
+                MediaScannerHelper.ensureNoMediaInDir(destDir)
                 val extractedFiles = mutableListOf<File>()
                 java.util.zip.ZipFile(file).use { zip ->
                     val entries = zip.entries()
@@ -405,7 +407,7 @@ class DataParser {
                     }
                 }
                 if (context != null && extractedFiles.isNotEmpty()) {
-                    MediaScannerHelper.scanFiles(context, extractedFiles)
+                    MediaScannerHelper.hideDirectoryFromGallery(context, destDir)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -951,7 +953,7 @@ class DataParser {
                         // Extract images
                         if (bookIdStr.isNotEmpty()) {
                             val bookImagesDir = File(quizerDir, "$bookIdStr/images")
-                            extractImagesFromQBook(file, bookImagesDir)
+                            extractImagesFromQBook(file, bookImagesDir, context)
                         }
                     } // end zip
                     

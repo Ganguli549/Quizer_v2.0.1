@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -18,6 +19,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import com.example.ui.MainViewModel
 import kotlinx.coroutines.launch
 
@@ -259,6 +267,19 @@ fun HomeScreen(
     }
 
     if (showBookDialog) {
+        var localBooks by remember(books) { mutableStateOf(books) }
+        var draggedBookKey by remember { mutableStateOf<String?>(null) }
+        var dragOffsetY by remember { mutableFloatStateOf(0f) }
+        val listState = rememberLazyListState()
+        val haptic = LocalHapticFeedback.current
+        val dragCoroutineScope = rememberCoroutineScope()
+
+        LaunchedEffect(books) {
+            if (draggedBookKey == null) {
+                localBooks = books
+            }
+        }
+
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { showBookDialog = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -270,22 +291,117 @@ fun HomeScreen(
                 tonalElevation = 6.dp
             ) {
                 Column(modifier = Modifier.padding(24.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text("Select Book", style = MaterialTheme.typography.headlineSmall)
-                        IconButton(onClick = { showTrashDialog = true }) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = "Trash")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Select Book", style = MaterialTheme.typography.headlineSmall)
+                            Text("Long press & drag to reorder", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            IconButton(onClick = {
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                                showBookDialog = false
+                            }) {
+                                Icon(Icons.Default.Add, contentDescription = "Add Book")
+                            }
+                            IconButton(onClick = { showTrashDialog = true }) {
+                                Icon(Icons.Default.DeleteSweep, contentDescription = "Trash")
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 500.dp)) {
-                        LazyColumn {
-                            items(books, key = { it.id }) { book ->
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pointerInput(localBooks) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { offset ->
+                                            val hitItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                                offset.y.toInt() in item.offset..(item.offset + item.size)
+                                            }
+                                            if (hitItem != null) {
+                                                draggedBookKey = hitItem.key as? String
+                                                dragOffsetY = 0f
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            }
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            dragOffsetY += dragAmount.y
+
+                                            val currentKey = draggedBookKey ?: return@detectDragGesturesAfterLongPress
+                                            val currentItemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
+                                            if (currentItemInfo != null) {
+                                                val currentCenter = currentItemInfo.offset + dragOffsetY + (currentItemInfo.size / 2f)
+                                                val targetItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { other ->
+                                                    other.key != currentKey &&
+                                                        currentCenter >= other.offset &&
+                                                        currentCenter <= (other.offset + other.size)
+                                                }
+                                                if (targetItem != null) {
+                                                    val fromIndex = localBooks.indexOfFirst { it.id == currentKey }
+                                                    val toIndex = localBooks.indexOfFirst { it.id == targetItem.key }
+                                                    if (fromIndex != -1 && toIndex != -1 && fromIndex != toIndex) {
+                                                        val mutable = localBooks.toMutableList()
+                                                        val item = mutable.removeAt(fromIndex)
+                                                        mutable.add(toIndex, item)
+                                                        localBooks = mutable
+                                                        dragOffsetY += (currentItemInfo.offset - targetItem.offset)
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    }
+                                                }
+
+                                                val viewportHeight = listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset
+                                                val itemVisualTop = currentItemInfo.offset + dragOffsetY
+                                                val itemVisualBottom = itemVisualTop + currentItemInfo.size
+                                                if (itemVisualBottom > viewportHeight - 20) {
+                                                    dragCoroutineScope.launch { listState.scrollBy(20f) }
+                                                } else if (itemVisualTop < 20) {
+                                                    dragCoroutineScope.launch { listState.scrollBy(-20f) }
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val key = draggedBookKey
+                                            draggedBookKey = null
+                                            dragOffsetY = 0f
+                                            if (key != null) {
+                                                val order = localBooks.map { it.id }
+                                                viewModel.reorderBooks(order)
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            draggedBookKey = null
+                                            dragOffsetY = 0f
+                                            localBooks = books
+                                        }
+                                    )
+                                }
+                        ) {
+                            items(localBooks, key = { it.id }) { book ->
                                 val isSelected = book.id == currentBookId
+                                val isDragging = book.id == draggedBookKey
                                 Card(
                                     colors = if (isSelected) androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else androidx.compose.material3.CardDefaults.cardColors(),
+                                    elevation = androidx.compose.material3.CardDefaults.cardElevation(
+                                        defaultElevation = if (isDragging) 8.dp else 1.dp
+                                    ),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(vertical = 4.dp)
+                                        .zIndex(if (isDragging) 10f else 1f)
+                                        .graphicsLayer {
+                                            translationY = if (isDragging) dragOffsetY else 0f
+                                            scaleX = if (isDragging) 1.03f else 1f
+                                            scaleY = if (isDragging) 1.03f else 1f
+                                            shadowElevation = if (isDragging) 16f else 0f
+                                        }
+                                        .animateItem()
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -293,7 +409,10 @@ fun HomeScreen(
                                             .padding(8.dp),
                                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                                     ) {
-                                        IconButton(onClick = { viewModel.toggleBookFavorite(book.id, !book.isFavorite) }) {
+                                        IconButton(
+                                            onClick = { viewModel.toggleBookFavorite(book.id, !book.isFavorite) },
+                                            enabled = draggedBookKey == null
+                                        ) {
                                             Icon(
                                                 imageVector = if (book.isFavorite) Icons.Filled.Star else Icons.Outlined.StarBorder,
                                                 contentDescription = "Favorite",
@@ -303,7 +422,7 @@ fun HomeScreen(
                                         Column(
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clickable {
+                                                .clickable(enabled = draggedBookKey == null) {
                                                     viewModel.selectBook(book.id)
                                                     showBookDialog = false
                                                 }
@@ -312,27 +431,23 @@ fun HomeScreen(
                                             Text(book.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                             Text("${book.totalQuestions} Questions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
-                                        IconButton(onClick = {
-                                            viewModel.deleteBook(context, book.id)
-                                            android.widget.Toast.makeText(context, "Deleted ${book.name}", android.widget.Toast.LENGTH_SHORT).show()
-                                        }) {
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.deleteBook(context, book.id)
+                                                android.widget.Toast.makeText(context, "Deleted ${book.name}", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            enabled = draggedBookKey == null
+                                        ) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete")
                                         }
-                                        IconButton(onClick = { detailBook = book }) {
+                                        IconButton(
+                                            onClick = { detailBook = book },
+                                            enabled = draggedBookKey == null
+                                        ) {
                                             Icon(Icons.Default.Info, contentDescription = "Details")
                                         }
                                     }
                                 }
-                            }
-                            item {
-                                ListItem(
-                                    headlineContent = { Text("Load Book From Device") },
-                                    leadingContent = { Icon(Icons.Default.Add, "Add Book") },
-                                    modifier = Modifier.clickable {
-                                        filePickerLauncher.launch(arrayOf("*/*"))
-                                        showBookDialog = false
-                                    }
-                                )
                             }
                         }
                     }

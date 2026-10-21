@@ -2,121 +2,268 @@ package com.example.data
 
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.media.MediaScannerConnection
-import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
 
 object MediaScannerHelper {
 
-    private fun getMimeType(file: File): String {
-        return when (file.extension.lowercase()) {
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            "webp" -> "image/webp"
-            "gif" -> "image/gif"
-            else -> "image/jpeg"
-        }
-    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun scanFile(context: Context?, file: File) {
-        if (context == null || !file.exists() || !file.isFile) return
-        val appContext = context.applicationContext
-        GlobalScope.launch(Dispatchers.IO) {
-            try {
-                val mimeType = getMimeType(file)
-                MediaScannerConnection.scanFile(
-                    appContext,
-                    arrayOf(file.absolutePath),
-                    arrayOf(mimeType)
-                ) { path, uri ->
-                    Log.d("MediaScannerHelper", "Scanned $path -> $uri")
-                }
+    /**
+     * Ensures that [dir] exists and contains a `.nomedia` marker file.
+     * Also ensures `.nomedia` exists in ancestor directories up to the `Quizer` root folder.
+     */
+    fun ensureNoMediaInDir(dir: File?): File? {
+        if (dir == null) return null
+        return try {
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            if (!dir.isDirectory) return null
 
-                try {
-                    val intent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-                    intent.data = Uri.fromFile(file)
-                    appContext.sendBroadcast(intent)
-                } catch (_: Exception) {}
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var current: File? = dir
+            var targetNoMedia: File? = null
+            while (current != null && current.isDirectory) {
+                val nm = File(current, ".nomedia")
+                if (!nm.exists()) {
                     try {
-                        val values = ContentValues().apply {
-                            put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
-                            put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-                            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Quizer")
-                            put(MediaStore.Images.Media.IS_PENDING, 0)
-                        }
-                        appContext.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        nm.createNewFile()
                     } catch (_: Exception) {}
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+                if (targetNoMedia == null && nm.exists()) {
+                    targetNoMedia = nm
+                }
+                if (current.name.equals("Quizer", ignoreCase = true)) {
+                    break
+                }
+                val parent = current.parentFile
+                if (parent == null || !parent.absolutePath.contains("Quizer", ignoreCase = true)) {
+                    break
+                }
+                current = parent
             }
+            targetNoMedia
+        } catch (e: Exception) {
+            Log.w("MediaScannerHelper", "Failed to create .nomedia in ${dir.absolutePath}", e)
+            null
         }
     }
 
+    /**
+     * Ensures `.nomedia` exists in [file]'s parent directory and notifies Android's MediaScanner
+     * of the `.nomedia` marker so the image is hidden from Gallery apps.
+     */
+    fun scanFile(context: Context?, file: File) {
+        if (context == null) return
+        val parentDir = if (file.isDirectory) file else file.parentFile
+        if (parentDir != null) {
+            hideDirectoryFromGallery(context, parentDir)
+        }
+    }
+
+    /**
+     * Ensures `.nomedia` exists in all parent directories of [files] and notifies MediaScanner
+     * so extracted/downloaded images are hidden from Gallery apps.
+     */
     fun scanFiles(context: Context?, files: List<File>) {
         if (context == null || files.isEmpty()) return
         val appContext = context.applicationContext
-        val validFiles = files.filter { it.exists() && it.isFile }
-        if (validFiles.isEmpty()) return
-        GlobalScope.launch(Dispatchers.IO) {
+        scope.launch {
             try {
-                val paths = validFiles.map { it.absolutePath }.toTypedArray()
-                val mimeTypes = validFiles.map { getMimeType(it) }.toTypedArray()
-                MediaScannerConnection.scanFile(
-                    appContext,
-                    paths,
-                    mimeTypes
-                ) { path, uri ->
-                    Log.d("MediaScannerHelper", "Batch scanned $path -> $uri")
+                val noMediaPaths = LinkedHashSet<String>()
+                files.mapNotNull { if (it.isDirectory) it else it.parentFile }
+                    .distinctBy { it.absolutePath }
+                    .forEach { dir ->
+                        ensureNoMediaInDir(dir)?.let { nm ->
+                            noMediaPaths.add(nm.absolutePath)
+                            noMediaPaths.add(dir.absolutePath)
+                        }
+                    }
+
+                val rootQuizer = File(Environment.getExternalStorageDirectory(), "Quizer")
+                ensureNoMediaInDir(rootQuizer)?.let { nm ->
+                    noMediaPaths.add(nm.absolutePath)
+                    noMediaPaths.add(rootQuizer.absolutePath)
                 }
-                for (file in validFiles) {
-                    try {
-                        val intent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-                        intent.data = Uri.fromFile(file)
-                        appContext.sendBroadcast(intent)
-                    } catch (_: Exception) {}
+
+                purgeIndexedQuizerImagesFromMediaStore(appContext)
+
+                if (noMediaPaths.isNotEmpty()) {
+                    MediaScannerConnection.scanFile(
+                        appContext,
+                        noMediaPaths.toTypedArray(),
+                        null
+                    ) { path, _ ->
+                        Log.d("MediaScannerHelper", "Enforced .nomedia for $path")
+                    }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w("MediaScannerHelper", "Error hiding files from gallery", e)
             }
         }
     }
 
-    fun scanAllQuizerFolderImages(context: Context?) {
+    fun hideDirectoryFromGallery(context: Context?, dir: File) {
         if (context == null) return
         val appContext = context.applicationContext
-        GlobalScope.launch(Dispatchers.IO) {
+        scope.launch {
+            try {
+                val noMediaPaths = LinkedHashSet<String>()
+                ensureNoMediaInDir(dir)?.let { nm ->
+                    noMediaPaths.add(nm.absolutePath)
+                    noMediaPaths.add(dir.absolutePath)
+                }
+                val rootQuizer = File(Environment.getExternalStorageDirectory(), "Quizer")
+                ensureNoMediaInDir(rootQuizer)?.let { nm ->
+                    noMediaPaths.add(nm.absolutePath)
+                    noMediaPaths.add(rootQuizer.absolutePath)
+                }
+                purgeIndexedQuizerImagesFromMediaStore(appContext)
+                if (noMediaPaths.isNotEmpty()) {
+                    MediaScannerConnection.scanFile(
+                        appContext,
+                        noMediaPaths.toTypedArray(),
+                        null,
+                        null
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("MediaScannerHelper", "Error hiding directory from gallery", e)
+            }
+        }
+    }
+
+    /**
+     * Recursively places `.nomedia` across all Quizer folders, demotes any already-indexed
+     * Quizer images in Android's MediaStore to `MEDIA_TYPE_NONE` (without deleting physical files),
+     * and triggers MediaScanner on the `.nomedia` markers so Gallery apps hide all Quizer images.
+     */
+    fun ensureNoMediaAndHideFromGallery(context: Context?) {
+        if (context == null) return
+        val appContext = context.applicationContext
+        scope.launch {
             try {
                 val rootDirs = listOf(
-                    File(android.os.Environment.getExternalStorageDirectory(), "Quizer"),
-                    File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "Quizer"),
-                    File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES), "Quizer")
+                    File(Environment.getExternalStorageDirectory(), "Quizer"),
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Quizer"),
+                    File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Quizer")
                 )
-                val allImages = mutableListOf<File>()
+
+                val pathsToScan = LinkedHashSet<String>()
+                val now = System.currentTimeMillis()
+
                 for (rootDir in rootDirs) {
+                    if (!rootDir.exists()) {
+                        if (rootDir.parentFile == Environment.getExternalStorageDirectory()) {
+                            rootDir.mkdirs()
+                        } else {
+                            continue
+                        }
+                    }
                     if (rootDir.exists() && rootDir.isDirectory) {
-                        rootDir.walkTopDown().forEach { file ->
-                            if (file.isFile && file.extension.lowercase() in listOf("jpg", "jpeg", "png", "webp", "gif")) {
-                                allImages.add(file)
+                        rootDir.walkTopDown().forEach { dir ->
+                            if (dir.isDirectory) {
+                                val nm = ensureNoMediaInDir(dir)
+                                if (nm != null) {
+                                    try {
+                                        nm.setLastModified(now)
+                                        dir.setLastModified(now)
+                                    } catch (_: Exception) {}
+                                    pathsToScan.add(nm.absolutePath)
+                                    pathsToScan.add(dir.absolutePath)
+                                }
                             }
                         }
                     }
                 }
-                if (allImages.isNotEmpty()) {
-                    scanFiles(appContext, allImages)
+
+                // Demote any existing MediaStore image records under /Quizer/ to MEDIA_TYPE_NONE
+                // so Gallery apps immediately stop showing them without deleting physical files on disk.
+                purgeIndexedQuizerImagesFromMediaStore(appContext)
+
+                if (pathsToScan.isNotEmpty()) {
+                    MediaScannerConnection.scanFile(
+                        appContext,
+                        pathsToScan.toTypedArray(),
+                        null
+                    ) { path, _ ->
+                        Log.d("MediaScannerHelper", "Verified .nomedia hidden state for $path")
+                    }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w("MediaScannerHelper", "Error enforcing .nomedia across Quizer folders", e)
             }
+        }
+    }
+
+    /**
+     * Kept as an alias so existing callers automatically enforce `.nomedia` hiding.
+     */
+    fun scanAllQuizerFolderImages(context: Context?) {
+        ensureNoMediaAndHideFromGallery(context)
+    }
+
+    fun hideAllQuizerImagesFromGallery(context: Context?) {
+        ensureNoMediaAndHideFromGallery(context)
+    }
+
+    /**
+     * Demotes any already-indexed `/Quizer/` image entries in Android's `MediaStore.Files` table
+     * from `MEDIA_TYPE_IMAGE` (1) to `MEDIA_TYPE_NONE` (0) so they disappear from Gallery apps
+     * while leaving all physical image files on disk untouched.
+     * Also deletes any 0-byte orphan rows previously inserted into `Pictures/Quizer`.
+     */
+    fun purgeIndexedQuizerImagesFromMediaStore(context: Context) {
+        val resolver = context.contentResolver
+        val filesUri = MediaStore.Files.getContentUri("external")
+
+        // 1. Delete rows in MediaStore.Images matching Quizer or Pictures/Quizer so gallery immediately forgets them
+        try {
+            resolver.delete(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                "${MediaStore.Images.Media.DATA} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
+                arrayOf("%/Quizer/%", "Quizer/%", "%Pictures/Quizer%")
+            )
+        } catch (_: Exception) {}
+
+        // 2. Demote indexed /Quizer/ images in MediaStore.Files from MEDIA_TYPE_IMAGE to MEDIA_TYPE_NONE (0)
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Files.FileColumns.MEDIA_TYPE, MediaStore.Files.FileColumns.MEDIA_TYPE_NONE)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(
+                    filesUri,
+                    values,
+                    "(${MediaStore.Files.FileColumns.DATA} LIKE ? OR ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?) AND ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?",
+                    arrayOf(
+                        "%/Quizer/%",
+                        "Quizer/%",
+                        "%Pictures/Quizer%",
+                        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString()
+                    )
+                )
+            } else {
+                resolver.update(
+                    filesUri,
+                    values,
+                    "${MediaStore.Files.FileColumns.DATA} LIKE ? AND ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?",
+                    arrayOf(
+                        "%/Quizer/%",
+                        MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString()
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.d("MediaScannerHelper", "MediaStore MEDIA_TYPE_NONE update skipped: ${e.message}")
         }
     }
 }

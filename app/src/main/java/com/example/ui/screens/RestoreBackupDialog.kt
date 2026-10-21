@@ -74,7 +74,7 @@ fun RestoreBackupDialog(
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
                         Text(
-                            "We found a backup from a previous installation. Would you like to restore your library and progress, or start completely fresh?",
+                            "We found a backup from a previous installation. Would you like to restore your library, progress, AI settings, and API usage history, or start completely fresh?",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(bottom = 24.dp)

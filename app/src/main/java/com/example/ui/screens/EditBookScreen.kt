@@ -112,6 +112,7 @@ fun EditBookScreen(
                     viewModel.repository.insertQuestions(repairedToSave)
                 }
                 questions = cleanedList
+                deleteUnusedImages(context, viewModel.repository, currentBookId, keepOnlyCurrentBookImages = false)
             }
         }
     }
@@ -712,13 +713,16 @@ fun EditQuestionDialog(
             val quizerDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer")
             val bookImagesDir = File(quizerDir, "$bookId/images")
             if (!bookImagesDir.exists()) bookImagesDir.mkdirs()
-            
+            com.example.data.MediaScannerHelper.ensureNoMediaInDir(bookImagesDir)
+
             val destFile = File(bookImagesDir, fileName)
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(destFile).use { output ->
                     input.copyTo(output)
                 }
             }
+            com.example.data.MediaScannerHelper.hideDirectoryFromGallery(context, bookImagesDir)
+            com.example.data.MediaScannerHelper.purgeIndexedQuizerImagesFromMediaStore(context)
             return fileName
         } catch (e: Exception) {
             e.printStackTrace()
@@ -734,6 +738,16 @@ fun EditQuestionDialog(
                 if (fileName != null) {
                     qImg = "images/$fileName"
                 }
+                try {
+                    if (uriContent.scheme == "content") {
+                        context.contentResolver.delete(uriContent, null, null)
+                    }
+                    val path = result.getUriFilePath(context)
+                    if (path != null) {
+                        val f = File(path)
+                        if (f.exists()) f.delete()
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -746,6 +760,16 @@ fun EditQuestionDialog(
                 if (fileName != null) {
                     qExplanationImage = "images/$fileName"
                 }
+                try {
+                    if (uriContent.scheme == "content") {
+                        context.contentResolver.delete(uriContent, null, null)
+                    }
+                    val path = result.getUriFilePath(context)
+                    if (path != null) {
+                        val f = File(path)
+                        if (f.exists()) f.delete()
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
@@ -770,6 +794,13 @@ fun EditQuestionDialog(
         borderLineColor = primaryArgb,
         borderCornerColor = primaryArgb
     )
+
+    val launchCropper: (androidx.activity.result.ActivityResultLauncher<CropImageContractOptions>, Uri?) -> Unit = { launcher, existingUri ->
+        val tempCropFile = File(context.cacheDir, "crop_${UUID.randomUUID()}.jpg")
+        val tempCropUri = Uri.fromFile(tempCropFile)
+        val opts = cropOptions.copy(customOutputUri = tempCropUri)
+        launcher.launch(CropImageContractOptions(uri = existingUri, cropImageOptions = opts))
+    }
 
     val getExistingUri = { path: String ->
         if (path.isNotBlank()) {
@@ -1015,11 +1046,11 @@ fun EditQuestionDialog(
                         modifier = Modifier.weight(1f)
                     )
                     if (qImg.isNotBlank()) {
-                        IconButton(onClick = { qImgLauncher.launch(CropImageContractOptions(uri = getExistingUri(qImg), cropImageOptions = cropOptions)) }) {
+                        IconButton(onClick = { launchCropper(qImgLauncher, getExistingUri(qImg)) }) {
                             Icon(Icons.Default.Edit, "Edit Image")
                         }
                     }
-                    IconButton(onClick = { qImgLauncher.launch(CropImageContractOptions(uri = null, cropImageOptions = cropOptions)) }) {
+                    IconButton(onClick = { launchCropper(qImgLauncher, null) }) {
                         Icon(Icons.Default.Image, "Pick Image")
                     }
                 }
@@ -1032,11 +1063,11 @@ fun EditQuestionDialog(
                         modifier = Modifier.weight(1f)
                     )
                     if (qExplanationImage.isNotBlank()) {
-                        IconButton(onClick = { explImgLauncher.launch(CropImageContractOptions(uri = getExistingUri(qExplanationImage), cropImageOptions = cropOptions)) }) {
+                        IconButton(onClick = { launchCropper(explImgLauncher, getExistingUri(qExplanationImage)) }) {
                             Icon(Icons.Default.Edit, "Edit Image")
                         }
                     }
-                    IconButton(onClick = { explImgLauncher.launch(CropImageContractOptions(uri = null, cropImageOptions = cropOptions)) }) {
+                    IconButton(onClick = { launchCropper(explImgLauncher, null) }) {
                         Icon(Icons.Default.Image, "Pick Image")
                     }
                 }
@@ -1175,6 +1206,9 @@ fun RestorePointsDialog(
                                     isLoading = true
                                     coroutineScope.launch(Dispatchers.IO) {
                                         viewModel.resetBookToInitial(context, bookId) {
+                                            coroutineScope.launch(Dispatchers.IO) {
+                                                deleteUnusedImages(context, viewModel.repository, bookId, keepOnlyCurrentBookImages = false)
+                                            }
                                             onRestored()
                                         }
                                     }
@@ -1199,6 +1233,9 @@ fun RestorePointsDialog(
                                         file.delete()
                                         val restoreDir = File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/RestorePoints/$bookId")
                                         files = restoreDir.listFiles()?.filter { it.name.endsWith(".qbook") }?.sortedByDescending { it.lastModified() } ?: emptyList()
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            deleteUnusedImages(context, viewModel.repository, bookId, keepOnlyCurrentBookImages = false)
+                                        }
                                     }) {
                                         Icon(androidx.compose.material.icons.Icons.Default.Close, "Delete", tint = MaterialTheme.colorScheme.error)
                                     }
@@ -1206,10 +1243,34 @@ fun RestorePointsDialog(
                                 modifier = Modifier.clickable {
                                     isLoading = true
                                     coroutineScope.launch(Dispatchers.IO) {
+                                        // Delete all images added in subsequent states that are not in this restore point
+                                        val quizerDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer")
+                                        val bookImagesDir = File(quizerDir, "$bookId/images")
+                                        if (bookImagesDir.exists() && bookImagesDir.isDirectory) {
+                                            val rpImages = mutableSetOf<String>()
+                                            try {
+                                                java.util.zip.ZipFile(file).use { zip ->
+                                                    val entries = zip.entries()
+                                                    while (entries.hasMoreElements()) {
+                                                        val entry = entries.nextElement()
+                                                        if (entry.name.startsWith("images/") && !entry.isDirectory) {
+                                                            rpImages.add(entry.name.substringAfterLast("/").trim())
+                                                        }
+                                                    }
+                                                }
+                                            } catch (_: Exception) {}
+                                            bookImagesDir.listFiles()?.forEach { imgFile ->
+                                                if (imgFile.name != ".nomedia" && !rpImages.contains(imgFile.name)) {
+                                                    imgFile.delete()
+                                                }
+                                            }
+                                        }
+
                                         val tempFile = File.createTempFile("restore", ".qbook", context.cacheDir)
                                         file.copyTo(tempFile, overwrite = true)
                                         val idStr = com.example.data.DataParser.parseAndInsertFromQBook(context, viewModel.repository, tempFile, true)
                                         if (idStr != null && !idStr.startsWith("Error")) {
+                                            deleteUnusedImages(context, viewModel.repository, bookId, keepOnlyCurrentBookImages = false)
                                             onRestored()
                                         } else {
                                             isLoading = false
@@ -1237,6 +1298,9 @@ fun RestorePointsDialog(
                                 restoreDir.deleteRecursively()
                             }
                             
+                            // Delete any images added in restore points or discarded edits, keeping only images used in current book
+                            deleteUnusedImages(context, viewModel.repository, bookId, keepOnlyCurrentBookImages = true)
+
                             val targetFile = originalFile ?: File(android.os.Environment.getExternalStorageDirectory().absolutePath, "Quizer/$bookId.qbook")
                             exportQBook(context, viewModel.repository, bookId, targetFile)
                             

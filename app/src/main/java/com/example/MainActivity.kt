@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
                 
                 if (hasPerms) {
                     viewModel.initializeApp(appContext)
-                    com.example.data.MediaScannerHelper.scanAllQuizerFolderImages(appContext)
+                    com.example.data.MediaScannerHelper.hideAllQuizerImagesFromGallery(appContext)
                 }
             }
             override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {

@@ -144,13 +144,6 @@ fun LearnScreen(viewModel: MainViewModel, onHome: () -> Unit, onStartQuiz: () ->
                             label = { Text("Question Flow") }
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        "Learn configuration is remembered per book and isolated from Home Start Quiz.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             },
             confirmButton = {

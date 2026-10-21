@@ -21,22 +21,23 @@ object ImageDownloader {
                 if (!response.isSuccessful) return@withContext null
 
                 val bytes = response.body?.bytes() ?: return@withContext null
-                
+
                 val imagesDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$bookId/images")
                 if (!imagesDir.exists()) {
                     imagesDir.mkdirs()
                 }
+                MediaScannerHelper.ensureNoMediaInDir(imagesDir)
 
                 val hash = MessageDigest.getInstance("SHA-256").digest(imageUrl.toByteArray()).joinToString("") { "%02x".format(it) }
                 val fileName = "img_$hash.jpg"
                 val file = File(imagesDir, fileName)
-                
+
                 if (!file.exists()) {
                     FileOutputStream(file).use { fos ->
                         fos.write(bytes)
                     }
                 }
-                MediaScannerHelper.scanFile(context, file)
+                MediaScannerHelper.hideDirectoryFromGallery(context, imagesDir)
 
                 return@withContext "images/$fileName"
             }

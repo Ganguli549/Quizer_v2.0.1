@@ -105,11 +105,18 @@ suspend fun exportQBook(context: Context, repository: QuizRepository, bookId: St
                 }
                 val bookImagesDir = File(quizerDir, "$bookId/images")
                 if (bookImagesDir.exists() && bookImagesDir.isDirectory) {
+                    val referencedImages = questions.flatMap { listOfNotNull(it.img, it.explanationImage) }
+                        .map { it.substringAfterLast("/").trim() }
+                        .filter { it.isNotBlank() }
+                        .toSet()
+
                     bookImagesDir.listFiles()?.forEach { file ->
-                        val entry = ZipEntry("images/${file.name}")
-                        zipOut.putNextEntry(entry)
-                        file.inputStream().use { input -> input.copyTo(zipOut) }
-                        zipOut.closeEntry()
+                        if (file.name != ".nomedia" && referencedImages.contains(file.name)) {
+                            val entry = ZipEntry("images/${file.name}")
+                            zipOut.putNextEntry(entry)
+                            file.inputStream().use { input -> input.copyTo(zipOut) }
+                            zipOut.closeEntry()
+                        }
                     }
                 }
             }
@@ -175,6 +182,7 @@ suspend fun createRestorePoint(context: Context, repository: QuizRepository, boo
             val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
             val restoreDir = File(basePath, "Quizer/RestorePoints/$bookId")
             if (!restoreDir.exists()) restoreDir.mkdirs()
+            com.example.data.MediaScannerHelper.ensureNoMediaInDir(restoreDir)
             
             val timestamp = System.currentTimeMillis()
             val fileName = "${timestamp}_${changeName.replace(Regex("[^a-zA-Z0-9]"), "_")}.qbook"
@@ -187,6 +195,67 @@ suspend fun createRestorePoint(context: Context, repository: QuizRepository, boo
             if (files.size > 10) {
                 files.drop(10).forEach { it.delete() }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+suspend fun deleteUnusedImages(context: Context, repository: QuizRepository, bookId: String, keepOnlyCurrentBookImages: Boolean = false) {
+    withContext(Dispatchers.IO) {
+        try {
+            val quizerDir = File(android.os.Environment.getExternalStorageDirectory(), "Quizer")
+            val bookImagesDir = File(quizerDir, "$bookId/images")
+            if (!bookImagesDir.exists() || !bookImagesDir.isDirectory) return@withContext
+
+            val currentQuestions = repository.getQuestionsForBookSync(bookId)
+            val referencedImages = currentQuestions.flatMap { listOfNotNull(it.img, it.explanationImage) }
+                .map { it.substringAfterLast("/").trim() }
+                .filter { it.isNotBlank() }
+                .toMutableSet()
+
+            if (!keepOnlyCurrentBookImages) {
+                // Keep images from any existing restore points so active restore points aren't broken
+                val restoreDir = File(quizerDir, "RestorePoints/$bookId")
+                if (restoreDir.exists() && restoreDir.isDirectory) {
+                    restoreDir.listFiles { f -> f.isFile && f.name.endsWith(".qbook") }?.forEach { rpFile ->
+                        try {
+                            java.util.zip.ZipFile(rpFile).use { zip ->
+                                val entries = zip.entries()
+                                while (entries.hasMoreElements()) {
+                                    val entry = entries.nextElement()
+                                    if (entry.name.startsWith("images/") && !entry.isDirectory) {
+                                        referencedImages.add(entry.name.substringAfterLast("/").trim())
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                // Also check backup_questions.json if it exists
+                val backupFile = File(quizerDir, "$bookId/backup_questions.json")
+                if (backupFile.exists()) {
+                    try {
+                        val fileContent = backupFile.readText()
+                        val type = object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookQuestion>>() {}.type
+                        val bQuestions: List<com.example.data.QBookQuestion> = com.example.data.SharedGson.normal.fromJson(fileContent, type) ?: emptyList()
+                        bQuestions.forEach { q ->
+                            q.question.image?.substringAfterLast("/")?.trim()?.takeIf { it.isNotBlank() }?.let { referencedImages.add(it) }
+                            q.explanation?.image?.substringAfterLast("/")?.trim()?.takeIf { it.isNotBlank() }?.let { referencedImages.add(it) }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Delete any file in bookImagesDir that is not in referencedImages and not .nomedia
+            bookImagesDir.listFiles()?.forEach { file ->
+                if (file.name != ".nomedia" && !referencedImages.contains(file.name)) {
+                    file.delete()
+                }
+            }
+            com.example.data.MediaScannerHelper.ensureNoMediaInDir(bookImagesDir)
+            com.example.data.MediaScannerHelper.hideDirectoryFromGallery(context, bookImagesDir)
         } catch (e: Exception) {
             e.printStackTrace()
         }
