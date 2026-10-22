@@ -2247,26 +2247,30 @@ fun ChatMessageContent(content: String, isUser: Boolean = false) {
                         )
                     }
                     is MessageChunk.WebImage -> {
-                        WebIllustrationCard(
-                            imageUrl = chunk.url,
-                            title = chunk.title,
-                            caption = chunk.caption,
-                            sourceUrl = chunk.source,
-                            provider = chunk.provider,
-                            mediaType = chunk.mediaType,
-                            videoUrl = chunk.videoUrl
-                        )
+                        androidx.compose.foundation.text.selection.DisableSelection {
+                            WebIllustrationCard(
+                                imageUrl = chunk.url,
+                                title = chunk.title,
+                                caption = chunk.caption,
+                                sourceUrl = chunk.source,
+                                provider = chunk.provider,
+                                mediaType = chunk.mediaType,
+                                videoUrl = chunk.videoUrl
+                            )
+                        }
                     }
                     is MessageChunk.SimpleImage -> {
-                        WebIllustrationCard(
-                            imageUrl = chunk.url,
-                            title = "Generated Illustration",
-                            caption = "",
-                            sourceUrl = "",
-                            provider = "AI Illustration",
-                            mediaType = "image",
-                            videoUrl = ""
-                        )
+                        androidx.compose.foundation.text.selection.DisableSelection {
+                            WebIllustrationCard(
+                                imageUrl = chunk.url,
+                                title = "Generated Illustration",
+                                caption = "",
+                                sourceUrl = "",
+                                provider = "AI Illustration",
+                                mediaType = "image",
+                                videoUrl = ""
+                            )
+                        }
                     }
                 }
             }
@@ -2314,23 +2318,21 @@ fun WebIllustrationCard(
         }
     }
 
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        shadowElevation = 0.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // Source & Attribution Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -2404,8 +2406,8 @@ fun WebIllustrationCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 160.dp, max = 280.dp)
-                    .background(Color.Black.copy(alpha = 0.04f))
+                    .heightIn(min = 160.dp, max = 260.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
                     .clickable { showDialog = true },
                 contentAlignment = Alignment.Center
             ) {
@@ -2414,7 +2416,7 @@ fun WebIllustrationCard(
                         coil.compose.SubcomposeAsyncImage(
                             model = imageRequest,
                             contentDescription = title.ifBlank { caption },
-                            contentScale = ContentScale.Fit,
+                            contentScale = ContentScale.Crop,
                             onError = { loadFailed = true },
                             loading = {
                                 Box(
@@ -2424,7 +2426,7 @@ fun WebIllustrationCard(
                                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 260.dp)
                         )
                         Surface(
                             shape = androidx.compose.foundation.shape.CircleShape,
@@ -2494,7 +2496,7 @@ fun WebIllustrationCard(
                         coil.compose.SubcomposeAsyncImage(
                             model = imageRequest,
                             contentDescription = title.ifBlank { caption },
-                            contentScale = ContentScale.Fit,
+                            contentScale = ContentScale.Crop,
                             onError = { loadFailed = true },
                             loading = {
                                 Box(
@@ -2504,7 +2506,7 @@ fun WebIllustrationCard(
                                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 260.dp)
                         )
                     } else {
                         // Animated GIF fallback container: NEVER removed or hidden!
@@ -2544,7 +2546,7 @@ fun WebIllustrationCard(
                         coil.compose.SubcomposeAsyncImage(
                             model = imageRequest,
                             contentDescription = title.ifBlank { caption },
-                            contentScale = ContentScale.Fit,
+                            contentScale = if (mediaType == "chart") ContentScale.Fit else ContentScale.Crop,
                             onError = { loadFailed = true },
                             loading = {
                                 Box(
@@ -2554,7 +2556,7 @@ fun WebIllustrationCard(
                                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 280.dp)
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 260.dp)
                         )
                     } else if (title.isNotBlank() || caption.isNotBlank()) {
                         Box(
@@ -2625,7 +2627,11 @@ fun WebIllustrationCard(
 
             // Description / Caption
             if (title.isNotBlank() || caption.isNotBlank()) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 11.dp)
+                ) {
                     if (title.isNotBlank()) {
                         Text(
                             text = title,
@@ -2635,7 +2641,9 @@ fun WebIllustrationCard(
                         )
                     }
                     if (caption.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(3.dp))
+                        if (title.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(3.dp))
+                        }
                         Text(
                             text = caption,
                             style = MaterialTheme.typography.bodySmall,
