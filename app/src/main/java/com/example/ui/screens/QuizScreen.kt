@@ -1099,7 +1099,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 enableDynamicHeight = true,
                 onDismissRequest = { showExplanationSheet = false }
             ) {
-                Column(Modifier.fillMaxWidth().weight(1f, fill = true)) {
+                Column(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {
                             Tab(
@@ -1115,17 +1115,17 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         }
                     } else {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
-                            Spacer(Modifier.width(12.dp))
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(10.dp))
                             Text("AI Explanation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         }
                         androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp).graphicsLayer(alpha = 0.5f))
                     }
                     
-                    Box(Modifier.fillMaxWidth().weight(1f).padding(16.dp)) {
+                    Box(Modifier.fillMaxWidth().weight(1f, fill = false).padding(horizontal = 16.dp, vertical = 12.dp)) {
                         if (actualTabIndex == 0 && hasDetailed) {
                             Column(modifier = Modifier.verticalScroll(rememberScrollState()).animateContentSize()) {
                                 if (!questions[currentIndex].explanationImage.isNullOrEmpty()) {
@@ -1228,7 +1228,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         com.example.ui.components.TableRenderer(expTableData, MaterialTheme.colorScheme.onSurface)
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(48.dp).navigationBarsPadding())
+                                Spacer(modifier = Modifier.height(12.dp))
                             }
                         } else {
                             Column(modifier = Modifier.verticalScroll(rememberScrollState()).animateContentSize()) {
@@ -1268,7 +1268,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         Text("Regenerate")
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(48.dp).navigationBarsPadding())
+                                Spacer(modifier = Modifier.height(12.dp))
                             }
                             
                             LaunchedEffect(aiExplanationState, explanationSheetTab, currentIndex) {

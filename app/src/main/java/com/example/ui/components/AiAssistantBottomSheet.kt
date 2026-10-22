@@ -374,11 +374,11 @@ fun AiAssistantBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(bottom = 8.8.dp)
-                .weight(1f, fill = true)
+                .padding(bottom = 4.dp)
+                .weight(1f, fill = false)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -476,10 +476,7 @@ fun AiAssistantBottomSheet(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            
 
-            
             // Chat history area
             if (showDevLogs) {
                 Column(modifier = Modifier.weight(1f, fill = false).fillMaxWidth()) {
@@ -522,14 +519,14 @@ fun AiAssistantBottomSheet(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                contentPadding = PaddingValues(vertical = 4.dp)
             ) {
                 if (chatHistory.isEmpty()) {
                     item {
                         Text(
                             text = if (mode == AiChatMode.READ_BOOK) "Say hi or ask questions." else "Say hi, ask questions, or request edits (e.g., 'Add distractors to question 1').",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
                         )
                     }
                 }
@@ -904,8 +901,11 @@ fun AiAssistantBottomSheet(
 
             // Suggestions
             LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 val suggestions = if (mode == AiChatMode.READ_BOOK) {
                     if (visibleQuestionNumbers.isNotEmpty()) {
@@ -920,17 +920,17 @@ fun AiAssistantBottomSheet(
                     SuggestionChip(
                         onClick = { viewModel.setAiPromptText(chatContextId, suggestion) },
                         label = { Text(suggestion) },
+                        modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(16.dp)
                     )
                 }
             }
-            
 
             if (attachedPdfUri != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    modifier = Modifier.padding(bottom = 8.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -971,13 +971,12 @@ fun AiAssistantBottomSheet(
                     }
                 }
             }
-            // Input Area
+            // Input Area (navigation bar inset is already applied once by CustomModalBottomSheet)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(bottom = 6.6.dp, top = 4.4.dp)
+                    .padding(top = 2.dp, bottom = 4.dp)
             ) {
                 OutlinedTextField(
                     value = prompt,

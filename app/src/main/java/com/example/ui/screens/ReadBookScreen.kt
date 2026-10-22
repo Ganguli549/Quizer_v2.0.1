@@ -1405,9 +1405,10 @@ fun ReadBookScreen(
             com.example.ui.components.CustomModalBottomSheet(
                 maxHeightFraction = 0.75f,
                 enableDynamicHeight = true,
+                fillMaxSheetHeight = true,
                 onDismissRequest = { showChapterIndex = false }
             ) {
-                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = true)) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().weight(1f, fill = true)) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = remember(chapterSheetOpenCount) {
                         androidx.compose.foundation.lazy.LazyListState(
