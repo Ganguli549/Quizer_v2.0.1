@@ -633,7 +633,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                             endIdx++
                         }
                         val isFirst = startIdx == animatedIndex
-                        val range = if (startIdx == endIdx) "(${startIdx + 1})" else "(${startIdx + 1}-${endIdx + 1})"
+                        val range = if (startIdx == endIdx) "" else "(${startIdx + 1}-${endIdx + 1})"
                         Pair(range, isFirst)
                     }
                 }
@@ -1096,9 +1096,10 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
             
             com.example.ui.components.CustomModalBottomSheet(
                 maxHeightFraction = 0.80f,
+                enableDynamicHeight = true,
                 onDismissRequest = { showExplanationSheet = false }
             ) {
-                Column(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                Column(Modifier.fillMaxWidth().weight(1f, fill = true)) {
                     if (hasDetailed) {
                         TabRow(selectedTabIndex = actualTabIndex) {
                             Tab(
@@ -1124,7 +1125,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp).graphicsLayer(alpha = 0.5f))
                     }
                     
-                    Box(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Box(Modifier.fillMaxWidth().weight(1f).padding(16.dp)) {
                         if (actualTabIndex == 0 && hasDetailed) {
                             Column(modifier = Modifier.verticalScroll(rememberScrollState()).animateContentSize()) {
                                 if (!questions[currentIndex].explanationImage.isNullOrEmpty()) {

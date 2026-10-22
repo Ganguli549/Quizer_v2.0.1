@@ -33,6 +33,8 @@ fun ExpandableQuestionHeader(
     onClick: (() -> Unit)? = null,
     onClickWithCoords: ((Float, Float) -> Unit)? = null
 ) {
+    // If the header relates to only a single question (e.g. "(3)"), do not mention the single number
+    val effectiveRangeStr = if (rangeStr.trim().matches(Regex("""^\(\s*\d+\s*\)$"""))) "" else rangeStr
     val pTagRegex = Regex("<p(?:\\s+name=\"([^\"]+)\")?\\s*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL)
     val match = pTagRegex.find(headerText)
 
@@ -45,7 +47,7 @@ fun ExpandableQuestionHeader(
         var isExpanded by remember(headerText, initiallyExpanded) { mutableStateOf(initiallyExpanded) }
 
         Column(modifier = modifier.fillMaxWidth()) {
-            val rangeDisplay = if (rangeStr.isNotBlank()) " <b>$rangeStr</b>" else ""
+            val rangeDisplay = if (effectiveRangeStr.isNotBlank()) " <b>$effectiveRangeStr</b>" else ""
             if (beforeP.isNotBlank()) {
                 RichText(
                     text = "$beforeP$rangeDisplay",
@@ -56,9 +58,9 @@ fun ExpandableQuestionHeader(
                     onClick = onClick,
                     onClickWithCoords = onClickWithCoords
                 )
-            } else if (rangeStr.isNotBlank()) {
+            } else if (effectiveRangeStr.isNotBlank()) {
                 RichText(
-                    text = "<b>$rangeStr</b>",
+                    text = "<b>$effectiveRangeStr</b>",
                     fontSize = if (isQuizMode) 20.sp else 22.sp,
                     color = textColor,
                     searchQuery = searchQuery,
@@ -162,7 +164,7 @@ fun ExpandableQuestionHeader(
             }
         }
     } else {
-        val rangeDisplay = if (rangeStr.isNotBlank()) " <b>$rangeStr</b>" else ""
+        val rangeDisplay = if (effectiveRangeStr.isNotBlank()) " <b>$effectiveRangeStr</b>" else ""
         RichText(
             text = "$headerText$rangeDisplay",
             fontSize = if (isQuizMode) 20.sp else 22.sp,

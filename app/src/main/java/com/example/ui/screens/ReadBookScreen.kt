@@ -620,7 +620,7 @@ fun ReadBookScreen(
                                 break
                             }
                         }
-                        val rangeStr = if (qHeaderStartIndex == endLocalNum) "($qHeaderStartIndex)" else "($qHeaderStartIndex - $endLocalNum)"
+                        val rangeStr = if (qHeaderStartIndex == endLocalNum) "" else "($qHeaderStartIndex - $endLocalNum)"
                         items.add(ReadBookItem.QuestionGroupHeader(currentQHeader!!, rangeStr, q.globalId))
                     }
                 }
@@ -1404,9 +1404,10 @@ fun ReadBookScreen(
 
             com.example.ui.components.CustomModalBottomSheet(
                 maxHeightFraction = 0.75f,
+                enableDynamicHeight = true,
                 onDismissRequest = { showChapterIndex = false }
             ) {
-                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = false)) {
+                Column(modifier = Modifier.padding(16.dp).fillMaxWidth().weight(1f, fill = true)) {
                     var chapterSearchQuery by remember { mutableStateOf("") }
                     val indexListState = remember(chapterSheetOpenCount) {
                         androidx.compose.foundation.lazy.LazyListState(
@@ -1532,39 +1533,69 @@ fun ReadBookScreen(
             var contextInfo = ""
             var filteredQuestions = allQuestions
             val visibleLocalNumbers = mutableListOf<Int>()
-            
+            val visibleQuestionMappings = mutableListOf<String>()
+
             if (bookItems.isNotEmpty() && visibleItems.isNotEmpty()) {
                 var bestQItem: ReadBookItem.QuestionData? = null
-                var maxVisibleHeight = 0
-                
-                var currentPath = ""
-                
+                var bestItemBookIdx = -1
+                var maxVisibleHeight = -1
+
                 for (info in visibleItems) {
                     val index = info.index
                     if (index in bookItems.indices) {
                         val item = bookItems[index]
                         if (item is ReadBookItem.QuestionData) {
-                            if (currentPath.isEmpty()) currentPath = item.question.path
                             visibleLocalNumbers.add(item.localNumber)
-                            
+                            visibleQuestionMappings.add("Q.${item.localNumber} (ID ${item.question.id})")
+
                             val itemTop = maxOf(viewportStart, info.offset)
                             val itemBottom = minOf(viewportEnd, info.offset + info.size)
                             val visibleHeight = maxOf(0, itemBottom - itemTop)
-                            
+
                             if (visibleHeight > maxVisibleHeight) {
                                 maxVisibleHeight = visibleHeight
                                 bestQItem = item
+                                bestItemBookIdx = index
                             }
                         }
                     }
                 }
-                
-                if (bestQItem != null) {
-                    currentPath = bestQItem.question.path
+
+                if (bestQItem != null && bestItemBookIdx != -1) {
+                    val currentPath = bestQItem.question.path
                     val currentQ = bestQItem.question
                     val localNum = bestQItem.localNumber
-                    contextInfo = "The user is currently viewing the topic/path: '$currentPath'. The most prominent question on their screen is question ID ${currentQ.id} (which is question $localNum in this topic). They can also see questions: ${visibleLocalNumbers.joinToString(", ")}."
-                    filteredQuestions = allQuestions.filter { it.path == currentPath }
+
+                    // Extract the exact contiguous topic block from bookItems so 1-based index (localNumber)
+                    // matches Q.1, Q.2, ..., Q.99 on screen with 100% accuracy!
+                    var startTopicIdx = bestItemBookIdx
+                    while (startTopicIdx > 0) {
+                        val prev = bookItems[startTopicIdx - 1]
+                        if (prev is ReadBookItem.PathHeader) break
+                        startTopicIdx--
+                    }
+                    var endTopicIdx = bestItemBookIdx
+                    while (endTopicIdx < bookItems.lastIndex) {
+                        val next = bookItems[endTopicIdx + 1]
+                        if (next is ReadBookItem.PathHeader) break
+                        endTopicIdx++
+                    }
+
+                    val contiguousTopicQuestions = bookItems
+                        .subList(startTopicIdx, endTopicIdx + 1)
+                        .filterIsInstance<ReadBookItem.QuestionData>()
+                        .sortedBy { it.localNumber }
+                        .map { it.question }
+
+                    filteredQuestions = if (contiguousTopicQuestions.isNotEmpty()) {
+                        contiguousTopicQuestions
+                    } else {
+                        allQuestions.filter { it.path == currentPath }
+                    }
+
+                    contextInfo = "The user is currently viewing the topic/path: '$currentPath' (which contains ${filteredQuestions.size} questions numbered Q.1 to Q.${filteredQuestions.size}). " +
+                        "The most prominent question on their screen is Q.$localNum (Book Question ID ${currentQ.id}). " +
+                        "Visible questions on screen right now: ${visibleQuestionMappings.distinct().joinToString(", ")}."
                 }
             }
 

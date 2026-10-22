@@ -148,7 +148,7 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                 } else break
                             }
                             if (anyVisible) {
-                                val rangeStr = if (startIdx == endIdx) "($startIdx)" else "($startIdx-$endIdx)"
+                                val rangeStr = if (startIdx == endIdx) "" else "($startIdx-$endIdx)"
                                 list.add(Pair("HEADER_${q.id}", mapOf("text" to currentHeader, "range" to rangeStr)))
                             }
                         }

@@ -375,7 +375,7 @@ fun AiAssistantBottomSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 8.8.dp)
-                .weight(1f, fill = false)
+                .weight(1f, fill = true)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -1058,6 +1058,160 @@ fun AiAssistantBottomSheet(
     }
 }
 
+/**
+ * Resolves question numbers (1-based local topic numbers in READ_BOOK mode or global IDs in Editor mode)
+ * to pairs of `(1-based localNumber, QuestionEntity)`.
+ */
+private fun resolveTargetQuestionsForAi(
+    allQuestions: List<QuestionEntity>,
+    mode: AiChatMode,
+    command: String,
+    requiredLocalNumbers: List<Int>,
+    parsedStartId: Int?,
+    parsedEndId: Int?,
+    currentContextInfo: String = ""
+): List<Pair<Int, QuestionEntity>> {
+    if (allQuestions.isEmpty()) return emptyList()
+
+    val explicitGlobalIdRequested = Regex("""\bid\s*[:#]?\s*\d+""", RegexOption.IGNORE_CASE).containsMatchIn(command)
+
+    fun resolveSingleNumber(num: Int): Pair<Int, QuestionEntity>? {
+        if (mode == AiChatMode.READ_BOOK && !explicitGlobalIdRequested) {
+            // In ReadBookScreen, questions are displayed as Q.1 .. Q.N within the current topic.
+            if (num in 1..allQuestions.size) {
+                return Pair(num, allQuestions[num - 1])
+            }
+            val byGlobal = allQuestions.withIndex().firstOrNull { it.value.id == num.toLong() }
+            if (byGlobal != null) {
+                return Pair(byGlobal.index + 1, byGlobal.value)
+            }
+        } else {
+            val byGlobal = allQuestions.withIndex().firstOrNull { it.value.id == num.toLong() }
+            if (byGlobal != null) {
+                return Pair(byGlobal.index + 1, byGlobal.value)
+            }
+            if (num in 1..allQuestions.size) {
+                return Pair(num, allQuestions[num - 1])
+            }
+        }
+        return null
+    }
+
+    val candidateNumbers = LinkedHashSet<Int>()
+
+    // 1. Numbers explicitly extracted by Intent Parser in requiredLocalNumbers
+    candidateNumbers.addAll(requiredLocalNumbers)
+
+    // 2. If parsedStartId / parsedEndId were explicitly returned by Intent Parser
+    if (parsedStartId != null && parsedEndId != null && parsedStartId <= parsedEndId) {
+        // Guard against full-book default range unless user asked for "all"
+        val isFullSpan = parsedStartId == 1 && (parsedEndId == allQuestions.size || parsedEndId == (allQuestions.maxOfOrNull { it.id.toInt() } ?: 1))
+        val askedForAll = Regex("""\b(all|every|entire|whole)\b""", RegexOption.IGNORE_CASE).containsMatchIn(command)
+        if (!isFullSpan || allQuestions.size == 1 || askedForAll) {
+            for (n in parsedStartId..parsedEndId) {
+                candidateNumbers.add(n)
+            }
+        }
+    } else if (parsedStartId != null) {
+        candidateNumbers.add(parsedStartId)
+    } else if (parsedEndId != null) {
+        candidateNumbers.add(parsedEndId)
+    }
+
+    // 3. Direct regex fallback on user command (e.g. "Explain 99", "Q.99", "question 99", "95 to 100")
+    if (candidateNumbers.isEmpty()) {
+        val rangeMatch = Regex("""\b(\d{1,5})\s*(?:to|-|through|and)\s*(\d{1,5})\b""", RegexOption.IGNORE_CASE).find(command)
+        if (rangeMatch != null) {
+            val s = rangeMatch.groupValues[1].toIntOrNull()
+            val e = rangeMatch.groupValues[2].toIntOrNull()
+            if (s != null && e != null && s <= e && (e - s) <= 100) {
+                for (n in s..e) candidateNumbers.add(n)
+            }
+        }
+        Regex("""(?:q(?:uestion)?\.?\s*|explain\s+|edit\s+|remove\s+|delete\s+|#)(\d{1,5})\b""", RegexOption.IGNORE_CASE)
+            .findAll(command)
+            .forEach { m ->
+                m.groupValues[1].toIntOrNull()?.let { candidateNumbers.add(it) }
+            }
+        if (candidateNumbers.isEmpty()) {
+            Regex("""^\s*(\d{1,5})\s*$""").find(command)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                candidateNumbers.add(it)
+            }
+        }
+    }
+
+    val resolved = candidateNumbers.mapNotNull { resolveSingleNumber(it) }
+        .distinctBy { it.second.id }
+
+    if (resolved.isNotEmpty()) {
+        return resolved
+    }
+
+    // 4. If user said "explain this" / "solve this" without a number, resolve the most prominent question from currentContextInfo
+    val refersToCurrentOnScreen = Regex("""\b(this|current|screen|visible|here)\b""", RegexOption.IGNORE_CASE).containsMatchIn(command) ||
+        command.trim().equals("explain", ignoreCase = true)
+    if (refersToCurrentOnScreen && currentContextInfo.isNotBlank()) {
+        val prominentLocalMatch = Regex("""most prominent question on their screen is Q\.(\d+)""", RegexOption.IGNORE_CASE).find(currentContextInfo)
+            ?: Regex("""\(which is question (\d+) in this topic\)""", RegexOption.IGNORE_CASE).find(currentContextInfo)
+        val prominentLocal = prominentLocalMatch?.groupValues?.get(1)?.toIntOrNull()
+        if (prominentLocal != null) {
+            resolveSingleNumber(prominentLocal)?.let { return listOf(it) }
+        }
+    }
+
+    return emptyList()
+}
+
+/**
+ * Formats a QuestionEntity into a clean map with explicit 1-based local number (`Q.99`),
+ * global Book ID (`2569`), lettered options (`Option A`..`Option D`), and correct answer key.
+ */
+private fun formatQuestionForAiPrompt(localNum: Int, q: QuestionEntity): Map<String, Any?> {
+    val gson = com.example.data.SharedGson.normal
+    val rawOpts: List<String> = try {
+        val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+        gson.fromJson<List<String>>(q.options, type) ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+    val letteredOptions = rawOpts.mapIndexed { idx, text ->
+        "Option ${(65 + idx).toChar()}: $text"
+    }
+    val correctLetter = if (q.correctIndex in rawOpts.indices) {
+        "Option ${(65 + q.correctIndex).toChar()} (${rawOpts[q.correctIndex]})"
+    } else {
+        "Option ${(65 + q.correctIndex.coerceAtLeast(0)).toChar()}"
+    }
+
+    val map = LinkedHashMap<String, Any?>()
+    map["localQuestionNumber"] = "Q.$localNum"
+    map["localNumber"] = localNum
+    map["bookQuestionId"] = q.id
+    map["topicPath"] = q.path
+    if (!q.questionHeader.isNullOrBlank() && !q.questionHeader.equals("null", ignoreCase = true)) {
+        map["questionHeader"] = q.questionHeader
+    }
+    map["question"] = q.question
+    if (!q.tableData.isNullOrBlank() && !q.tableData.equals("null", ignoreCase = true)) {
+        map["tableData"] = q.tableData
+    }
+    map["options"] = letteredOptions
+    map["correctAnswerInBook"] = correctLetter
+    if (q.explanation.isNotBlank() && !q.explanation.equals("null", ignoreCase = true)) {
+        map["bookExplanation"] = q.explanation
+    }
+    if (!q.detailedExplanation.isNullOrBlank() && !q.detailedExplanation.equals("null", ignoreCase = true)) {
+        map["detailedExplanation"] = q.detailedExplanation
+    }
+    if (q.exam.isNotBlank() && !q.exam.equals("null", ignoreCase = true)) {
+        map["exam"] = q.exam
+    }
+    if (q.year.isNotBlank() && !q.year.equals("null", ignoreCase = true)) {
+        map["year"] = q.year
+    }
+    return map
+}
+
 suspend fun processAiChatCommand(
     context: android.content.Context,
     command: String, 
@@ -1117,6 +1271,8 @@ suspend fun processAiChatCommand(
     var intent = "chat"
     var startId = 1
     var endId = 1
+    var parsedStartId: Int? = null
+    var parsedEndId: Int? = null
     var isExpansion = false
     var actionText = "Processing"
     var requiresQuestions = true
@@ -1134,11 +1290,13 @@ suspend fun processAiChatCommand(
         requiresQuestions = parsed["requiresQuestions"]?.jsonPrimitive?.booleanOrNull ?: true
         
         requiredLocalNumbers = parsed["requiredLocalNumbers"]?.jsonArray?.mapNotNull { it.jsonPrimitive.intOrNull } ?: emptyList()
-        val maxPossibleId = allQuestions.maxOfOrNull { it.id.toInt() } ?: 1
-        val minPossibleId = allQuestions.minOfOrNull { it.id.toInt() } ?: 1
+        val maxPossibleId = if (mode == AiChatMode.READ_BOOK) allQuestions.size.coerceAtLeast(1) else (allQuestions.maxOfOrNull { it.id.toInt() } ?: 1)
+        val minPossibleId = if (mode == AiChatMode.READ_BOOK) 1 else (allQuestions.minOfOrNull { it.id.toInt() } ?: 1)
         
-        startId = parsed["startId"]?.jsonPrimitive?.intOrNull ?: minPossibleId
-        endId = parsed["endId"]?.jsonPrimitive?.intOrNull ?: maxPossibleId
+        parsedStartId = parsed["startId"]?.jsonPrimitive?.intOrNull
+        parsedEndId = parsed["endId"]?.jsonPrimitive?.intOrNull
+        startId = parsedStartId ?: minPossibleId
+        endId = parsedEndId ?: maxPossibleId
         isExpansion = parsed["isExpansion"]?.jsonPrimitive?.booleanOrNull ?: false
         actionText = parsed["action"]?.jsonPrimitive?.content ?: "Processing"
         
@@ -1161,17 +1319,33 @@ suspend fun processAiChatCommand(
                     val actObj = action.jsonObject
                     val field = actObj["field"]?.jsonPrimitive?.content ?: continue
                     val value = actObj["value"]?.jsonPrimitive?.content ?: ""
-                    val actStart = actObj["startId"]?.jsonPrimitive?.intOrNull ?: minPossibleId
-                    val actEnd = actObj["endId"]?.jsonPrimitive?.intOrNull ?: maxPossibleId
+                    val actStart = actObj["startId"]?.jsonPrimitive?.intOrNull
+                    val actEnd = actObj["endId"]?.jsonPrimitive?.intOrNull
                     
-                    val targeted = allQuestions.filter { it.id in actStart..actEnd }
+                    val targetedPairs = resolveTargetQuestionsForAi(
+                        allQuestions = allQuestions,
+                        mode = mode,
+                        command = command,
+                        requiredLocalNumbers = emptyList(),
+                        parsedStartId = actStart ?: minPossibleId,
+                        parsedEndId = actEnd ?: maxPossibleId,
+                        currentContextInfo = currentContextInfo
+                    )
+                    val targeted = if (targetedPairs.isNotEmpty()) {
+                        targetedPairs.map { it.second }
+                    } else {
+                        allQuestions
+                    }
+                    val firstGlobalId = targeted.firstOrNull()?.id ?: 1L
+                    val lastGlobalId = targeted.lastOrNull()?.id ?: firstGlobalId
+
                     for (q in targeted) {
                         val existingIdx = updates.indexOfFirst { it.originalId == q.id }
                         val baseQ = if (existingIdx != -1) updates[existingIdx].updatedQuestion else q
                         val modifiedQ = when (field) {
                             "questionHeader" -> {
                                 val headerVal = value.trim()
-                                val headerJson = if (headerVal.startsWith("{")) headerVal else "{\"startId\": $actStart, \"endId\": $actEnd, \"text\": \"${headerVal.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\"}"
+                                val headerJson = if (headerVal.startsWith("{")) headerVal else "{\"startId\": $firstGlobalId, \"endId\": $lastGlobalId, \"text\": \"${headerVal.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")}\"}"
                                 baseQ.copy(questionHeader = headerJson, section = headerVal)
                             }
                             "path" -> baseQ.copy(path = value)
@@ -1191,7 +1365,15 @@ suspend fun processAiChatCommand(
                 }
             }
         } else if (intent == "remove") {
-            val targeted = allQuestions.filter { it.id in startId..endId }
+            val targeted = resolveTargetQuestionsForAi(
+                allQuestions = allQuestions,
+                mode = mode,
+                command = command,
+                requiredLocalNumbers = requiredLocalNumbers,
+                parsedStartId = parsedStartId,
+                parsedEndId = parsedEndId,
+                currentContextInfo = currentContextInfo
+            ).map { it.second }
             val updates = targeted.map { 
                 PendingQuestionUpdate(originalId = it.id, updatedQuestion = it, isDelete = true) 
             }
@@ -1428,11 +1610,39 @@ suspend fun processAiChatCommand(
 
     if (intent == "chat") {
         val recentHistory = chatHistory.takeLast(10).map { "${if (it.role == "user") "User" else "AI"}: ${it.content}" }.joinToString("\n")
-        
-        val contextContext = if (requiresQuestions) {
-            "All Book Questions (Filtered to Current Topic/Context): \n" + gson.toJson(allQuestions)
+
+        val targetedForChat = if (requiresQuestions) {
+            resolveTargetQuestionsForAi(
+                allQuestions = allQuestions,
+                mode = mode,
+                command = command,
+                requiredLocalNumbers = requiredLocalNumbers,
+                parsedStartId = parsedStartId,
+                parsedEndId = parsedEndId,
+                currentContextInfo = currentContextInfo
+            )
         } else {
-            "All Book Questions: (Not provided for this simple query to save tokens)"
+            emptyList()
+        }
+
+        val contextContext = when {
+            !requiresQuestions -> {
+                "Book Questions: (Not required for this general query)"
+            }
+            targetedForChat.isNotEmpty() -> {
+                val formattedTargets = targetedForChat.map { (localNum, q) ->
+                    formatQuestionForAiPrompt(localNum, q)
+                }
+                "Target Question(s) Requested by User (Exact Match — Explain/Use ONLY these question(s)):\n" +
+                    gson.toJson(formattedTargets)
+            }
+            else -> {
+                val allFormatted = allQuestions.mapIndexed { idx, q ->
+                    formatQuestionForAiPrompt(idx + 1, q)
+                }
+                "All Questions in Current Topic/Context (Each has 'localQuestionNumber' Q.1..Q.${allQuestions.size} and 'bookQuestionId'):\n" +
+                    gson.toJson(allFormatted)
+            }
         }
         val contextInfoString = if (currentContextInfo.isNotBlank()) "Current User Context:\n$currentContextInfo" else ""
         
@@ -1450,6 +1660,8 @@ suspend fun processAiChatCommand(
             User: $command
             
             GUIDELINES FOR BEAUTIFUL EXPLANATIONS:
+            - Speak directly to the user in second person ("you"). NEVER output robotic third-person meta-sentences like "The user is currently viewing question ID...".
+            - If 'Target Question(s) Requested by User' is provided above, explain that EXACT question (referring to it naturally as **Q.<localNumber>**, e.g. **Q.99**). Never substitute a different question!
             - When explaining a question, concept, or topic:
               1. Structure the explanation beautifully with clear sections:
                  • **Quick Answer / Core Concept**: A clear, concise statement of the correct option (e.g. Option B) and the core principle.
@@ -1589,18 +1801,22 @@ suspend fun processAiChatCommand(
 
         if (userExplicitlyAskedForVisual && !finalResponse.contains("[WEB_ILLUSTRATION:") && !finalResponse.contains("[IMG_URL:")) {
             var subjectCandidate = ""
-            val qNumMatch = Regex("question\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
-                ?: Regex("q\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
-            if (qNumMatch != null) {
-                val num = qNumMatch.groupValues[1].toIntOrNull()
-                val targetQ = allQuestions.find { it.id == num?.toLong() }
-                if (targetQ != null) {
-                    val correctOpt = try {
-                        val arr = org.json.JSONArray(targetQ.options)
-                        if (targetQ.correctIndex in 0 until arr.length()) arr.getString(targetQ.correctIndex) else ""
-                    } catch (e: Exception) { "" }
-                    subjectCandidate = correctOpt.ifBlank { targetQ.question }
-                }
+            val targetQ = targetedForChat.firstOrNull()?.second
+                ?: resolveTargetQuestionsForAi(
+                    allQuestions = allQuestions,
+                    mode = mode,
+                    command = command,
+                    requiredLocalNumbers = requiredLocalNumbers,
+                    parsedStartId = parsedStartId,
+                    parsedEndId = parsedEndId,
+                    currentContextInfo = currentContextInfo
+                ).firstOrNull()?.second
+            if (targetQ != null) {
+                val correctOpt = try {
+                    val arr = org.json.JSONArray(targetQ.options)
+                    if (targetQ.correctIndex in 0 until arr.length()) arr.getString(targetQ.correctIndex) else ""
+                } catch (e: Exception) { "" }
+                subjectCandidate = correctOpt.ifBlank { targetQ.question }
             }
             if (subjectCandidate.isBlank() && currentContextInfo.contains("viewing the topic/path: '")) {
                 subjectCandidate = currentContextInfo.substringAfter("viewing the topic/path: '").substringBefore("'")
@@ -1647,10 +1863,22 @@ suspend fun processAiChatCommand(
     }
     
     // EDIT INTENT
-    val targetQuestions = if (requiredLocalNumbers.isNotEmpty()) {
-        allQuestions.filter { it.id.toInt() in requiredLocalNumbers }
+    val resolvedEditTargets = resolveTargetQuestionsForAi(
+        allQuestions = allQuestions,
+        mode = mode,
+        command = command,
+        requiredLocalNumbers = requiredLocalNumbers,
+        parsedStartId = parsedStartId,
+        parsedEndId = parsedEndId,
+        currentContextInfo = currentContextInfo
+    ).map { it.second }
+
+    val targetQuestions = if (resolvedEditTargets.isNotEmpty()) {
+        resolvedEditTargets
+    } else if (parsedStartId == null && parsedEndId == null && requiredLocalNumbers.isEmpty()) {
+        allQuestions
     } else {
-        allQuestions.filter { it.id in startId..endId }
+        emptyList()
     }
     if (targetQuestions.isEmpty()) {
         return Pair(emptyList(), "I couldn't find any questions matching that range to edit.")
