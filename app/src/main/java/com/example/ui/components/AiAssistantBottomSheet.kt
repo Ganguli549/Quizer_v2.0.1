@@ -373,12 +373,14 @@ fun AiAssistantBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
                 .padding(bottom = 4.dp)
                 .weight(1f, fill = false)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -477,9 +479,15 @@ fun AiAssistantBottomSheet(
                 }
             }
 
+            HorizontalDivider(
+                modifier = Modifier.fillMaxWidth(),
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+            )
+
             // Chat history area
             if (showDevLogs) {
-                Column(modifier = Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Developer Logs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Row {
@@ -519,7 +527,7 @@ fun AiAssistantBottomSheet(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
-                contentPadding = PaddingValues(vertical = 4.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)
             ) {
                 if (chatHistory.isEmpty()) {
                     item {
@@ -745,99 +753,105 @@ fun AiAssistantBottomSheet(
             
             // Pending updates UI
             if (pendingUpdates != null) {
-                Text("Review & Confirm Updates", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                    val currentUpdates = pendingUpdates ?: emptyList()
-                    items(currentUpdates) { pending ->
-                        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    if (pending.isDelete) {
-                                        Text("Delete Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f, fill = false))
-                                    } else {
-                                        Column(modifier = Modifier.weight(1f, fill = false)) {
-                                            if (!pending.updatedQuestion.questionHeader.isNullOrBlank()) {
-                                                val headerText = remember(pending.updatedQuestion.questionHeader) {
-                                                    val raw = pending.updatedQuestion.questionHeader!!
-                                                    if (raw.trimStart().startsWith("{")) {
-                                                        try {
-                                                            com.example.data.SharedGson.normal.fromJson(raw, com.example.data.QBookHeader::class.java).text
-                                                        } catch(e: Exception) { raw }
-                                                    } else raw
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Text("Review & Confirm Updates", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        val currentUpdates = pendingUpdates ?: emptyList()
+                        items(currentUpdates) { pending ->
+                            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        if (pending.isDelete) {
+                                            Text("Delete Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f, fill = false))
+                                        } else {
+                                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                                if (!pending.updatedQuestion.questionHeader.isNullOrBlank()) {
+                                                    val headerText = remember(pending.updatedQuestion.questionHeader) {
+                                                        val raw = pending.updatedQuestion.questionHeader!!
+                                                        if (raw.trimStart().startsWith("{")) {
+                                                            try {
+                                                                com.example.data.SharedGson.normal.fromJson(raw, com.example.data.QBookHeader::class.java).text
+                                                            } catch(e: Exception) { raw }
+                                                        } else raw
+                                                    }
+                                                    Surface(
+                                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        modifier = Modifier.padding(bottom = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "Header: ${headerText.take(70)}${if (headerText.length > 70) "..." else ""}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                        )
+                                                    }
                                                 }
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    modifier = Modifier.padding(bottom = 2.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "Header: ${headerText.take(70)}${if (headerText.length > 70) "..." else ""}",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                    )
-                                                }
+                                                Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold)
                                             }
-                                            Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold)
-                                        }
-                                        TextButton(onClick = { editingPendingQuestion = pending }) {
-                                            Text("Review")
+                                            TextButton(onClick = { editingPendingQuestion = pending }) {
+                                                Text("Review")
+                                            }
                                         }
                                     }
-                                }
-                                if (pending.imageOptions.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Select an image:", style = MaterialTheme.typography.labelMedium)
-                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        items(pending.imageOptions) { rawImgUrl ->
-                                            var imgUrl = rawImgUrl
-                                            if (imgUrl.startsWith("https://image.pollinations.ai/prompt/")) {
-                                                val prefix = "https://image.pollinations.ai/prompt/"
-                                                val rest = imgUrl.substring(prefix.length)
-                                                val parts = rest.split("?", limit = 2)
-                                                val promptPart = parts[0]
-                                                val query = if (parts.size > 1) "?" + parts[1] else ""
-                                                val decoded = try { java.net.URLDecoder.decode(promptPart, "UTF-8") } catch(e: Exception) { promptPart }
-                                                val encoded = java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20")
-                                                imgUrl = prefix + encoded + query
-                                            }
-                                            val isSelected = pending.updatedQuestion.explanationImage == imgUrl || pending.updatedQuestion.explanationImage == rawImgUrl
-                                            Box(modifier = Modifier.size(100.dp)) {
-                                                coil.compose.SubcomposeAsyncImage(
-                                                    model = imgUrl,
-                                                    contentDescription = "Generated Option",
-                                                    loading = {
-                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                                        }
-                                                    },
-                                                    error = {
-                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                            Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Error", tint = MaterialTheme.colorScheme.error)
-                                                        }
-                                                    },
-                                                    modifier = Modifier
-                                                        .fillMaxSize()
-                                                        .border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray)
-                                                        .clickable {
-                                                            pendingUpdates?.let { currentList ->
-                                                                val updatedList = currentList.toMutableList()
-                                                                val idx = updatedList.indexOfFirst { it.updatedQuestion.id == pending.updatedQuestion.id }
-                                                                if (idx != -1) {
-                                                                    updatedList[idx] = pending.copy(updatedQuestion = pending.updatedQuestion.copy(explanationImage = imgUrl))
-                                                                    viewModel.setPendingUpdates(context, chatContextId, updatedList)
+                                    if (pending.imageOptions.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Select an image:", style = MaterialTheme.typography.labelMedium)
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            items(pending.imageOptions) { rawImgUrl ->
+                                                var imgUrl = rawImgUrl
+                                                if (imgUrl.startsWith("https://image.pollinations.ai/prompt/")) {
+                                                    val prefix = "https://image.pollinations.ai/prompt/"
+                                                    val rest = imgUrl.substring(prefix.length)
+                                                    val parts = rest.split("?", limit = 2)
+                                                    val promptPart = parts[0]
+                                                    val query = if (parts.size > 1) "?" + parts[1] else ""
+                                                    val decoded = try { java.net.URLDecoder.decode(promptPart, "UTF-8") } catch(e: Exception) { promptPart }
+                                                    val encoded = java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20")
+                                                    imgUrl = prefix + encoded + query
+                                                }
+                                                val isSelected = pending.updatedQuestion.explanationImage == imgUrl || pending.updatedQuestion.explanationImage == rawImgUrl
+                                                Box(modifier = Modifier.size(100.dp)) {
+                                                    coil.compose.SubcomposeAsyncImage(
+                                                        model = imgUrl,
+                                                        contentDescription = "Generated Option",
+                                                        loading = {
+                                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                                            }
+                                                        },
+                                                        error = {
+                                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Error", tint = MaterialTheme.colorScheme.error)
+                                                            }
+                                                        },
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .border(if (isSelected) 3.dp else 1.dp, if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray)
+                                                            .clickable {
+                                                                pendingUpdates?.let { currentList ->
+                                                                    val updatedList = currentList.toMutableList()
+                                                                    val idx = updatedList.indexOfFirst { it.updatedQuestion.id == pending.updatedQuestion.id }
+                                                                    if (idx != -1) {
+                                                                        updatedList[idx] = pending.copy(updatedQuestion = pending.updatedQuestion.copy(explanationImage = imgUrl))
+                                                                        viewModel.setPendingUpdates(context, chatContextId, updatedList)
+                                                                    }
                                                                 }
                                                             }
-                                                        }
-                                                )
-                                                if (isSelected) {
-                                                    Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = "Selected",
-                                                        tint = Color.White,
-                                                        modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
                                                     )
+                                                    if (isSelected) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = "Selected",
+                                                            tint = Color.White,
+                                                            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -846,64 +860,71 @@ fun AiAssistantBottomSheet(
                             }
                         }
                     }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { viewModel.setPendingUpdates(context, chatContextId, null) },
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) { Text("Cancel") }
-                    Button(
-                        onClick = {
-                            val currentUpdates = pendingUpdates?.toList() ?: emptyList()
-                            viewModel.setPendingUpdates(context, chatContextId, null)
-                            viewModel.setAiProcessingStatus(chatContextId, "Saving updates...")
-                            coroutineScope.launch {
-                                val updateList = mutableListOf<QuestionEntity>()
-                                val deleteList = mutableListOf<QuestionEntity>()
-                                currentUpdates.forEach { pending ->
-                                    if (pending.isDelete) {
-                                        deleteList.add(pending.updatedQuestion)
-                                    } else {
-                                        var updated = pending.updatedQuestion
-                                        if (updated.explanationImage?.startsWith("http") == true) {
-                                            val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, updated.explanationImage!!)
-                                            if (downloaded != null) {
-                                                updated = updated.copy(explanationImage = downloaded)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { viewModel.setPendingUpdates(context, chatContextId, null) },
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                val currentUpdates = pendingUpdates?.toList() ?: emptyList()
+                                viewModel.setPendingUpdates(context, chatContextId, null)
+                                viewModel.setAiProcessingStatus(chatContextId, "Saving updates...")
+                                coroutineScope.launch {
+                                    val updateList = mutableListOf<QuestionEntity>()
+                                    val deleteList = mutableListOf<QuestionEntity>()
+                                    currentUpdates.forEach { pending ->
+                                        if (pending.isDelete) {
+                                            deleteList.add(pending.updatedQuestion)
+                                        } else {
+                                            var updated = pending.updatedQuestion
+                                            if (updated.explanationImage?.startsWith("http") == true) {
+                                                val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, updated.explanationImage!!)
+                                                if (downloaded != null) {
+                                                    updated = updated.copy(explanationImage = downloaded)
+                                                }
                                             }
-                                        }
-                                        if (updated.img?.startsWith("http") == true) {
-                                            val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, updated.img)
-                                            if (downloaded != null) {
-                                                updated = updated.copy(img = downloaded)
+                                            if (updated.img?.startsWith("http") == true) {
+                                                val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, updated.img)
+                                                if (downloaded != null) {
+                                                    updated = updated.copy(img = downloaded)
+                                                }
                                             }
+                                            updateList.add(updated)
                                         }
-                                        updateList.add(updated)
                                     }
+                                    if (updateList.isNotEmpty()) {
+                                        onQuestionsUpdated(updateList)
+                                    }
+                                    if (deleteList.isNotEmpty()) {
+                                        onQuestionsDeleted(deleteList)
+                                    }
+                                    viewModel.addChatMessage(
+                                        ChatMessageEntity(bookId = chatContextId, role = "model", content = "Applied ${updateList.size} updates and deleted ${deleteList.size} questions.", timestamp = System.currentTimeMillis())
+                                    )
+                                    viewModel.setAiProcessingStatus(chatContextId, null)
                                 }
-                                if (updateList.isNotEmpty()) {
-                                    onQuestionsUpdated(updateList)
-                                }
-                                if (deleteList.isNotEmpty()) {
-                                    onQuestionsDeleted(deleteList)
-                                }
-                                viewModel.addChatMessage(
-                                    ChatMessageEntity(bookId = chatContextId, role = "model", content = "Applied ${updateList.size} updates and deleted ${deleteList.size} questions.", timestamp = System.currentTimeMillis())
-                                )
-                                viewModel.setAiProcessingStatus(chatContextId, null)
-                            }
-                        },
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) { Text("Save Updates") }
+                            },
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) { Text("Save Updates") }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
                 }
-                Spacer(modifier = Modifier.height(16.dp))
             }
+
+            HorizontalDivider(
+                modifier = Modifier.fillMaxWidth(),
+                thickness = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+            )
 
             // Suggestions
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 4.dp),
+                    .padding(top = 6.dp, bottom = 4.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -930,7 +951,9 @@ fun AiAssistantBottomSheet(
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 6.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -976,6 +999,7 @@ fun AiAssistantBottomSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
                     .padding(top = 2.dp, bottom = 4.dp)
             ) {
                 OutlinedTextField(
