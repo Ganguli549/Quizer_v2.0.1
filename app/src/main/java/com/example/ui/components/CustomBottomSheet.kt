@@ -132,7 +132,7 @@ fun CustomModalBottomSheet(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(34.dp)
+                    .height(18.dp)
                     .onGloballyPositioned { handleCoords = it }
                     .pointerInput(enableDynamicHeight, defaultExpandedFraction, screenHeightPx) {
                         val touchSlopPx = viewConfiguration.touchSlop
