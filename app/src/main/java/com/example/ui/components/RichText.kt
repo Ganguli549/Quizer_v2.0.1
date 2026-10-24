@@ -16,11 +16,24 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.remember
@@ -693,10 +706,18 @@ data class CustomTextMenuItem(
     val onClick: (selectedText: String) -> Unit
 )
 
+data class SelectionMenuUiState(
+    val selectedText: String,
+    val selectionBoundsInView: android.graphics.Rect
+)
+
 class CustomSelectionActionModeCallback(
     var customItems: List<CustomTextMenuItem> = emptyList()
-) : android.view.ActionMode.Callback {
+) : android.view.ActionMode.Callback2() {
     var textView: TextView? = null
+    var activeActionMode: android.view.ActionMode? = null
+    var onSelectionStateUpdated: (() -> Unit)? = null
+    var onSelectionDestroyed: (() -> Unit)? = null
     private var isDestroying = false
 
     companion object {
@@ -708,153 +729,46 @@ class CustomSelectionActionModeCallback(
     override fun onCreateActionMode(mode: android.view.ActionMode?, menu: android.view.Menu?): Boolean {
         isDestroying = false
         if (mode == null || menu == null) return false
-        populateCustomMenu(mode, menu)
+        activeActionMode = mode
+        // Suppress the un-themed system FloatingToolbar while keeping native TextView selection handles active!
+        menu.clear()
+        onSelectionStateUpdated?.invoke()
         return true
     }
 
     override fun onPrepareActionMode(mode: android.view.ActionMode?, menu: android.view.Menu?): Boolean {
         if (mode == null || menu == null) return false
-        populateCustomMenu(mode, menu)
+        activeActionMode = mode
+        menu.clear()
+        onSelectionStateUpdated?.invoke()
         return true
     }
 
-    private fun createItemTitle(context: android.content.Context?, customItem: CustomTextMenuItem): CharSequence {
-        if (customItem.showText) {
-            return customItem.title
-        }
-        val iconRes = customItem.iconRes
-        if (context != null && iconRes != null) {
-            try {
-                val drawable = androidx.core.content.ContextCompat.getDrawable(context, iconRes)?.mutate()
-                if (drawable != null) {
-                    val density = context.resources.displayMetrics.density
-                    val sizePx = (22 * density).toInt().coerceAtLeast(24)
-                    drawable.setBounds(0, 0, sizePx, sizePx)
-                    val targetString = " "
-                    val spannable = android.text.SpannableString(targetString)
-                    val imageSpan = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                        android.text.style.ImageSpan(drawable, android.text.style.ImageSpan.ALIGN_CENTER)
-                    } else {
-                        android.text.style.ImageSpan(drawable, android.text.style.ImageSpan.ALIGN_BOTTOM)
-                    }
-                    spannable.setSpan(imageSpan, 0, targetString.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    return spannable
-                }
-            } catch (e: Exception) {
-                // Ignore and fall back
-            }
-        }
-        return "🔖"
-    }
-
-    private fun populateCustomMenu(mode: android.view.ActionMode, menu: android.view.Menu) {
-        menu.clear()
-
-        for (customItem in customItems) {
-            val titleFormatted = createItemTitle(textView?.context, customItem)
-            val item = menu.add(android.view.Menu.NONE, customItem.id, customItem.order, titleFormatted)
-            customItem.iconRes?.let { iconRes ->
-                try {
-                    item.setIcon(iconRes)
-                } catch (e: Exception) {}
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                item.contentDescription = customItem.title
-                item.tooltipText = customItem.title
-            }
-            item.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
-        }
-
-        val copyItem = menu.add(android.view.Menu.NONE, ID_COPY, 10, "Copy")
-        try {
-            copyItem.setIcon(com.example.R.drawable.ic_copy)
-        } catch (e: Exception) {}
-        copyItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
-
-        val selectAllItem = menu.add(android.view.Menu.NONE, ID_SELECT_ALL, 20, "Select all")
-        try {
-            selectAllItem.setIcon(com.example.R.drawable.ic_select_all)
-        } catch (e: Exception) {}
-        selectAllItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
-
-        val shareItem = menu.add(android.view.Menu.NONE, ID_SHARE, 30, "Share")
-        try {
-            shareItem.setIcon(com.example.R.drawable.ic_share)
-        } catch (e: Exception) {}
-        shareItem.setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS or android.view.MenuItem.SHOW_AS_ACTION_WITH_TEXT)
-    }
-
     override fun onActionItemClicked(mode: android.view.ActionMode?, item: android.view.MenuItem?): Boolean {
-        if (item == null || mode == null) return false
-        val tv = textView ?: return false
-
-        val selStart = tv.selectionStart
-        val selEnd = tv.selectionEnd
-        val selectedText = if (selStart in 0..tv.text.length && selEnd in 0..tv.text.length && selStart != selEnd) {
-            val start = minOf(selStart, selEnd)
-            val end = maxOf(selStart, selEnd)
-            tv.text.subSequence(start, end).toString()
-        } else ""
-
-        val customItem = customItems.find { it.id == item.itemId }
-        if (customItem != null) {
-            safeFinishActionMode(mode)
-            tv.post {
-                val spannable = tv.text as? android.text.Spannable
-                if (spannable != null) {
-                    android.text.Selection.removeSelection(spannable)
-                }
-                customItem.onClick(selectedText)
-            }
-            return true
-        }
-
-        when (item.itemId) {
-            ID_COPY -> {
-                if (selectedText.isNotEmpty()) {
-                    val clipboard = tv.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Selected Text", selectedText))
-                    android.widget.Toast.makeText(tv.context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-                }
-                safeFinishActionMode(mode)
-                tv.post {
-                    val spannable = tv.text as? android.text.Spannable
-                    if (spannable != null) {
-                        android.text.Selection.removeSelection(spannable)
-                    }
-                }
-                return true
-            }
-            ID_SELECT_ALL -> {
-                val spannable = tv.text as? android.text.Spannable
-                if (spannable != null) {
-                    android.text.Selection.setSelection(spannable, 0, spannable.length)
-                }
-                return true
-            }
-            ID_SHARE -> {
-                if (selectedText.isNotEmpty()) {
-                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, selectedText)
-                    }
-                    tv.context.startActivity(android.content.Intent.createChooser(shareIntent, "Share text"))
-                }
-                safeFinishActionMode(mode)
-                tv.post {
-                    val spannable = tv.text as? android.text.Spannable
-                    if (spannable != null) {
-                        android.text.Selection.removeSelection(spannable)
-                    }
-                }
-                return true
-            }
-        }
         return false
     }
 
-    private fun safeFinishActionMode(mode: android.view.ActionMode) {
-        if (!isDestroying) {
+    override fun onGetContentRect(
+        mode: android.view.ActionMode?,
+        view: android.view.View?,
+        outRect: android.graphics.Rect?
+    ) {
+        val tv = textView
+        if (tv is RichTextView && outRect != null) {
+            val bounds = tv.computeSelectionBoundsInView()
+            if (bounds != null) {
+                outRect.set(bounds)
+            } else {
+                outRect.set(0, 0, tv.width, tv.height)
+            }
+        }
+        onSelectionStateUpdated?.invoke()
+    }
+
+    fun finishSelection() {
+        val tv = textView
+        val mode = activeActionMode
+        if (mode != null && !isDestroying) {
             isDestroying = true
             try {
                 mode.finish()
@@ -862,10 +776,255 @@ class CustomSelectionActionModeCallback(
                 isDestroying = false
             }
         }
+        activeActionMode = null
+        if (tv != null) {
+            val spannable = tv.text as? android.text.Spannable
+            if (spannable != null) {
+                android.text.Selection.removeSelection(spannable)
+            }
+            tv.clearFocus()
+        }
+        onSelectionDestroyed?.invoke()
     }
 
     override fun onDestroyActionMode(mode: android.view.ActionMode?) {
         isDestroying = true
+        activeActionMode = null
+        onSelectionDestroyed?.invoke()
+    }
+}
+
+private class SelectionMenuPopupPositionProvider(
+    private val selectionRectInView: android.graphics.Rect,
+    private val density: Float
+) : androidx.compose.ui.window.PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: androidx.compose.ui.unit.IntRect,
+        windowSize: androidx.compose.ui.unit.IntSize,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        popupContentSize: androidx.compose.ui.unit.IntSize
+    ): androidx.compose.ui.unit.IntOffset {
+        val marginPx = (12f * density).toInt()
+        val topSafeBarPx = (62f * density).toInt()
+        val bottomSafeBarPx = (56f * density).toInt()
+        val gapAbovePx = (10f * density).toInt()
+        val gapBelowHandlesPx = (30f * density).toInt()
+
+        val selLeft = anchorBounds.left + selectionRectInView.left
+        val selRight = anchorBounds.left + selectionRectInView.right
+        val selTop = anchorBounds.top + selectionRectInView.top
+        val selBottom = anchorBounds.top + selectionRectInView.bottom
+
+        val centerX = (selLeft + selRight) / 2
+        val maxX = (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx)
+        val x = (centerX - popupContentSize.width / 2).coerceIn(marginPx, maxX)
+
+        val candidateAboveY = selTop - popupContentSize.height - gapAbovePx
+        val candidateBelowY = selBottom + gapBelowHandlesPx
+        val maxY = (windowSize.height - popupContentSize.height - bottomSafeBarPx).coerceAtLeast(topSafeBarPx)
+
+        val y = when {
+            candidateAboveY >= topSafeBarPx -> candidateAboveY.coerceAtMost(maxY)
+            candidateBelowY <= maxY -> candidateBelowY.coerceAtLeast(topSafeBarPx)
+            else -> (selTop + gapAbovePx).coerceIn(topSafeBarPx, maxY)
+        }
+        return androidx.compose.ui.unit.IntOffset(x, y)
+    }
+}
+
+@Composable
+private fun RichTextSelectionMenuPopup(
+    menuState: SelectionMenuUiState,
+    customItems: List<CustomTextMenuItem>,
+    onCopy: () -> Unit,
+    onSelectAll: () -> Unit,
+    onShare: () -> Unit,
+    onCustomItemClick: (CustomTextMenuItem) -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val positionProvider = remember(menuState.selectionBoundsInView, density) {
+        SelectionMenuPopupPositionProvider(menuState.selectionBoundsInView, density)
+    }
+
+    val colorScheme = androidx.compose.material3.MaterialTheme.colorScheme
+    val baseSurface = colorScheme.surface
+    val baseText = colorScheme.onSurface
+    val primaryColor = colorScheme.primary
+    val isDarkSurface = androidx.core.graphics.ColorUtils.calculateLuminance(baseSurface.toArgb()) < 0.5
+
+    // Tonal elevated card color that strictly follows ReadBookScreen's active ReadingTheme (Day, Night, Sepia, E-Ink, BookPage, System)
+    val popupContainerColor = remember(baseSurface, baseText, isDarkSurface) {
+        Color(
+            androidx.core.graphics.ColorUtils.blendARGB(
+                baseSurface.toArgb(),
+                baseText.toArgb(),
+                if (isDarkSurface) 0.10f else 0.04f
+            )
+        )
+    }
+    val popupBorderColor = remember(primaryColor, baseText, isDarkSurface) {
+        Color(
+            androidx.core.graphics.ColorUtils.blendARGB(
+                baseText.copy(alpha = if (isDarkSurface) 0.24f else 0.16f).toArgb(),
+                primaryColor.copy(alpha = 0.35f).toArgb(),
+                0.4f
+            )
+        )
+    }
+    val dividerColor = baseText.copy(alpha = if (isDarkSurface) 0.18f else 0.12f)
+
+    // Order custom items so Ask AI, Bookmark, and Edit appear cleanly
+    val orderedCustomItems = remember(customItems) {
+        customItems.sortedBy { it.order }
+    }
+
+    androidx.compose.ui.window.Popup(
+        popupPositionProvider = positionProvider,
+        properties = androidx.compose.ui.window.PopupProperties(
+            focusable = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            clippingEnabled = true
+        )
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+            color = popupContainerColor,
+            contentColor = baseText,
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, popupBorderColor)
+        ) {
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                orderedCustomItems.forEach { item ->
+                    val isAskAi = item.id == 99993 || item.title.contains("AI", ignoreCase = true)
+                    val isBookmark = item.id == 99991 || item.title.contains("Bookmark", ignoreCase = true) || item.title.contains("Unbookmark", ignoreCase = true)
+                    val isBookmarkedActive = item.title.startsWith("Unbookmark", ignoreCase = true) || item.iconRes == com.example.R.drawable.ic_bookmark
+                    val isEdit = item.id == 99992 || item.title.contains("Edit", ignoreCase = true)
+
+                    val shortLabel = when {
+                        isAskAi -> "Ask AI"
+                        isBookmark -> if (isBookmarkedActive) "Saved" else "Save"
+                        isEdit -> "Edit"
+                        else -> item.title.take(10)
+                    }
+
+                    val iconVector = when {
+                        isAskAi -> Icons.Default.AutoAwesome
+                        isBookmark -> if (isBookmarkedActive) Icons.Default.Bookmark else Icons.Default.BookmarkBorder
+                        isEdit -> Icons.Default.Edit
+                        else -> Icons.Default.Star
+                    }
+
+                    val iconTint = when {
+                        isAskAi -> primaryColor
+                        isBookmark && isBookmarkedActive -> Color(0xFFFFB300)
+                        isBookmark -> primaryColor
+                        else -> baseText
+                    }
+
+                    val labelColor = when {
+                        isAskAi -> primaryColor
+                        isBookmark && isBookmarkedActive -> Color(0xFFFFB300)
+                        else -> baseText
+                    }
+
+                    val pillBg = if (isAskAi) {
+                        primaryColor.copy(alpha = if (isDarkSurface) 0.18f else 0.12f)
+                    } else if (isBookmark && isBookmarkedActive) {
+                        Color(0xFFFFB300).copy(alpha = 0.14f)
+                    } else {
+                        Color.Transparent
+                    }
+
+                    SelectionToolbarButton(
+                        icon = iconVector,
+                        label = shortLabel,
+                        iconTint = iconTint,
+                        labelColor = labelColor,
+                        containerColor = pillBg,
+                        isEmphasized = isAskAi,
+                        onClick = { onCustomItemClick(item) }
+                    )
+                }
+
+                if (orderedCustomItems.isNotEmpty()) {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .width(1.dp)
+                            .height(28.dp)
+                            .background(dividerColor)
+                    )
+                }
+
+                SelectionToolbarButton(
+                    icon = Icons.Default.ContentCopy,
+                    label = "Copy",
+                    iconTint = baseText,
+                    labelColor = baseText,
+                    onClick = onCopy
+                )
+
+                SelectionToolbarButton(
+                    icon = Icons.Default.SelectAll,
+                    label = "All",
+                    iconTint = baseText,
+                    labelColor = baseText,
+                    onClick = onSelectAll
+                )
+
+                SelectionToolbarButton(
+                    icon = Icons.Default.Share,
+                    label = "Share",
+                    iconTint = baseText,
+                    labelColor = baseText,
+                    onClick = onShare
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionToolbarButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    iconTint: Color,
+    labelColor: Color,
+    containerColor: Color = Color.Transparent,
+    isEmphasized: Boolean = false,
+    onClick: () -> Unit
+) {
+    val itemShape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+    androidx.compose.foundation.layout.Column(
+        modifier = Modifier
+            .padding(horizontal = 1.dp)
+            .clip(itemShape)
+            .background(containerColor, itemShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = iconTint,
+            modifier = Modifier.size(18.dp)
+        )
+        androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(2.dp))
+        androidx.compose.material3.Text(
+            text = label,
+            color = labelColor,
+            fontSize = 10.5.sp,
+            fontWeight = if (isEmphasized) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+            maxLines = 1
+        )
     }
 }
 
@@ -1341,9 +1500,95 @@ private class RichTextTouchBridge {
  */
 private class RichTextView(context: android.content.Context) : TextView(context) {
     val touchBridge = RichTextTouchBridge()
-    val selectionCallback = CustomSelectionActionModeCallback().also { it.textView = this }
+    var onSelectionMenuStateChanged: ((SelectionMenuUiState?) -> Unit)? = null
+    val selectionCallback = CustomSelectionActionModeCallback().also { cb ->
+        cb.textView = this
+        cb.onSelectionStateUpdated = { notifySelectionState() }
+        cb.onSelectionDestroyed = { onSelectionMenuStateChanged?.invoke(null) }
+    }
     var parsedSpannableTag: Any? = null
     var boundSearchQuery: String = ""
+
+    private val scrollListener = android.view.ViewTreeObserver.OnScrollChangedListener {
+        if (hasSelection()) {
+            notifySelectionState()
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        viewTreeObserver.addOnScrollChangedListener(scrollListener)
+    }
+
+    override fun onDetachedFromWindow() {
+        try {
+            viewTreeObserver.removeOnScrollChangedListener(scrollListener)
+        } catch (_: Exception) {}
+        onSelectionMenuStateChanged?.invoke(null)
+        super.onDetachedFromWindow()
+    }
+
+    fun getSelectedTextSafe(): String {
+        val txt = text ?: return ""
+        val selStart = selectionStart
+        val selEnd = selectionEnd
+        if (selStart in 0..txt.length && selEnd in 0..txt.length && selStart != selEnd) {
+            val s = minOf(selStart, selEnd)
+            val e = maxOf(selStart, selEnd)
+            return txt.subSequence(s, e).toString()
+        }
+        return ""
+    }
+
+    fun computeSelectionBoundsInView(): android.graphics.Rect? {
+        if (!hasSelection()) return null
+        val tvLayout = layout ?: return null
+        val txt = text ?: return null
+        val start = minOf(selectionStart, selectionEnd).coerceIn(0, txt.length)
+        val end = maxOf(selectionStart, selectionEnd).coerceIn(0, txt.length)
+        if (start == end) return null
+
+        val startLine = tvLayout.getLineForOffset(start)
+        val endLine = tvLayout.getLineForOffset(end)
+        val top = tvLayout.getLineTop(startLine) + totalPaddingTop - scrollY
+        val bottom = tvLayout.getLineBottom(endLine) + totalPaddingTop - scrollY
+
+        val left: Int
+        val right: Int
+        if (startLine == endLine) {
+            val x1 = tvLayout.getPrimaryHorizontal(start).toInt()
+            val x2 = tvLayout.getPrimaryHorizontal(end).toInt()
+            left = minOf(x1, x2) + totalPaddingLeft - scrollX
+            right = maxOf(x1, x2) + totalPaddingLeft - scrollX
+        } else {
+            left = totalPaddingLeft
+            right = (width - totalPaddingRight).coerceAtLeast(left + 1)
+        }
+        return android.graphics.Rect(left, top, right.coerceAtLeast(left + 1), bottom.coerceAtLeast(top + 1))
+    }
+
+    fun notifySelectionState() {
+        if (!touchBridge.isSelectable || !hasSelection()) {
+            onSelectionMenuStateChanged?.invoke(null)
+            return
+        }
+        val selected = getSelectedTextSafe()
+        val bounds = computeSelectionBoundsInView()
+        if (selected.isNotEmpty() && bounds != null) {
+            onSelectionMenuStateChanged?.invoke(SelectionMenuUiState(selected, bounds))
+        } else {
+            onSelectionMenuStateChanged?.invoke(null)
+        }
+    }
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        if (selStart != selEnd && selStart >= 0 && selEnd >= 0) {
+            post { notifySelectionState() }
+        } else {
+            onSelectionMenuStateChanged?.invoke(null)
+        }
+    }
 
     private val tapDetector = android.view.GestureDetector(
         context,
@@ -1356,11 +1601,7 @@ private class RichTextView(context: android.content.Context) : TextView(context)
                 // 2. PDF/EPUB Reader behavior: if text is currently selected, a single tap clears
                 // the selection without toggling full-screen bars
                 if (touchBridge.isSelectable && (touchBridge.hadSelectionOnDown || hasSelection())) {
-                    val sp = text as? android.text.Spannable
-                    if (sp != null) {
-                        android.text.Selection.removeSelection(sp)
-                    }
-                    clearFocus()
+                    selectionCallback.finishSelection()
                     return true
                 }
                 // 3. Otherwise, fire the current composable's tap callbacks
@@ -1375,8 +1616,6 @@ private class RichTextView(context: android.content.Context) : TextView(context)
         // When RichText is non-selectable and non-horizontally-scrollable (e.g. clickable quiz options
         // in ReadBookScreen and QuizScreen, or collapsed cards in BookmarksScreen and SearchScreen),
         // do NOT consume touch events inside the AndroidView unless an inline ClickableSpan (image) was tapped.
-        // Returning false lets the parent Compose Row.clickable / Card.clickable handle 100% of taps
-        // natively with full ripple feedback and prevents any leak to outer full-screen pointerInput!
         if (!touchBridge.isSelectable && !touchBridge.isHorizontallyScrollable) {
             if (hasClickableSpanAt(this, event)) {
                 return super.dispatchTouchEvent(event)
@@ -1394,6 +1633,15 @@ private class RichTextView(context: android.content.Context) : TextView(context)
         }
 
         val superHandled = super.dispatchTouchEvent(event)
+
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
+            event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
+        ) {
+            if (hasSelection()) {
+                post { notifySelectionState() }
+            }
+        }
+
         return if (touchBridge.isHorizontallyScrollable) {
             superHandled || hasTapCallbacks
         } else {
@@ -1405,6 +1653,7 @@ private class RichTextView(context: android.content.Context) : TextView(context)
 private fun bindRichTextView(
     textView: RichTextView,
     textColorArgb: Int,
+    selectionHighlightColorArgb: Int,
     fontSizeSp: Float,
     fontSizePx: Float,
     isSelectable: Boolean,
@@ -1413,6 +1662,7 @@ private fun bindRichTextView(
     markwon: Markwon,
     spannableToDisplay: Spannable,
     searchQuery: String,
+    onSelectionMenuStateChanged: (SelectionMenuUiState?) -> Unit,
     onClick: (() -> Unit)?,
     onClickWithCoords: ((Float, Float) -> Unit)?
 ) {
@@ -1420,8 +1670,10 @@ private fun bindRichTextView(
     textView.touchBridge.onClickWithCoords = onClickWithCoords
     textView.touchBridge.isSelectable = isSelectable
     textView.touchBridge.isHorizontallyScrollable = isHorizontallyScrollable
+    textView.onSelectionMenuStateChanged = onSelectionMenuStateChanged
 
     textView.setTextColor(textColorArgb)
+    textView.highlightColor = selectionHighlightColorArgb
     if (textView.textSize != fontSizePx) {
         textView.textSize = fontSizeSp
     }
@@ -1433,6 +1685,7 @@ private fun bindRichTextView(
     textView.selectionCallback.textView = textView
     textView.selectionCallback.customItems = resolvedCustomItems
     textView.customSelectionActionModeCallback = textView.selectionCallback
+    textView.customInsertionActionModeCallback = textView.selectionCallback
 
     if (textView.parsedSpannableTag !== spannableToDisplay || textView.boundSearchQuery != searchQuery) {
         markwon.setParsedMarkdown(textView, spannableToDisplay)
@@ -1508,8 +1761,14 @@ fun RichText(
     }
 
     val textColorArgb = if (color != Color.Unspecified) color.toArgb() else android.graphics.Color.BLACK
+    val themePrimaryColor = androidx.compose.material3.MaterialTheme.colorScheme.primary
+    val selectionHighlightColorArgb = remember(themePrimaryColor) {
+        androidx.core.graphics.ColorUtils.setAlphaComponent(themePrimaryColor.toArgb(), 72)
+    }
 
     var zoomableImageUrl by remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var selectionMenuState by remember { androidx.compose.runtime.mutableStateOf<SelectionMenuUiState?>(null) }
+    var richTextViewRef by remember { androidx.compose.runtime.mutableStateOf<RichTextView?>(null) }
 
     val spannableToDisplay = remember(processedText, markwon, searchQuery, highlightColor, textColorArgb) {
         val spannable = MathFormattingCache.getSpannable(markwon, processedText, markwon.hashCode(), textColorArgb)
@@ -1571,64 +1830,119 @@ fun RichText(
         }
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            RichTextView(ctx).apply {
-                includeFontPadding = true
-                bindRichTextView(
-                    textView = this,
-                    textColorArgb = textColorArgb,
-                    fontSizeSp = fontSize.value,
-                    fontSizePx = fontSizePx,
-                    isSelectable = isSelectable,
-                    isHorizontallyScrollable = isHorizontallyScrollable,
-                    resolvedCustomItems = resolvedCustomItems,
-                    markwon = markwon,
-                    spannableToDisplay = spannableToDisplay,
-                    searchQuery = searchQuery,
-                    onClick = onClick,
-                    onClickWithCoords = onClickWithCoords
-                )
-            }
-        },
-        update = { textView ->
-            if (textView is RichTextView) {
-                bindRichTextView(
-                    textView = textView,
-                    textColorArgb = textColorArgb,
-                    fontSizeSp = fontSize.value,
-                    fontSizePx = fontSizePx,
-                    isSelectable = isSelectable,
-                    isHorizontallyScrollable = isHorizontallyScrollable,
-                    resolvedCustomItems = resolvedCustomItems,
-                    markwon = markwon,
-                    spannableToDisplay = spannableToDisplay,
-                    searchQuery = searchQuery,
-                    onClick = onClick,
-                    onClickWithCoords = onClickWithCoords
-                )
-            }
-        },
-        onReset = { textView ->
-            try {
+    androidx.compose.foundation.layout.Box(modifier = modifier) {
+        AndroidView(
+            modifier = Modifier,
+            factory = { ctx ->
+                RichTextView(ctx).apply {
+                    includeFontPadding = true
+                    richTextViewRef = this
+                    bindRichTextView(
+                        textView = this,
+                        textColorArgb = textColorArgb,
+                        selectionHighlightColorArgb = selectionHighlightColorArgb,
+                        fontSizeSp = fontSize.value,
+                        fontSizePx = fontSizePx,
+                        isSelectable = isSelectable,
+                        isHorizontallyScrollable = isHorizontallyScrollable,
+                        resolvedCustomItems = resolvedCustomItems,
+                        markwon = markwon,
+                        spannableToDisplay = spannableToDisplay,
+                        searchQuery = searchQuery,
+                        onSelectionMenuStateChanged = { state -> selectionMenuState = state },
+                        onClick = onClick,
+                        onClickWithCoords = onClickWithCoords
+                    )
+                }
+            },
+            update = { textView ->
                 if (textView is RichTextView) {
-                    textView.touchBridge.onClick = null
-                    textView.touchBridge.onClickWithCoords = null
-                    textView.touchBridge.hadSelectionOnDown = false
-                    textView.parsedSpannableTag = null
-                    textView.boundSearchQuery = ""
-                    textView.selectionCallback.customItems = emptyList()
+                    richTextViewRef = textView
+                    bindRichTextView(
+                        textView = textView,
+                        textColorArgb = textColorArgb,
+                        selectionHighlightColorArgb = selectionHighlightColorArgb,
+                        fontSizeSp = fontSize.value,
+                        fontSizePx = fontSizePx,
+                        isSelectable = isSelectable,
+                        isHorizontallyScrollable = isHorizontallyScrollable,
+                        resolvedCustomItems = resolvedCustomItems,
+                        markwon = markwon,
+                        spannableToDisplay = spannableToDisplay,
+                        searchQuery = searchQuery,
+                        onSelectionMenuStateChanged = { state -> selectionMenuState = state },
+                        onClick = onClick,
+                        onClickWithCoords = onClickWithCoords
+                    )
                 }
-                textView.customSelectionActionModeCallback = null
-                val spannable = textView.text as? android.text.Spannable
-                if (spannable != null) {
-                    android.text.Selection.removeSelection(spannable)
+            },
+            onReset = { textView ->
+                try {
+                    selectionMenuState = null
+                    if (textView is RichTextView) {
+                        textView.onSelectionMenuStateChanged = null
+                        textView.touchBridge.onClick = null
+                        textView.touchBridge.onClickWithCoords = null
+                        textView.touchBridge.hadSelectionOnDown = false
+                        textView.parsedSpannableTag = null
+                        textView.boundSearchQuery = ""
+                        textView.selectionCallback.customItems = emptyList()
+                    }
+                    textView.customSelectionActionModeCallback = null
+                    textView.customInsertionActionModeCallback = null
+                    val spannable = textView.text as? android.text.Spannable
+                    if (spannable != null) {
+                        android.text.Selection.removeSelection(spannable)
+                    }
+                    textView.clearFocus()
+                } catch (e: Exception) {}
+            }
+        )
+
+        val currentMenuState = selectionMenuState
+        if (isSelectable && currentMenuState != null) {
+            RichTextSelectionMenuPopup(
+                menuState = currentMenuState,
+                customItems = resolvedCustomItems,
+                onCopy = {
+                    val selected = richTextViewRef?.getSelectedTextSafe().orEmpty().ifEmpty { currentMenuState.selectedText }
+                    if (selected.isNotEmpty()) {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Selected Text", selected))
+                        android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    richTextViewRef?.selectionCallback?.finishSelection()
+                    selectionMenuState = null
+                },
+                onSelectAll = {
+                    val tv = richTextViewRef
+                    val spannable = tv?.text as? android.text.Spannable
+                    if (tv != null && spannable != null && spannable.isNotEmpty()) {
+                        android.text.Selection.setSelection(spannable, 0, spannable.length)
+                        tv.post { tv.notifySelectionState() }
+                    }
+                },
+                onShare = {
+                    val selected = richTextViewRef?.getSelectedTextSafe().orEmpty().ifEmpty { currentMenuState.selectedText }
+                    richTextViewRef?.selectionCallback?.finishSelection()
+                    selectionMenuState = null
+                    if (selected.isNotEmpty()) {
+                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT, selected)
+                        }
+                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share text"))
+                    }
+                },
+                onCustomItemClick = { item ->
+                    val selected = richTextViewRef?.getSelectedTextSafe().orEmpty().ifEmpty { currentMenuState.selectedText }
+                    richTextViewRef?.selectionCallback?.finishSelection()
+                    selectionMenuState = null
+                    item.onClick(selected)
                 }
-                textView.clearFocus()
-            } catch (e: Exception) {}
+            )
         }
-    )
+    }
 
     if (zoomableImageUrl != null) {
         androidx.compose.ui.window.Dialog(

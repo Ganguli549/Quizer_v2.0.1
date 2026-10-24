@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.QuizHistoryEntity
+import com.example.data.resolvedSourceTag
 import com.example.ui.MainViewModel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -58,10 +59,10 @@ fun HistoryScreen(
         allBooks.find { it.id == currentBookId }?.name ?: currentBookId.ifBlank { "Current Book" }
     }
 
-    // Strict Book Isolation: only show history belonging to currentBookId
+    // Strict Book Isolation & Source Filtering: only show Quiz, Learn, and Search history for currentBookId
     val displayHistory = remember(history, currentBookId) {
         history.filter {
-            it.bookId == currentBookId && !it.status.startsWith("practice_mistakes")
+            it.bookId == currentBookId && it.resolvedSourceTag() in setOf("Quiz", "Learn", "Search")
         }
     }
 
@@ -131,29 +132,11 @@ fun HistoryScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Quiz History",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Book,
-                                contentDescription = null,
-                                modifier = Modifier.size(13.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = currentBookName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Quiz History",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onHome) {
@@ -215,7 +198,7 @@ fun HistoryScreen(
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "$currentBookName • $progressText",
+                                        text = progressText,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                                     )
@@ -286,7 +269,7 @@ fun HistoryScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Completed quizzes for \"$currentBookName\" will appear here and are automatically cleaned up after 30 days.",
+                                text = "Completed quizzes will appear here and are automatically cleaned up after 30 days.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -356,7 +339,7 @@ fun HistoryScreen(
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "History is isolated per book and auto-deletes after 30 days",
+                                            text = "Auto deletes after 30 days",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -400,25 +383,45 @@ fun HistoryScreen(
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        val sourceTag = entry.resolvedSourceTag() ?: "Quiz"
+                                        val (tagBgColor, tagTextColor) = when (sourceTag) {
+                                            "Learn" -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+                                            "Search" -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+                                            else -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+                                        }
                                         Column(modifier = Modifier.weight(1f)) {
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = tagBgColor
+                                                ) {
+                                                    Text(
+                                                        text = sourceTag,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = tagTextColor,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                    )
+                                                }
                                                 Text(
                                                     text = entry.quizLabel,
                                                     style = MaterialTheme.typography.titleMedium,
-                                                    fontWeight = FontWeight.Bold
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                                 Surface(
                                                     shape = RoundedCornerShape(50),
-                                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+                                                    color = MaterialTheme.colorScheme.surfaceVariant
                                                 ) {
                                                     Text(
                                                         text = "Score: ${String.format("%.1f", entry.finalScore)}",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         fontWeight = FontWeight.SemiBold,
-                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                                     )
                                                 }

@@ -38,10 +38,18 @@ import androidx.compose.ui.Alignment
 fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val history by viewModel.history.collectAsState()
+    val lastCompleted by viewModel.lastCompletedQuizResult.collectAsState()
     val allQuestions by viewModel.reviewQuestions.collectAsState()
     val selectedId by viewModel.selectedResultIdForReview.collectAsState()
-    
-    val lastResult = history.find { it.historyId == selectedId } ?: history.firstOrNull()
+
+    val lastResult = if (selectedId != null) {
+        history.find { it.historyId == selectedId }
+            ?: lastCompleted?.takeIf { it.historyId == selectedId }
+            ?: lastCompleted
+            ?: history.firstOrNull()
+    } else {
+        lastCompleted ?: history.firstOrNull()
+    }
     var filter by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("All") }
 
     Scaffold(
@@ -376,8 +384,11 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                     } catch (e: Exception) { emptyList() }
 
                                     val allMap = (baseOpts + extraOpts).toMap()
-                                    if (dispIndicesForQ.isNotEmpty()) {
-                                        dispIndicesForQ.mapNotNull { origIdx -> allMap[origIdx]?.let { Pair(origIdx, it) } }
+                                    val effectiveIndices = dispIndicesForQ.ifEmpty {
+                                        viewModel.settingsManager.getRetainedQuestionOptions(question.bookId)[question.id].orEmpty()
+                                    }
+                                    if (effectiveIndices.isNotEmpty()) {
+                                        effectiveIndices.mapNotNull { origIdx -> allMap[origIdx]?.let { Pair(origIdx, it) } }
                                     } else {
                                         val relevantExtras = extraOpts.filter { (negIdx, _) ->
                                             userAnswerSet.contains(negIdx) || correctIndices.contains(negIdx)

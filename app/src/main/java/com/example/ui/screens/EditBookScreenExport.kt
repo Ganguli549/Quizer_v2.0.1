@@ -61,7 +61,7 @@ suspend fun exportQBook(context: Context, repository: QuizRepository, bookId: St
                     legacyOpts.mapIndexed { idx, txt -> QBookOption(id = "opt$idx", text = txt) }
                 }
 
-                val normalizedCorrectIds = parseNormalizedCorrectOptionIds(q.advancedCorrectIds).ifEmpty {
+                val normalizedCorrectIds = q.resolvedCorrectOptionIds().ifEmpty {
                     listOfNotNull(finalOptions.getOrNull(q.correctIndex)?.id)
                 }
 

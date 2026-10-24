@@ -1001,8 +1001,10 @@ fun ReadBookScreen(
                                         DropdownMenu(
                                             expanded = showMenu,
                                             onDismissRequest = { showMenu = false },
+                                            shape = RoundedCornerShape(16.dp),
                                             containerColor = themeColors.surface,
-                                            modifier = Modifier.background(themeColors.surface),
+                                            tonalElevation = 4.dp,
+                                            shadowElevation = 8.dp,
                                             border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.text.copy(alpha = 0.15f))
                                         ) {
                                             DropdownMenuItem(
@@ -1398,47 +1400,79 @@ fun ReadBookScreen(
         if (showThemeMenu) {
             AlertDialog(
                 onDismissRequest = { showThemeMenu = false },
-                title = { Text("Select Reading Theme") },
+                shape = RoundedCornerShape(22.dp),
+                containerColor = themeColors.surface,
+                titleContentColor = themeColors.text,
+                textContentColor = themeColors.text,
+                title = {
+                    Text(
+                        "Select Reading Theme",
+                        fontWeight = FontWeight.Bold,
+                        color = themeColors.text
+                    )
+                },
                 text = {
-                    Column {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         ReadingTheme.values().forEachIndexed { index, theme ->
+                            val isSelected = selectedThemeIndex == index
+                            val swatchColors = getThemeColors(theme)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (isSelected) themeColors.primary.copy(alpha = 0.14f) else Color.Transparent,
+                                        RoundedCornerShape(12.dp)
+                                    )
                                     .clickable {
                                         selectedThemeIndex = index
                                         com.example.data.SecurePrefs.get(context).edit().putInt("reading_theme", index).apply()
                                         showThemeMenu = false
                                     }
-                                    .padding(16.dp),
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .background(getThemeColors(theme).background, RoundedCornerShape(4.dp))
-                                ) {
-                                    Text(
-                                        "Aa",
-                                        color = getThemeColors(theme).text,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.align(Alignment.Center)
+                                Surface(
+                                    modifier = Modifier.size(28.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = swatchColors.background,
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        swatchColors.text.copy(alpha = 0.25f)
                                     )
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            "Aa",
+                                            color = swatchColors.text,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(theme.label, style = MaterialTheme.typography.bodyLarge)
-                                if (selectedThemeIndex == index) {
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Text(
+                                    text = theme.label,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) themeColors.primary else themeColors.text
+                                )
+                                if (isSelected) {
                                     Spacer(modifier = Modifier.weight(1f))
-                                    Icon(Icons.Default.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = themeColors.primary
+                                    )
                                 }
                             }
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showThemeMenu = false }) { Text("Close") }
+                    TextButton(onClick = { showThemeMenu = false }) {
+                        Text("Close", color = themeColors.primary, fontWeight = FontWeight.SemiBold)
+                    }
                 }
             )
         }
@@ -1578,69 +1612,39 @@ fun ReadBookScreen(
             var contextInfo = ""
             var filteredQuestions = allQuestions
             val visibleLocalNumbers = mutableListOf<Int>()
-            val visibleQuestionMappings = mutableListOf<String>()
-
+            
             if (bookItems.isNotEmpty() && visibleItems.isNotEmpty()) {
                 var bestQItem: ReadBookItem.QuestionData? = null
-                var bestItemBookIdx = -1
-                var maxVisibleHeight = -1
-
+                var maxVisibleHeight = 0
+                
+                var currentPath = ""
+                
                 for (info in visibleItems) {
                     val index = info.index
                     if (index in bookItems.indices) {
                         val item = bookItems[index]
                         if (item is ReadBookItem.QuestionData) {
+                            if (currentPath.isEmpty()) currentPath = item.question.path
                             visibleLocalNumbers.add(item.localNumber)
-                            visibleQuestionMappings.add("Q.${item.localNumber} (ID ${item.question.id})")
-
+                            
                             val itemTop = maxOf(viewportStart, info.offset)
                             val itemBottom = minOf(viewportEnd, info.offset + info.size)
                             val visibleHeight = maxOf(0, itemBottom - itemTop)
-
+                            
                             if (visibleHeight > maxVisibleHeight) {
                                 maxVisibleHeight = visibleHeight
                                 bestQItem = item
-                                bestItemBookIdx = index
                             }
                         }
                     }
                 }
-
-                if (bestQItem != null && bestItemBookIdx != -1) {
-                    val currentPath = bestQItem.question.path
+                
+                if (bestQItem != null) {
+                    currentPath = bestQItem.question.path
                     val currentQ = bestQItem.question
                     val localNum = bestQItem.localNumber
-
-                    // Extract the exact contiguous topic block from bookItems so 1-based index (localNumber)
-                    // matches Q.1, Q.2, ..., Q.99 on screen with 100% accuracy!
-                    var startTopicIdx = bestItemBookIdx
-                    while (startTopicIdx > 0) {
-                        val prev = bookItems[startTopicIdx - 1]
-                        if (prev is ReadBookItem.PathHeader) break
-                        startTopicIdx--
-                    }
-                    var endTopicIdx = bestItemBookIdx
-                    while (endTopicIdx < bookItems.lastIndex) {
-                        val next = bookItems[endTopicIdx + 1]
-                        if (next is ReadBookItem.PathHeader) break
-                        endTopicIdx++
-                    }
-
-                    val contiguousTopicQuestions = bookItems
-                        .subList(startTopicIdx, endTopicIdx + 1)
-                        .filterIsInstance<ReadBookItem.QuestionData>()
-                        .sortedBy { it.localNumber }
-                        .map { it.question }
-
-                    filteredQuestions = if (contiguousTopicQuestions.isNotEmpty()) {
-                        contiguousTopicQuestions
-                    } else {
-                        allQuestions.filter { it.path == currentPath }
-                    }
-
-                    contextInfo = "The user is currently viewing the topic/path: '$currentPath' (which contains ${filteredQuestions.size} questions numbered Q.1 to Q.${filteredQuestions.size}). " +
-                        "The most prominent question on their screen is Q.$localNum (Book Question ID ${currentQ.id}). " +
-                        "Visible questions on screen right now: ${visibleQuestionMappings.distinct().joinToString(", ")}."
+                    contextInfo = "The user is currently viewing the topic/path: '$currentPath'. The most prominent question on their screen is question ID ${currentQ.id} (which is question $localNum in this topic). They can also see questions: ${visibleLocalNumbers.joinToString(", ")}."
+                    filteredQuestions = allQuestions.filter { it.path == currentPath }
                 }
             }
 
@@ -1829,6 +1833,20 @@ fun ReadBookQuestionItem(
     ) {
         val questionCustomMenuItems = remember(isBookmarked, localNumber, onBookmarkToggle, onEditQuestion, onAskAiQuestion) {
             val list = mutableListOf<com.example.ui.components.CustomTextMenuItem>()
+            if (onAskAiQuestion != null) {
+                list.add(
+                    com.example.ui.components.CustomTextMenuItem(
+                        id = 99993,
+                        title = "Ask AI Q$localNumber",
+                        iconRes = com.example.R.drawable.ic_sparkle,
+                        showText = false,
+                        order = 0,
+                        onClick = {
+                            onAskAiQuestion.invoke(question, localNumber)
+                        }
+                    )
+                )
+            }
             if (onBookmarkToggle != null) {
                 list.add(
                     com.example.ui.components.CustomTextMenuItem(
@@ -1836,7 +1854,7 @@ fun ReadBookQuestionItem(
                         title = if (isBookmarked) "Unbookmark" else "Bookmark Q$localNumber",
                         iconRes = if (isBookmarked) com.example.R.drawable.ic_bookmark else com.example.R.drawable.ic_bookmark_border,
                         showText = false,
-                        order = 0,
+                        order = 1,
                         onClick = {
                             onBookmarkToggle.invoke()
                         }
@@ -1850,23 +1868,9 @@ fun ReadBookQuestionItem(
                         title = "Edit Q$localNumber",
                         iconRes = com.example.R.drawable.ic_edit,
                         showText = false,
-                        order = 1,
-                        onClick = {
-                            onEditQuestion.invoke()
-                        }
-                    )
-                )
-            }
-            if (onAskAiQuestion != null) {
-                list.add(
-                    com.example.ui.components.CustomTextMenuItem(
-                        id = 99993,
-                        title = "Ask AI Q$localNumber",
-                        iconRes = android.R.drawable.ic_menu_help,
-                        showText = false,
                         order = 2,
                         onClick = {
-                            onAskAiQuestion.invoke(question, localNumber)
+                            onEditQuestion.invoke()
                         }
                     )
                 )

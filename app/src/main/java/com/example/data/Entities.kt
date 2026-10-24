@@ -317,11 +317,32 @@ fun QuestionEntity.resolveCorrectIndices(includeExtraOptions: Boolean = false): 
         }
     }
 
-    if (resolved.isEmpty()) {
+    // Every question with base options must have at least one base option index (0 until optionCount)
+    // marked correct. If advancedCorrectIds only contained extra option IDs ("ext0", "ext1", ...)
+    // while the base correct option was stored in `correctIndex`, always include `correctIndex`!
+    if (resolved.none { it >= 0 }) {
         val fallback = if (optionCount > 0) this.correctIndex.coerceIn(0, optionCount - 1) else this.correctIndex.coerceAtLeast(0)
-        resolved.add(fallback)
+        val withBase = LinkedHashSet<Int>()
+        withBase.add(fallback)
+        withBase.addAll(resolved)
+        return withBase
     }
     return resolved
+}
+
+/**
+ * Returns the canonical list of correct option IDs (e.g. `["opt0", "ext0", "ext1"]`) for this
+ * [QuestionEntity], guaranteeing that if [advancedCorrectIds] only stored `"ext*"` IDs while the
+ * base correct option was stored in [correctIndex], `"opt$correctIndex"` is included at the front.
+ */
+fun QuestionEntity.resolvedCorrectOptionIds(): List<String> {
+    val parsed = parseNormalizedCorrectOptionIds(this.advancedCorrectIds)
+    val baseFallback = "opt${this.correctIndex.coerceAtLeast(0)}"
+    if (parsed.isEmpty()) return listOf(baseFallback)
+    if (parsed.none { it.startsWith("opt", ignoreCase = true) }) {
+        return listOf(baseFallback) + parsed
+    }
+    return parsed
 }
 
 /**
@@ -333,37 +354,57 @@ fun QuestionEntity.isEffectivelyMultipleCorrect(includeExtraOptions: Boolean = f
 
 /**
  * Builds the list of `(originalOptionIndex, optionText)` pairs to display in `QuizScreen`:
- * 1. If `useDistractors` is ON and `shuffleOptions` is OFF (only dynamic distractors enabled):
- *    shows ALL options (`baseOptions + extraOptions`) and shuffles them!
- * 2. If `shuffleOptions` is ON (with or without `useDistractors`):
+ * 1. If [retainedOptionIndices] is non-empty (e.g. during Review / Practice Mistakes / Resumed Quiz
+ *    or when revisiting a question whose 4 quiz options were already selected), it retains those
+ *    exact options from the quiz without pulling in new `extraOptions` or other `options`. If
+ *    [shuffleOptions] is `true`, only those retained options are shuffled.
+ * 2. If `useDistractors` is ON and `shuffleOptions` is OFF (only dynamic distractors enabled):
+ *    shows ALL options (`baseOptions + extraOptions`) and shuffles them.
+ * 3. If `shuffleOptions` is ON (with or without `useDistractors`):
  *    shuffles the candidate options, caps to 4 options, and guarantees AT LEAST ONE correct option
  *    is included in those 4 options.
- *    - If 1 correct option lands in those 4 options, `displayedCorrectIndices.size == 1` (normal single-correct quiz).
- *    - If 2+ correct options land in those 4 options, `displayedCorrectIndices.size > 1` (multiple-correct quiz).
  */
 fun QuestionEntity.buildQuizDisplayOptions(
     useDistractors: Boolean,
     shuffleOptions: Boolean,
-    sessionSeed: Long
+    sessionSeed: Long,
+    retainedOptionIndices: List<Int>? = null
 ): List<Pair<Int, String>> {
     val baseOptions = try {
         SharedGson.normal.fromJson(this.options, Array<String>::class.java)?.toList() ?: emptyList()
     } catch (_: Exception) {
         emptyList()
     }
-    var finalOptions = baseOptions.mapIndexed { idx, text -> Pair(idx, text) }
+    val basePairs = baseOptions.mapIndexed { idx, text -> Pair(idx, text) }
 
-    val hasExtras = useDistractors && this.extraOptions.isNotBlank() && this.extraOptions != "[]"
-    if (hasExtras) {
+    val extraPairs = if (this.extraOptions.isNotBlank() && this.extraOptions != "[]") {
         try {
             val extras = SharedGson.normal.fromJson(this.extraOptions, Array<String>::class.java)?.toList() ?: emptyList()
-            val extraPairs = extras.mapIndexed { idx, txt -> Pair(-(idx + 1), txt) }
-            finalOptions = finalOptions + extraPairs
-        } catch (_: Exception) {}
+            extras.mapIndexed { idx, txt -> Pair(-(idx + 1), txt) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    } else {
+        emptyList()
     }
 
     val stableSeed = sessionSeed + this.id
     val rng = kotlin.random.Random(stableSeed)
+
+    // If this question has retained option indices from the quiz, retain those exact options
+    // and only shuffle them if shuffleOptions is enabled.
+    if (!retainedOptionIndices.isNullOrEmpty()) {
+        val allLookup = (basePairs + extraPairs).toMap()
+        val retainedPairs = retainedOptionIndices.mapNotNull { origIdx ->
+            allLookup[origIdx]?.let { txt -> Pair(origIdx, txt) }
+        }
+        if (retainedPairs.isNotEmpty()) {
+            return if (shuffleOptions) retainedPairs.shuffled(rng) else retainedPairs
+        }
+    }
+
+    val hasExtras = useDistractors && extraPairs.isNotEmpty()
+    var finalOptions = if (hasExtras) basePairs + extraPairs else basePairs
 
     if (shuffleOptions) {
         val allCorrectIndices = this.resolveCorrectIndices(includeExtraOptions = useDistractors)
@@ -385,7 +426,7 @@ fun QuestionEntity.buildQuizDisplayOptions(
         }
         finalOptions = mutableList
     } else if (hasExtras) {
-        // Requirement 3: When ONLY dynamic distractors is enabled (shuffleOptions is disabled),
+        // When ONLY dynamic distractors is enabled (shuffleOptions is disabled),
         // show all options (base + distractors) and shuffle them!
         val mutableList = finalOptions.toMutableList()
         mutableList.shuffle(rng)
@@ -393,4 +434,52 @@ fun QuestionEntity.buildQuizDisplayOptions(
     }
 
     return finalOptions
+}
+
+/**
+ * Matches a [QuestionSummary] against [selectedPaths] using the exact same hierarchy delimiter
+ * and prefix construction as `calculateTopicTreeAsync`, without requiring `_topicTreeRoot` to be built first.
+ */
+fun QuestionSummary.matchesSelectedPaths(selectedPaths: Set<String>): Boolean {
+    if (selectedPaths.isEmpty()) return true
+    val rawPath = if (this.path.isNotBlank()) this.path else this.category
+    val delimiter = if (rawPath.contains(">")) ">" else if (rawPath.contains("/")) "/" else "-"
+    val parts = rawPath.split(delimiter).map { it.trim() }.filter { it.isNotBlank() }
+    var currentPathStr = ""
+    for (part in parts) {
+        currentPathStr = if (currentPathStr.isEmpty()) part else "$currentPathStr/$part"
+        if (selectedPaths.contains(currentPathStr)) return true
+    }
+    return false
+}
+
+/**
+ * Extracts the quiz source tag (`"Quiz"`, `"Learn"`, or `"Search"`) for a [QuizHistoryEntity].
+ * Returns `null` if the entry belongs to an excluded source (`"Bookmarks"`, `"Review"`, `"Revision"`, or `"practice_mistakes"`).
+ */
+fun QuizHistoryEntity.resolvedSourceTag(): String? {
+    if (this.status.startsWith("practice_mistakes")) return null
+    if (this.status.startsWith("completed|")) {
+        val tag = this.status.substringAfter("completed|").trim()
+        return if (tag in setOf("Quiz", "Learn", "Search")) tag else null
+    }
+    if (this.status != "completed") return null
+    return try {
+        val trimmed = this.activeQuizData.trim()
+        if (trimmed.startsWith("{")) {
+            val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any?>>() {}.type
+            val map: Map<String, Any?> = SharedGson.normal.fromJson(trimmed, mapType)
+            val tag = (map["sourceTag"] as? String)?.trim()
+            if (tag != null) {
+                return if (tag in setOf("Quiz", "Learn", "Search")) tag else null
+            }
+        }
+        when {
+            this.quizLabel.contains("Learn", ignoreCase = true) -> "Learn"
+            this.quizLabel.contains("Search", ignoreCase = true) -> "Search"
+            else -> "Quiz"
+        }
+    } catch (_: Exception) {
+        "Quiz"
+    }
 }

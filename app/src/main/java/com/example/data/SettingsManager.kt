@@ -578,6 +578,28 @@ class SettingsManager(val context: Context) {
         } catch (_: Exception) {}
     }
 
+    fun getRetainedQuestionOptions(bookId: String): Map<Long, List<Int>> {
+        if (bookId.isBlank()) return emptyMap()
+        val json = prefs.getString("retained_question_options_$bookId", null) ?: return emptyMap()
+        return try {
+            val type = object : com.google.gson.reflect.TypeToken<Map<String, List<Int>>>() {}.type
+            val raw: Map<String, List<Int>> = SharedGson.normal.fromJson(json, type) ?: emptyMap()
+            raw.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveRetainedQuestionOptions(bookId: String, newEntries: Map<Long, List<Int>>) {
+        if (bookId.isBlank() || newEntries.isEmpty()) return
+        try {
+            val merged = getRetainedQuestionOptions(bookId).toMutableMap()
+            merged.putAll(newEntries)
+            val serialized = merged.entries.associate { (k, v) -> k.toString() to v }
+            prefs.edit().putString("retained_question_options_$bookId", SharedGson.normal.toJson(serialized)).apply()
+        } catch (_: Exception) {}
+    }
+
     /**
      * Comprehensively purges all remembered settings, active quiz states, scroll positions,
      * expanded scopes, exam configurations, learn configurations, and persisted URI mappings
@@ -640,6 +662,7 @@ class SettingsManager(val context: Context) {
             .remove("cats_$bookId")
             .remove("limit_$bookId")
             .remove("active_quiz_state_$bookId")
+            .remove("retained_question_options_$bookId")
             .remove("scroll_idx_$bookId")
             .remove("scroll_off_$bookId")
 

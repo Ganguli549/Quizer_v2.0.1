@@ -388,22 +388,31 @@ fun HomeScreen(
                 draggedCardHeightPx = currItemInfo.size.toFloat()
             }
 
-            val contentBottom = layoutInfo.visibleItemsInfo
-                .maxOfOrNull { it.offset + it.size }
-                ?.toFloat() ?: viewportHeight
-            val maxTop = (minOf(viewportHeight, contentBottom) - draggedCardHeightPx).coerceAtLeast(0f)
+            val visibleSlots = layoutInfo.visibleItemsInfo.sortedBy { it.index }
+            val avgSlotHeight = visibleSlots
+                .firstOrNull { it.size > 0 }?.size?.toFloat()
+                ?: draggedCardHeightPx.coerceAtLeast(1f)
 
-            // Position the dragged card 1:1 under the finger in stationary viewport coordinates
-            draggedVisualTop = (fingerViewportY - grabOffsetInCard).coerceIn(0f, maxTop)
+            val contentBottom = visibleSlots
+                .maxOfOrNull { it.offset + it.size }
+                ?.toFloat() ?: (localBooks.size * avgSlotHeight)
+            val maxTop = (minOf(viewportHeight, contentBottom) - draggedCardHeightPx).coerceAtLeast(0f)
+            val overscrollAllowance = draggedCardHeightPx * 0.25f
+
+            // Position the dragged card 1:1 under the finger with slight top/bottom overscroll allowance
+            // so the card center easily crosses the top (index 0) and bottom (lastIndex) slot thresholds.
+            draggedVisualTop = (fingerViewportY - grabOffsetInCard)
+                .coerceIn(-overscrollAllowance, maxTop + overscrollAllowance)
             val draggedCenterY = draggedVisualTop + (draggedCardHeightPx * 0.5f)
 
-            // Compare draggedCenterY against physical slot positions in LazyColumn
-            val visibleSlots = layoutInfo.visibleItemsInfo.sortedBy { it.index }
             var swapped = false
 
+            // Downward swap: trigger as soon as draggedCenterY enters 30% of the next slot
             while (currIdx < localBooks.lastIndex) {
-                val nextSlot = visibleSlots.firstOrNull { it.index == currIdx + 1 } ?: break
-                val nextThreshold = nextSlot.offset + (nextSlot.size * 0.52f)
+                val nextSlot = visibleSlots.firstOrNull { it.index == currIdx + 1 }
+                val nextOffset = nextSlot?.offset?.toFloat() ?: ((currIdx + 1) * avgSlotHeight)
+                val nextSize = nextSlot?.size?.toFloat() ?: avgSlotHeight
+                val nextThreshold = nextOffset + (nextSize * 0.30f)
                 if (draggedCenterY > nextThreshold) {
                     val mutable = localBooks.toMutableList()
                     val moved = mutable.removeAt(currIdx)
@@ -416,10 +425,13 @@ fun HomeScreen(
                 }
             }
 
+            // Upward swap: trigger as soon as draggedCenterY rises above 70% of the previous slot
             if (!swapped) {
                 while (currIdx > 0) {
-                    val prevSlot = visibleSlots.firstOrNull { it.index == currIdx - 1 } ?: break
-                    val prevThreshold = prevSlot.offset + (prevSlot.size * 0.48f)
+                    val prevSlot = visibleSlots.firstOrNull { it.index == currIdx - 1 }
+                    val prevOffset = prevSlot?.offset?.toFloat() ?: ((currIdx - 1) * avgSlotHeight)
+                    val prevSize = prevSlot?.size?.toFloat() ?: avgSlotHeight
+                    val prevThreshold = prevOffset + (prevSize * 0.70f)
                     if (draggedCenterY < prevThreshold) {
                         val mutable = localBooks.toMutableList()
                         val moved = mutable.removeAt(currIdx)
@@ -438,7 +450,7 @@ fun HomeScreen(
             }
 
             // Smooth auto-scroll when dragging near the top or bottom edge of a scrollable book list
-            val edgeZonePx = with(density) { 36.dp.toPx() }
+            val edgeZonePx = with(density) { 40.dp.toPx() }
             val scrollStepPx = with(density) { 14.dp.toPx() }
             if (draggedVisualTop + draggedCardHeightPx > viewportHeight - edgeZonePx && listState.canScrollForward) {
                 dragCoroutineScope.launch { listState.scrollBy(scrollStepPx) }
@@ -605,14 +617,16 @@ fun HomeScreen(
                                     label = "dragCardScale"
                                 )
 
+                                val cardCornerShape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                                 Card(
+                                    shape = cardCornerShape,
                                     colors = if (isSelected) {
                                         androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                                     } else {
-                                        androidx.compose.material3.CardDefaults.cardColors()
+                                        androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                                     },
                                     elevation = androidx.compose.material3.CardDefaults.cardElevation(
-                                        defaultElevation = if (isElevated) 8.dp else 1.dp
+                                        defaultElevation = if (isElevated) 6.dp else 0.dp
                                     ),
                                     // CRITICAL: .zIndex and .animateItem MUST be placed BEFORE .padding(vertical = 4.dp)
                                     // so LazyColumn receives their ParentDataModifiers directly!
@@ -645,7 +659,9 @@ fun HomeScreen(
                                             }
                                             scaleX = animatedScale
                                             scaleY = animatedScale
-                                            shadowElevation = if (isElevated) 16f else 0f
+                                            shape = cardCornerShape
+                                            clip = true
+                                            shadowElevation = if (isElevated) with(density) { 6.dp.toPx() } else 0f
                                         }
                                 ) {
                                     Row(
@@ -667,23 +683,40 @@ fun HomeScreen(
                                         Column(
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
                                                 .pointerInput(book.id) {
                                                     awaitEachGesture {
-                                                        awaitFirstDown(requireUnconsumed = false)
+                                                        val down = awaitFirstDown(requireUnconsumed = false)
                                                         val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+                                                        val maxVerticalSlop = viewConfiguration.touchSlop * 2.5f
                                                         var isLong = false
-                                                        val up = try {
+                                                        var upChange: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                                                        var cancelledByScroll = false
+                                                        try {
                                                             withTimeout(longPressTimeout) {
-                                                                waitForUpOrCancellation()
+                                                                while (true) {
+                                                                    val event = awaitPointerEvent()
+                                                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                                    if (!change.pressed) {
+                                                                        upChange = change
+                                                                        break
+                                                                    }
+                                                                    // Allow horizontal finger drift; only cancel if user scrolls vertically before timeout
+                                                                    if (kotlin.math.abs(change.position.y - down.position.y) > maxVerticalSlop) {
+                                                                        cancelledByScroll = true
+                                                                        break
+                                                                    }
+                                                                }
                                                             }
-                                                        } catch (e: kotlinx.coroutines.CancellationException) {
-                                                            isLong = true
-                                                            null
+                                                        } catch (_: kotlinx.coroutines.CancellationException) {
+                                                            if (!cancelledByScroll) {
+                                                                isLong = true
+                                                            }
                                                         }
 
                                                         if (isLong) {
                                                             startDrag(book.id)
-                                                        } else if (up != null && !up.isConsumed && draggedBookKey == null && settlingBookKey == null) {
+                                                        } else if (!cancelledByScroll && upChange != null && !upChange!!.isConsumed && draggedBookKey == null && settlingBookKey == null) {
                                                             viewModel.selectBook(book.id)
                                                             showBookDialog = false
                                                         }
@@ -752,6 +785,8 @@ fun HomeScreen(
                 viewModel.currentExamSettings = settings
                 viewModel.setOnlyBookmarks(false)
                 viewModel.isLearnMode = false
+                viewModel.activeQuizSourceTag = "Quiz"
+                viewModel.activeRetainedOptionIndices = emptyMap()
                 onStartQuiz()
             }
         )
@@ -1064,7 +1099,9 @@ fun HomeScreen(
                             viewModel.clearActiveQuizState()
                             viewModel.setOnlyBookmarks(false)
                             viewModel.isLearnMode = false
-                onStartQuiz()
+                            viewModel.activeQuizSourceTag = "Quiz"
+                            viewModel.activeRetainedOptionIndices = emptyMap()
+                            onStartQuiz()
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),

@@ -131,37 +131,41 @@ fun AppNavigation(viewModel: MainViewModel) {
                 onStartQuiz = { navController.navigate(QuizRoute) }
             )
         }
-        composable<StatsRoute> {
-            StatsScreen(viewModel = viewModel, onHome = { navController.popBackStack(HomeRoute, false) })
-        }
-        composable<SearchRoute> {
-            SearchScreen(
-                viewModel = viewModel, 
-                onHome = { navController.popBackStack(HomeRoute, false) },
-                onStartQuiz = { navController.navigate(QuizRoute) }
-            )
-        }
-        composable<BookmarksRoute> {
-            BookmarksScreen(
-                viewModel = viewModel, 
-                onHome = { navController.popBackStack(HomeRoute, false) },
-                onStartQuiz = { navController.navigate(QuizRoute) }
-            )
-        }
-        composable<LearnRoute> {
-            LearnScreen(
-                viewModel = viewModel, 
-                onHome = { navController.popBackStack(HomeRoute, false) },
-                onStartQuiz = { navController.navigate(QuizRoute) }
-            )
-        }
-        composable<AnalysisRoute> {
-            AnalysisScreen(
-                viewModel = viewModel, 
-                onHome = { navController.popBackStack(HomeRoute, false) },
-                onStartQuiz = { navController.navigate(QuizRoute) }
-            )
-        }
+    composable<StatsRoute> {
+      StatsScreen(
+        viewModel = viewModel, onHome ={ navController.popBackStack(HomeRoute, false) },
+        onNavigateAnalysis = { navController.navigate(AnalysisRoute) },
+        onReviewQuiz = { navController.navigate(ReviewRoute) }
+      )
+    }
+    composable<SearchRoute> {
+        SearchScreen(
+            viewModel = viewModel, 
+            onHome = { navController.popBackStack(HomeRoute, false) },
+            onStartQuiz = { navController.navigate(QuizRoute) }
+        )
+    }
+    composable<BookmarksRoute> {
+        BookmarksScreen(
+            viewModel = viewModel, 
+            onHome = { navController.popBackStack(HomeRoute, false) },
+            onStartQuiz = { navController.navigate(QuizRoute) }
+        )
+    }
+    composable<LearnRoute> {
+        LearnScreen(
+            viewModel = viewModel, 
+            onHome = { navController.popBackStack(HomeRoute, false) },
+            onStartQuiz = { navController.navigate(QuizRoute) }
+        )
+    }
+    composable<AnalysisRoute> {
+      AnalysisScreen(
+        viewModel = viewModel, onHome ={ navController.popBackStack(HomeRoute, false) },
+        onStartQuiz = { navController.navigate(QuizRoute) },
+        onNavigateStats = { navController.navigate(StatsRoute) }
+      )
+    }
         composable<ReviewRoute> {
             ReviewScreen(viewModel = viewModel, onHome = { navController.popBackStack(HomeRoute, false) })
         }

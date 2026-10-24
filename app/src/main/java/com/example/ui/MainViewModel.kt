@@ -172,6 +172,16 @@ class MainViewModel(
     var pendingQuizGenerationTrigger = true
     var isLearnMode = false
     var isActiveQuizStandardSequence = true
+    /**
+     * Source tag for the active quiz session:
+     * - Persisted in Quiz History: "Quiz" (Home / Main Quiz), "Learn" (Learn Center), "Search" (Content Explorer).
+     * - Excluded from Quiz History: "Bookmarks", "Review", "Revision".
+     */
+    var activeQuizSourceTag: String = "Quiz"
+    var activeRetainedOptionIndices: Map<Long, List<Int>> = emptyMap()
+
+    private val _lastCompletedQuizResult = MutableStateFlow<QuizHistoryEntity?>(null)
+    val lastCompletedQuizResult = _lastCompletedQuizResult.asStateFlow()
 
     var currentExamSettings: ExamSettings? = null
     var currentLearnSettings: ExamSettings? = null
@@ -667,7 +677,7 @@ class MainViewModel(
                         "options": ["Option A", "Option B", "Option C", "Option D"],
                         "extraOptions": ["Extra Option 0", "Extra Option 1"] (if present or requested, else []),
                         "correctIndex": 0,
-                        "correctOptionIds": ["opt0"] (or ["opt0", "opt3", "ext0", "ext2"] for multiple-correct / extraOptions),
+                        "correctOptionIds": ["opt0"] (MUST include both the correct base option ID(s) "opt0".."opt3" AND any correct extraOption ID(s) "ext0".."extN", e.g. ["opt0", "ext0", "ext1"]),
                         "multipleCorrect": false (true if >1 option/extraOption is correct),
                         "explanation": "brief explanation (empty string \"\" if none)",
                         "detailedExplanation": "detailed explanation if present, or generate one (empty string \"\" if none)",
@@ -847,6 +857,17 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         }
     }
 
+    fun deleteChatMessagesBatch(ids: List<Long>, bookId: String, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            for (id in ids) {
+                repository.deleteChat(id)
+            }
+            val list = repository.getChatsForBook(bookId)
+            _chatHistory.value = _chatHistory.value.toMutableMap().apply { put(bookId, list) }
+            onComplete()
+        }
+    }
+
     fun clearChatHistory(bookId: String) {
         viewModelScope.launch {
             repository.clearChatsForBook(bookId)
@@ -936,8 +957,11 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     fun setQuizQuestionsForBookmarks() {
         isLearnMode = false
         isActiveQuizStandardSequence = false
+        activeQuizSourceTag = "Bookmarks"
         currentExamSettings = null
+        currentPracticeMistakesParentId = null
         resetTransientQuizSessionState()
+        activeRetainedOptionIndices = settingsManager.getRetainedQuestionOptions(_currentBookId.value)
         val bookmarkedIds = bookmarks.value.map { it.questionId }
         val allQs = _allBookQuestionSummaries.value
         val bookmarkedQs = allQs.filter { it.id in bookmarkedIds }
@@ -1272,6 +1296,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         activeLockedAnswers = mutableMapOf()
         activeTimeRemainingMs = -1L
         activeQuizSessionId = System.currentTimeMillis()
+        activeRetainedOptionIndices = emptyMap()
     }
 
     fun setQuizQuestionsByTopic(topic: TopicNode) {
@@ -1281,6 +1306,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     fun startLearnTopicQuiz(topic: TopicNode, onReady: (() -> Unit)? = null) {
         isLearnMode = true
         isActiveQuizStandardSequence = false
+        activeQuizSourceTag = "Learn"
         currentExamSettings = null
         currentPracticeMistakesParentId = null
         resetTransientQuizSessionState()
@@ -1291,63 +1317,121 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         applySortingAndLimitToQuestions(questionsInTopic, onReady)
     }
 
-    fun setQuizQuestionsForDailyRevision() {
-        isLearnMode = false
-        isActiveQuizStandardSequence = false
-        currentExamSettings = null
-        resetTransientQuizSessionState()
-        _selectedTopic.value = null
-        _onlyBookmarks.value = false
-        val now = System.currentTimeMillis()
-        val statsMap = allStats.value.associateBy { it.questionId }
-        val allQs = _allBookQuestionSummaries.value
-        val revisionQs = allQs.filter { q ->
-            val stat = statsMap[q.id]
-            stat != null && stat.nextReview <= now
-        }
-        applySortingAndLimitToQuestions(revisionQs)
-    }
+  fun setQuizQuestionsForDailyRevision(limit: Int? = null, onReady: (() -> Unit)? = null) {
+    val now = System.currentTimeMillis()
+    val statsMap = allStats.value.associateBy { it.questionId }
+    val allQs = _allBookQuestionSummaries.value
+    val revisionIds = allQs.filter { q ->
+        val stat = statsMap[q.id]
+        stat != null && stat.attempts > 0 && stat.nextReview in 1L..now
+      }.sortedBy { q -> statsMap[q.id]?.nextReview ?: Long.MAX_VALUE }.map { it.id }
+    startTargetedAnalysisDrill(revisionIds, limit = limit, onReady = onReady)
+  }
 
-    fun setQuizQuestionsForWeakTopics() {
-        isLearnMode = false
-        isActiveQuizStandardSequence = false
-        currentExamSettings = null
-        resetTransientQuizSessionState()
-        _selectedTopic.value = null
-        _onlyBookmarks.value = false
-        val statsMap = allStats.value.associateBy { it.questionId }
-        val allQs = _allBookQuestionSummaries.value
-        val weakQs = allQs.filter { q ->
-            val stat = statsMap[q.id]
-            stat != null && stat.attempts > 0 && (stat.correct.toFloat() / stat.attempts) < 0.5f
-        }
-        applySortingAndLimitToQuestions(weakQs)
-    }
+  fun setQuizQuestionsForWeakTopics(limit: Int? = null, onReady: (() -> Unit)? = null) {
+    val now = System.currentTimeMillis()
+    val statsMap = allStats.value.associateBy { it.questionId }
+    val allQs = _allBookQuestionSummaries.value
 
-    fun setQuizQuestionsForCritical() {
-        isLearnMode = false
-        isActiveQuizStandardSequence = false
-        currentExamSettings = null
-        resetTransientQuizSessionState()
-        _selectedTopic.value = null
-        _onlyBookmarks.value = false
-        val now = System.currentTimeMillis()
-        val statsMap = allStats.value.associateBy { it.questionId }
-        val allQs = _allBookQuestionSummaries.value
-        val criticalQs = allQs
-            .filter { q -> (statsMap[q.id]?.wrong ?: 0) > 0 }
-            .sortedWith(
-                compareByDescending<com.example.data.QuestionSummary> { q ->
-                    val st = statsMap[q.id]
-                    st != null && !QuestionPoolProcessor.isQuestionMastered(st)
-                }.thenByDescending { q ->
-                    val st = statsMap[q.id]
-                    if (st != null) QuestionPoolProcessor.computeMistakeUrgencyScore(st, now) else 0f
-                }
-            )
-            .take(30)
-        applySortingAndLimitToQuestions(criticalQs)
+    // Identify weak topics (< 65% topic accuracy with at least 1 attempt) plus individual weak questions (< 60% accuracy)
+    val topicGroups = allQs.groupBy { q ->
+      q.path.trim().ifBlank { q.category.trim().ifBlank { "General" } }
     }
+    val weakTopicKeys = topicGroups.filter { (_, qs) ->
+      val tStats = qs.mapNotNull { statsMap[it.id] }
+      val att = tStats.sumOf { it.attempts }
+      val corr = tStats.sumOf { it.correct }
+      att > 0 && (corr.toFloat() / att.toFloat()) < 0.65f
+    }.keys
+
+    val weakCandidates = allQs.filter { q ->
+      val st = statsMap[q.id]
+      val topicKey = q.path.trim().ifBlank { q.category.trim().ifBlank { "General" } }
+      val isIndividualWeak = st != null && st.attempts > 0 && !QuestionPoolProcessor.isQuestionMastered(st) &&
+        ((st.correct.toFloat() / st.attempts.toFloat()) < 0.65f || st.wrong > 0)
+      val isInWeakTopic = topicKey in weakTopicKeys && (st == null || !QuestionPoolProcessor.isQuestionMastered(st))
+      isIndividualWeak || isInWeakTopic
+    }.sortedWith(
+      compareByDescending<com.example.data.QuestionSummary> { q ->
+        val st = statsMap[q.id]
+        st != null && st.wrong > 0 && !QuestionPoolProcessor.isQuestionMastered(st)
+      }.thenByDescending { q ->
+        val st = statsMap[q.id]
+        if (st != null && st.wrong > 0) QuestionPoolProcessor.computeMistakeUrgencyScore(st, now) else 0f
+      }.thenBy { q ->
+        val st = statsMap[q.id]
+        if (st != null && st.attempts > 0) st.correct.toFloat() / st.attempts.toFloat() else 0.5f
+      }
+    ).map { it.id }
+
+    startTargetedAnalysisDrill(weakCandidates, limit = limit, onReady = onReady)
+  }
+
+  fun setQuizQuestionsForCritical(limit: Int? = 30, onReady: (() -> Unit)? = null) {
+    val now = System.currentTimeMillis()
+    val statsMap = allStats.value.associateBy { it.questionId }
+    val allQs = _allBookQuestionSummaries.value
+    val criticalIds = allQs.filter { q -> (statsMap[q.id]?.wrong ?: 0) > 0 }.sortedWith(
+        compareByDescending<com.example.data.QuestionSummary> { q ->
+          val st = statsMap[q.id]
+          st != null && !QuestionPoolProcessor.isQuestionMastered(st)
+        }.thenByDescending { q ->
+          val st = statsMap[q.id]
+          if (st != null) QuestionPoolProcessor.computeMistakeUrgencyScore(st, now) else 0f
+        }
+      ).map { it.id }
+    startTargetedAnalysisDrill(criticalIds, limit = limit, onReady = onReady)
+  }
+
+  fun setQuizQuestionsForConsolidation(limit: Int? = null, onReady: (() -> Unit)? = null) {
+    val statsMap = allStats.value.associateBy { it.questionId }
+    val allQs = _allBookQuestionSummaries.value
+    val consolidatingIds = allQs.filter { q ->
+        val stat = statsMap[q.id]
+        stat != null && stat.attempts > 0 && !QuestionPoolProcessor.isQuestionMastered(stat) && stat.streak in 1..2
+      }.sortedWith(
+        compareByDescending<com.example.data.QuestionSummary> { q ->
+          statsMap[q.id]?.streak ?: 0
+        }.thenBy { q ->
+          statsMap[q.id]?.lastSeen ?: 0L
+        }
+      ).map { it.id }
+    startTargetedAnalysisDrill(consolidatingIds, limit = limit, onReady = onReady)
+  }
+
+  fun startTargetedAnalysisDrill(
+    questionIds: List<Long>, limit: Int? = null, onReady:(() -> Unit)? = null
+  ) {
+    val bookId = _currentBookId.value
+    if (bookId.isBlank() || questionIds.isEmpty()) return
+    isLearnMode = false
+    isActiveQuizStandardSequence = false
+    activeQuizSourceTag = "Revision"
+    currentExamSettings = null
+    currentPracticeMistakesParentId = null
+    resetTransientQuizSessionState()
+    activeRetainedOptionIndices = settingsManager.getRetainedQuestionOptions(bookId)
+    _selectedTopic.value = null
+    _onlyBookmarks.value = false
+
+    val distinctIds = questionIds.distinct()
+    val finalIds = if (limit != null && limit > 0) distinctIds.take(limit) else distinctIds
+
+    quizGenJob?.cancel()
+    quizGenJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+      val indexMap = finalIds.withIndex().associate { it.value to it.index }
+      val fullQuestions = repository.getQuestionsByBookAndIds(bookId, finalIds).resolveHeaders()
+      if (isActive) {
+        _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
+        activeQuizSessionId = System.currentTimeMillis()
+        if (onReady != null) {
+          withContext(kotlinx.coroutines.Dispatchers.Main) {
+            onReady.invoke()
+          }
+        }
+      }
+    }
+  }
 
     @androidx.annotation.VisibleForTesting
     internal fun processQuestionPool(
@@ -1384,7 +1468,6 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             val fullQuestions = repository.getQuestionsByBookAndIds(bookId, idsToFetch).resolveHeaders()
             if (isActive) {
                 _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
-                activeQuizSessionId = System.currentTimeMillis()
                 if (onReady != null) {
                     withContext(kotlinx.coroutines.Dispatchers.Main) {
                         onReady.invoke()
@@ -1406,59 +1489,52 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     
     fun generateQuizQuestions() {
         isActiveQuizStandardSequence = true
+        activeQuizSourceTag = "Quiz"
+        activeRetainedOptionIndices = emptyMap()
         quizGenJob?.cancel()
         quizGenJob = viewModelScope.launch(Dispatchers.Default) {
             _selectedTopic.value = null // clear strict topic filter
-            val allQs = _allBookQuestionSummaries.value
+            val targetBookId = _currentBookId.value
+            if (targetBookId.isBlank()) {
+                _quizQuestions.value = emptyList()
+                return@launch
+            }
+            val cachedQs = _allBookQuestionSummaries.value
+            val allQs = if (cachedQs.isNotEmpty() && cachedQs.first().bookId == targetBookId) {
+                cachedQs
+            } else {
+                withContext(Dispatchers.IO) {
+                    repository.getQuestionSummariesForBook(targetBookId).first()
+                }
+            }
             val paths = _selectedPaths.value
             val categories = _selectedCategories.value
             val limit = _questionLimit.value
             val isBookmarks = _onlyBookmarks.value
             val bookmarkedIds = bookmarks.value.map { it.questionId }
             val offset = _sequenceOffset.value
-            
+
+            // Filter by selected scopes directly via matchesSelectedPaths so book switching never
+            // suffers from a stale _topicTreeRoot from the previous book.
             var filtered = if (isBookmarks) {
                 allQs.filter { it.id in bookmarkedIds }
             } else if (paths.isNotEmpty()) {
-                val root = _topicTreeRoot.value
-                if (root != null) {
-                    val matchingQuestionIds = mutableSetOf<Long>()
-                    fun traverse(node: TopicNode) {
-                        if (paths.contains(node.path)) {
-                            matchingQuestionIds.addAll(node.questionIds)
-                        } else {
-                            for (child in node.children.values) {
-                                traverse(child)
-                            }
-                        }
-                    }
-                    traverse(root)
-                    allQs.filter { it.id in matchingQuestionIds }
-                } else {
-                    allQs.filter { q ->
-                        paths.any { p -> 
-                            val qPath = if (q.path.isNotBlank()) q.path else q.category
-                            val delimiter = if (qPath.contains(">")) ">" else if (qPath.contains("/")) "/" else "-"
-                            val normalizedQPath = qPath.split(delimiter).map { it.trim() }.filter { it.isNotBlank() }.joinToString("/")
-                            normalizedQPath == p || normalizedQPath.startsWith("$p/")
-                        }
-                    }
-                }
+                allQs.filter { q -> q.matchesSelectedPaths(paths) }
             } else if (categories.isNotEmpty()) {
                 allQs.filter { it.category in categories }
             } else {
                 allQs
             }
-            
+
             val currentFlowMode = _quizFlowMode.value
             val isShuffle = _shuffleQuestions.value
-            
+
             filtered = processQuestionPool(filtered, currentFlowMode, isShuffle, limit, offset)
 
             val idsToFetch = filtered.map { it.id }
             val indexMap = idsToFetch.withIndex().associate { it.value to it.index }
-            val fullQuestions = repository.getQuestionsByBookAndIds(_currentBookId.value, idsToFetch).resolveHeaders()
-            if (isActive) {
+            val fullQuestions = repository.getQuestionsByBookAndIds(targetBookId, idsToFetch).resolveHeaders()
+            if (isActive && _currentBookId.value == targetBookId) {
                 _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
                 activeQuizSessionId = System.currentTimeMillis()
             }
@@ -1468,7 +1544,9 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     fun setQuizQuestionsByIds(bookId: String, ids: List<Long>) {
         isLearnMode = false
         isActiveQuizStandardSequence = false
+        activeQuizSourceTag = "Search"
         currentExamSettings = null
+        currentPracticeMistakesParentId = null
         resetTransientQuizSessionState()
         _selectedTopic.value = null
         _onlyBookmarks.value = false
@@ -1478,7 +1556,6 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             val fullQuestions = repository.getQuestionsByBookAndIds(bookId, ids).resolveHeaders()
             if (isActive) {
                 _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
-                activeQuizSessionId = System.currentTimeMillis()
             }
         }
     }
@@ -1486,10 +1563,17 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     fun practiceWrongQuiz(historyId: Long?) {
         isLearnMode = false
         isActiveQuizStandardSequence = false
+        activeQuizSourceTag = "Review"
         currentPracticeMistakesParentId = historyId
         currentExamSettings = null
         resetTransientQuizSessionState()
-        val entry = history.value.find { it.historyId == historyId } ?: return
+        val entry = (if (historyId != null) {
+            history.value.find { it.historyId == historyId }
+                ?: _lastCompletedQuizResult.value?.takeIf { it.historyId == historyId }
+                ?: _lastCompletedQuizResult.value
+        } else {
+            _lastCompletedQuizResult.value ?: history.value.firstOrNull()
+        }) ?: return
         val qIdsRaw = com.example.data.SharedGson.normal.fromJson(entry.questionIds, Array<Double>::class.java).map { it.toLong() }
         val gson = com.example.data.SharedGson.normal
         val rawList = gson.fromJson<List<Any?>>(entry.userAnswers, object : com.google.gson.reflect.TypeToken<List<Any?>>() {}.type)
@@ -1500,7 +1584,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 else -> emptySet()
             }
         }
-        
+
         val displayedOptionsFromHistory: List<List<Int>> = try {
             val trimmed = entry.activeQuizData.trim()
             if (trimmed.startsWith("{")) {
@@ -1513,11 +1597,14 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             } else emptyList()
         } catch (_: Exception) { emptyList() }
 
+        val fallbackRetainedMap = settingsManager.getRetainedQuestionOptions(entry.bookId)
+        val retainedForWrongQuestions = mutableMapOf<Long, List<Int>>()
+
         quizGenJob?.cancel()
         quizGenJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             val allQs = repository.getQuestionsByBookAndIds(entry.bookId, qIdsRaw).resolveHeaders().associateBy { it.id }
             val wrongQIds = mutableListOf<Long>()
-            
+
             for (i in qIdsRaw.indices) {
                 val qId = qIdsRaw[i]
                 val ansSet = uAnsSets.getOrNull(i) ?: emptySet()
@@ -1525,7 +1612,9 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 if (q != null) {
                     val allCorrect = q.resolveCorrectIndices(includeExtraOptions = true)
                     val baseCorrect = q.resolveCorrectIndices(includeExtraOptions = false)
-                    val dispSet = displayedOptionsFromHistory.getOrNull(i)?.toSet()
+                    val dispList = displayedOptionsFromHistory.getOrNull(i)?.takeIf { it.isNotEmpty() }
+                        ?: fallbackRetainedMap[qId]
+                    val dispSet = dispList?.toSet()
                     val expectedCorrect = if (!dispSet.isNullOrEmpty()) {
                         allCorrect.intersect(dispSet).ifEmpty { baseCorrect }
                     } else {
@@ -1533,10 +1622,13 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                     }
                     if (ansSet.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL) || ansSet != expectedCorrect) {
                         wrongQIds.add(qId)
+                        if (!dispList.isNullOrEmpty()) {
+                            retainedForWrongQuestions[qId] = dispList
+                        }
                     }
                 }
             }
-            // Cannot call setQuizQuestionsByIds from here directly as it launches another job without waiting, but it's safe since it just launches
+            activeRetainedOptionIndices = retainedForWrongQuestions
             val indexMap = wrongQIds.withIndex().associate { it.value to it.index }
             val fullQuestions = repository.getQuestionsByBookAndIds(entry.bookId, wrongQIds).resolveHeaders()
             _selectedTopic.value = null
@@ -1597,15 +1689,19 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     
     fun selectResultForReview(id: Long?) {
         _selectedResultIdForReview.value = id
-        if (id != null) {
-            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-                val entry = history.value.find { it.historyId == id }
-                if (entry != null) {
-                    val qIdsRaw = com.example.data.SharedGson.normal.fromJson(entry.questionIds, Array<Double>::class.java).map { it.toLong() }
-                    val indexMap = qIdsRaw.withIndex().associate { it.value to it.index }
-                    val questions = repository.getQuestionsByBookAndIds(entry.bookId, qIdsRaw).resolveHeaders().sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
-                    _reviewQuestions.value = questions
-                }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val entry = if (id != null) {
+                history.value.find { it.historyId == id }
+                    ?: _lastCompletedQuizResult.value?.takeIf { it.historyId == id }
+                    ?: _lastCompletedQuizResult.value
+            } else {
+                _lastCompletedQuizResult.value ?: history.value.firstOrNull()
+            }
+            if (entry != null) {
+                val qIdsRaw = com.example.data.SharedGson.normal.fromJson(entry.questionIds, Array<Double>::class.java).map { it.toLong() }
+                val indexMap = qIdsRaw.withIndex().associate { it.value to it.index }
+                val questions = repository.getQuestionsByBookAndIds(entry.bookId, qIdsRaw).resolveHeaders().sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
+                _reviewQuestions.value = questions
             }
         }
     }
@@ -1639,8 +1735,16 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     var activeLockedAnswers = mutableMapOf<Int, Boolean>()
     var activeTimeRemainingMs = -1L
 
-    fun saveActiveQuizState(currentIndex: Int, selectedAnswers: Map<Int, Set<Int>>, lockedAnswers: Map<Int, Boolean>, timeRemainingMs: Long, qTimes: Map<Int, Long> = emptyMap()) {
-        if (isLearnMode || currentPracticeMistakesParentId != null) return
+    fun saveActiveQuizState(
+        currentIndex: Int,
+        selectedAnswers: Map<Int, Set<Int>>,
+        lockedAnswers: Map<Int, Boolean>,
+        timeRemainingMs: Long,
+        qTimes: Map<Int, Long> = emptyMap(),
+        displayedOptions: Map<Long, List<Int>> = emptyMap()
+    ) {
+        if (activeQuizSourceTag != "Quiz" || isLearnMode || currentPracticeMistakesParentId != null) return
+        val mergedDisplayed = activeRetainedOptionIndices + displayedOptions
         val state = mutableMapOf<String, Any>(
             "bookId" to currentBookId.value,
             "questions" to _quizQuestions.value.map { it.id },
@@ -1649,7 +1753,9 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             "lockedAnswers" to lockedAnswers,
             "timeRemainingMs" to timeRemainingMs,
             "qTimes" to qTimes,
-            "sessionId" to activeQuizSessionId,
+            "sessionIdStr" to activeQuizSessionId.toString(),
+            "sourceTag" to activeQuizSourceTag,
+            "displayedOptions" to mergedDisplayed.entries.associate { (k, v) -> k.toString() to v },
             "quizMode" to settingsManager.getQuizMode(currentBookId.value)
         )
         currentExamSettings?.let {
@@ -1668,6 +1774,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         activeLockedAnswers = mutableMapOf()
         activeTimeRemainingMs = -1L
         activeQuizSessionId = System.currentTimeMillis()
+        activeRetainedOptionIndices = emptyMap()
         currentExamSettings = null
     }
 
@@ -1679,18 +1786,19 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             try {
                 val type = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
                 val state: Map<String, Any> = com.example.data.SharedGson.normal.fromJson(stateStr, type)
-                
+
                 val bookId = state["bookId"] as String
-                
+
                 // Add validation to prevent loading orphaned states
                 val bookExists = books.value.any { it.id == bookId }
-                
+
                 if (!bookExists) {
                     clearActiveQuizState()
                     return false
                 }
-                
+
                 _currentBookId.value = bookId
+                activeQuizSourceTag = (state["sourceTag"] as? String) ?: "Quiz"
 
                 val qIdsRaw = (state["questions"] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() } ?: emptyList()
                 val qIds = qIdsRaw.map { it.toLong() }
@@ -1700,30 +1808,39 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                     val fullQuestions = repository.getQuestionsByBookAndIds(bookId, qIds).resolveHeaders()
                     _quizQuestions.value = fullQuestions.sortedBy { indexMap[it.id] ?: Int.MAX_VALUE }
                 }
-                
+
                 activeCurrentIndex = (state["currentIndex"] as? Number)?.toInt() ?: 0
-                
+
                 val selAnsRaw = (state["selectedAnswers"] as? Map<*, *>) ?: emptyMap<Any, Any>()
-                activeSelectedAnswers = selAnsRaw.entries.associate { (k, v) -> 
+                activeSelectedAnswers = selAnsRaw.entries.associate { (k, v) ->
                     k.toString().toInt() to when (v) {
                         is Number -> setOf(v.toInt())
                         is List<*> -> v.mapNotNull { (it as? Number)?.toInt() }.toSet()
                         else -> emptySet()
                     }
                 }.toMutableMap()
-                
+
                 val lockAnsRaw = (state["lockedAnswers"] as? Map<*, *>) ?: emptyMap<Any, Any>()
-                activeLockedAnswers = lockAnsRaw.entries.associate { (k, v) -> 
-                    k.toString().toInt() to (v as? Boolean ?: false) 
+                activeLockedAnswers = lockAnsRaw.entries.associate { (k, v) ->
+                    k.toString().toInt() to (v as? Boolean ?: false)
                 }.toMutableMap()
-                
+
                 val qTimesRaw = (state["qTimes"] as? Map<*, *>) ?: emptyMap<Any, Any>()
-                activeQTimes = qTimesRaw.entries.associate { (k, v) -> 
-                    k.toString().toInt() to (v as? Number)?.toLong()!! 
+                activeQTimes = qTimesRaw.entries.associate { (k, v) ->
+                    k.toString().toInt() to (v as? Number)?.toLong()!!
                 }.toMutableMap()
-                
+
+                val dispMapRaw = (state["displayedOptions"] as? Map<*, *>) ?: emptyMap<Any, Any>()
+                activeRetainedOptionIndices = dispMapRaw.entries.mapNotNull { (k, v) ->
+                    val qId = k.toString().toLongOrNull()
+                    val indices = (v as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }
+                    if (qId != null && !indices.isNullOrEmpty()) qId to indices else null
+                }.toMap()
+
                 activeTimeRemainingMs = (state["timeRemainingMs"] as Double).toLong()
-                activeQuizSessionId = (state["sessionId"] as? Double)?.toLong() ?: 0L
+                activeQuizSessionId = (state["sessionIdStr"] as? String)?.toLongOrNull()
+                    ?: (state["sessionId"] as? Number)?.toLong()
+                    ?: System.currentTimeMillis()
                 val savedQuizMode = (state["quizMode"] as? String) ?: settingsManager.getQuizMode(bookId)
                 val savedExamJson = state["examSettingsJson"] as? String
                 if (savedExamJson != null) {
@@ -1953,8 +2070,13 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     fun selectBook(bookId: String, forceRefresh: Boolean = false) {
-        if (_currentBookId.value != bookId || forceRefresh) {
+        val isDifferentBook = _currentBookId.value != bookId
+        if (isDifferentBook || forceRefresh) {
             pendingQuizGenerationTrigger = true
+            if (isDifferentBook) {
+                _topicTreeRoot.value = null
+                _allBookQuestionSummaries.value = emptyList()
+            }
             _currentBookId.value = bookId
             settingsManager.lastSelectedBookId = bookId
             
@@ -2033,38 +2155,60 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     ) {
         val parentId = currentPracticeMistakesParentId
         currentPracticeMistakesParentId = null
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
-            val gson = com.example.data.SharedGson.normal
-            val activeQuizMetadataJson = if (displayedOptionIndices.isNotEmpty()) {
-                gson.toJson(
-                    mapOf(
-                        "times" to questionTimes,
-                        "displayedOptions" to displayedOptionIndices
-                    )
-                )
-            } else {
-                gson.toJson(questionTimes)
-            }
+        val sourceTag = when {
+            parentId != null -> "Review"
+            isLearnMode -> "Learn"
+            activeQuizSourceTag in setOf("Quiz", "Learn", "Search", "Bookmarks", "Review", "Revision") -> activeQuizSourceTag
+            else -> "Quiz"
+        }
+        val shouldPersistInHistory = parentId == null && sourceTag in setOf("Quiz", "Learn", "Search")
 
-            val historyEntry = QuizHistoryEntity(
-                historyId = System.currentTimeMillis(),
-                bookId = bookId,
-                date = java.text.SimpleDateFormat.getDateTimeInstance().format(java.util.Date()),
-                status = if (parentId != null) "practice_mistakes_for_$parentId" else "completed",
-                quizLabel = quizLabel,
-                total = total,
-                correct = correct,
-                wrong = wrong,
-                skipped = skipped,
-                accuracy = if (total > 0) (correct.toFloat() / total) * 100f else 0f,
-                rawScore = score,
-                finalScore = score,
-                timeUsed = timeUsed,
-                activeQuizData = activeQuizMetadataJson,
-                questionIds = gson.toJson(questionIds),
-                userAnswers = gson.toJson(userAnswers)
+        val gson = com.example.data.SharedGson.normal
+        val activeQuizMetadataJson = gson.toJson(
+            mapOf(
+                "times" to questionTimes,
+                "displayedOptions" to displayedOptionIndices,
+                "sourceTag" to sourceTag
             )
-            repository.insertHistory(historyEntry)
+        )
+
+        val historyEntry = QuizHistoryEntity(
+            historyId = System.currentTimeMillis(),
+            bookId = bookId,
+            date = java.text.SimpleDateFormat.getDateTimeInstance().format(java.util.Date()),
+            status = if (shouldPersistInHistory) "completed|$sourceTag" else "transient|$sourceTag",
+            quizLabel = quizLabel,
+            total = total,
+            correct = correct,
+            wrong = wrong,
+            skipped = skipped,
+            accuracy = if (total > 0) (correct.toFloat() / total) * 100f else 0f,
+            rawScore = score,
+            finalScore = score,
+            timeUsed = timeUsed,
+            activeQuizData = activeQuizMetadataJson,
+            questionIds = gson.toJson(questionIds),
+            userAnswers = gson.toJson(userAnswers)
+        )
+        // Store in memory immediately so ResultScreen and ReviewScreen always have the latest completed session
+        _lastCompletedQuizResult.value = historyEntry
+        _selectedResultIdForReview.value = historyEntry.historyId
+
+        // Persist the 4 displayed options per question for this book so Review / Revision / Practice Mistakes
+        // always retain those exact 4 options
+        if (displayedOptionIndices.isNotEmpty() && questionIds.size == displayedOptionIndices.size) {
+            val newOptionMappings = questionIds.indices.mapNotNull { idx ->
+                val disp = displayedOptionIndices[idx]
+                if (disp.isNotEmpty()) questionIds[idx] to disp else null
+            }.toMap()
+            settingsManager.saveRetainedQuestionOptions(bookId, newOptionMappings)
+        }
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            // Requirement 3: Only save Quiz (Home), Learn, and Search quizzes to persistent Quiz History
+            if (shouldPersistInHistory) {
+                repository.insertHistory(historyEntry)
+            }
 
             // Update question stats (including when remediating in Practice Mistakes mode
             // so answered mistakes can advance their streak and graduate once mastered)

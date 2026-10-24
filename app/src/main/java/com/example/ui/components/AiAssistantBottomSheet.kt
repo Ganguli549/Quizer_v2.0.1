@@ -1,5 +1,6 @@
 package com.example.ui.components
 import com.example.data.*
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clip
 import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.focus.focusRequester
 import coil.compose.AsyncImage
 import com.example.data.GeminiHelper
 import com.example.data.QuestionEntity
@@ -253,6 +256,15 @@ fun AiAssistantBottomSheet(
     
     val allChatHistory by viewModel.chatHistory.collectAsState()
     val chatHistory = allChatHistory[chatContextId] ?: emptyList()
+
+    var editingMessageId by remember { mutableStateOf<Long?>(null) }
+    var clearingMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val inputFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val latestUserMessage = remember(chatHistory) { chatHistory.findLast { it.role == "user" } }
+    val editingMessageIndex = remember(chatHistory, editingMessageId) {
+        if (editingMessageId == null) -1 else chatHistory.indexOfFirst { it.id == editingMessageId }
+    }
+    
     val listState = rememberLazyListState()
     
     val coroutineScope = rememberCoroutineScope()
@@ -377,9 +389,49 @@ fun AiAssistantBottomSheet(
         onDismiss()
     }
     
+    val sheetDensity = androidx.compose.ui.platform.LocalDensity.current
+    val sheetScreenHeightDp = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    val rootInsets = androidx.core.view.ViewCompat.getRootWindowInsets(currentView)
+    val statusBarDp = maxOf(
+        with(sheetDensity) {
+            (rootInsets?.getInsetsIgnoringVisibility(
+                androidx.core.view.WindowInsetsCompat.Type.statusBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )?.top ?: 0).toDp()
+        },
+        androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+        28.dp
+    )
+    val imeBottomDp = maxOf(
+        with(sheetDensity) {
+            (rootInsets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())?.bottom ?: 0).toDp()
+        },
+        androidx.compose.foundation.layout.WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+    )
+    val navBottomDp = maxOf(
+        with(sheetDensity) {
+            (rootInsets?.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0).toDp()
+        },
+        androidx.compose.foundation.layout.WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    )
+    val fullWindowHeightDp = with(sheetDensity) {
+        currentView.rootView.height.takeIf { it > 0 }?.toDp()
+    } ?: (sheetScreenHeightDp + statusBarDp + navBottomDp)
+
+    val activeBottomInsetDp = maxOf(imeBottomDp, navBottomDp)
+    val topClearanceDp = maxOf(statusBarDp + 18.dp, fullWindowHeightDp * 0.08f)
+    val maxAvailableSheetContentDp = (fullWindowHeightDp - topClearanceDp - activeBottomInsetDp - 16.dp).coerceAtLeast(140.dp)
+
+    // When keyboard is closed, starts at 55% mid-screen height; when keyboard opens, clamps minChatAreaHeight
+    // so the sheet + input box always stop cleanly before the notification/status bar!
+    val baseMinChatHeight = (sheetScreenHeightDp * 0.55f - 165.dp).coerceAtLeast(180.dp)
+    val keyboardSafeMinChatCap = (maxAvailableSheetContentDp - 195.dp).coerceAtLeast(72.dp)
+    val minChatAreaHeight = minOf(baseMinChatHeight, keyboardSafeMinChatCap)
+
     CustomModalBottomSheet(
         sheetState = sheetState,
         maxHeightFraction = 0.90f,
+        fillMaxSheetHeight = false,
         enableDynamicHeight = true,
         onDismissRequest = handleNativeDismiss
     ) {
@@ -498,9 +550,14 @@ fun AiAssistantBottomSheet(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
             )
 
-            // Chat history area
             if (showDevLogs) {
-                Column(modifier = Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .heightIn(min = minChatAreaHeight)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("Developer Logs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Row {
@@ -541,6 +598,7 @@ fun AiAssistantBottomSheet(
                 state = listState,
                 modifier = Modifier
                     .weight(1f, fill = false)
+                    .heightIn(min = minChatAreaHeight)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(4.dp)),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp)
@@ -555,9 +613,12 @@ fun AiAssistantBottomSheet(
                     }
                 }
                 
-                items(chatHistory, key = { "${it.id}_${it.timestamp}" }) { msg ->
+                itemsIndexed(chatHistory, key = { _, item -> "${item.id}_${item.timestamp}" }) { msgIdx, msg ->
                     val isUser = msg.role == "user"
                     val isLatestAi = !isUser && (msg == latestAiMessage)
+                    val isBeingEdited = isUser && editingMessageId == msg.id
+                    val isSupersededByEdit = editingMessageIndex != -1 && msgIdx > editingMessageIndex
+                    val isClearing = clearingMessageIds.contains(msg.id)
                     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
                     val maxBubbleWidth = configuration.screenWidthDp.dp * 0.85f
                     val bubbleShape = if (isUser) {
@@ -566,154 +627,235 @@ fun AiAssistantBottomSheet(
                         RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp)
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                    ) {
-                        Column(
-                            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-                            modifier = if (isUser) {
-                                Modifier.widthIn(max = maxBubbleWidth).wrapContentWidth()
-                            } else {
-                                Modifier.fillMaxWidth()
-                            }
-                        ) {
-                            val sheetBg = MaterialTheme.colorScheme.surface
-                            val onSurf = MaterialTheme.colorScheme.onSurface
-                            val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(sheetBg.toArgb()) < 0.5
+                    val itemScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = when {
+                            isClearing -> 0.92f
+                            isBeingEdited -> 1.02f
+                            else -> 1f
+                        },
+                        animationSpec = androidx.compose.animation.core.tween(220),
+                        label = "chatItemScale"
+                    )
+                    val itemAlpha by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = when {
+                            isClearing -> 0f
+                            isSupersededByEdit -> 0.45f
+                            else -> 1f
+                        },
+                        animationSpec = androidx.compose.animation.core.tween(220),
+                        label = "chatItemAlpha"
+                    )
 
-                            val aiBubbleColor = run {
-                                if (isDark) {
-                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.08f))
-                                } else {
-                                    Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.05f))
-                                }
-                            }
-
-                            val aiBorderColor = run {
-                                val outline = MaterialTheme.colorScheme.outline
-                                if (isDark) {
-                                    outline.copy(alpha = 0.22f)
-                                } else {
-                                    outline.copy(alpha = 0.14f)
-                                }
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .clip(bubbleShape)
-                                    .then(
-                                        if (!isUser) {
-                                            Modifier.border(
-                                                width = 1.dp,
-                                                color = aiBorderColor,
-                                                shape = bubbleShape
-                                            )
-                                        } else Modifier
-                                    )
-                                    .background(
-                                        color = if (isUser) MaterialTheme.colorScheme.primary else aiBubbleColor,
-                                        shape = bubbleShape
-                                    )
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                            ) {
-                                ChatMessageContent(content = msg.content, isUser = isUser)
-                            }
-
-                            // Action buttons row (copy for user; copy and retry for AI)
-                            Row(
-                                modifier = Modifier.padding(
-                                    top = 2.dp,
-                                    start = if (isUser) 0.dp else 4.dp,
-                                    end = if (isUser) 4.dp else 0.dp
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !isClearing,
+                        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) +
+                            androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(240)),
+                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(190)) +
+                            androidx.compose.animation.shrinkVertically(
+                                animationSpec = androidx.compose.animation.core.tween(
+                                    durationMillis = 250,
+                                    easing = androidx.compose.animation.core.FastOutSlowInEasing
                                 ),
-                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                var isCopied by remember { mutableStateOf(false) }
-
-                                if (isUser) {
-                                    IconButton(
-                                        onClick = {
-                                            clipboardManager.setText(AnnotatedString(msg.content))
-                                            isCopied = true
-                                            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-                                            coroutineScope.launch {
-                                                kotlinx.coroutines.delay(2000)
-                                                isCopied = false
-                                            }
-                                        },
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                            contentDescription = "Copy message",
-                                            modifier = Modifier.size(15.dp),
-                                            tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                                        )
-                                    }
+                                shrinkTowards = Alignment.Top
+                            ),
+                        modifier = Modifier.animateItem()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .graphicsLayer {
+                                    scaleX = itemScale
+                                    scaleY = itemScale
+                                    alpha = itemAlpha
+                                },
+                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                        ) {
+                            Column(
+                                horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
+                                modifier = if (isUser) {
+                                    Modifier.widthIn(max = maxBubbleWidth).wrapContentWidth()
                                 } else {
-                                    IconButton(
-                                        onClick = {
-                                            val cleanText = msg.content.replace(Regex("\\[IMG_URL:.*?\\]"), "").trim()
-                                            clipboardManager.setText(AnnotatedString(cleanText))
-                                            isCopied = true
-                                            android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
-                                            coroutineScope.launch {
-                                                kotlinx.coroutines.delay(2000)
-                                                isCopied = false
-                                            }
-                                        },
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                                            contentDescription = "Copy response",
-                                            modifier = Modifier.size(15.dp),
-                                            tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                                        )
+                                    Modifier.fillMaxWidth()
+                                }
+                            ) {
+                                val sheetBg = MaterialTheme.colorScheme.surface
+                                val onSurf = MaterialTheme.colorScheme.onSurface
+                                val isDark = androidx.core.graphics.ColorUtils.calculateLuminance(sheetBg.toArgb()) < 0.5
+
+                                val aiBubbleColor = run {
+                                    if (isDark) {
+                                        Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.08f))
+                                    } else {
+                                        Color(androidx.core.graphics.ColorUtils.blendARGB(sheetBg.toArgb(), onSurf.toArgb(), 0.05f))
                                     }
+                                }
 
-                                    if (isLatestAi) {
-                                        Spacer(modifier = Modifier.width(2.dp))
+                                val aiBorderColor = run {
+                                    val outline = MaterialTheme.colorScheme.outline
+                                    if (isDark) {
+                                        outline.copy(alpha = 0.22f)
+                                    } else {
+                                        outline.copy(alpha = 0.14f)
+                                    }
+                                }
 
+                                Box(
+                                    modifier = Modifier
+                                        .clip(bubbleShape)
+                                        .then(
+                                            if (!isUser) {
+                                                Modifier.border(
+                                                    width = 1.dp,
+                                                    color = aiBorderColor,
+                                                    shape = bubbleShape
+                                                )
+                                            } else if (isBeingEdited) {
+                                                Modifier.border(
+                                                    width = 2.dp,
+                                                    color = MaterialTheme.colorScheme.tertiary,
+                                                    shape = bubbleShape
+                                                )
+                                            } else Modifier
+                                        )
+                                        .background(
+                                            color = if (isUser) MaterialTheme.colorScheme.primary else aiBubbleColor,
+                                            shape = bubbleShape
+                                        )
+                                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                                ) {
+                                    ChatMessageContent(content = msg.content, isUser = isUser)
+                                }
+
+                                // Action buttons row (copy & edit for user; copy & retry for AI)
+                                Row(
+                                    modifier = Modifier.padding(
+                                        top = 2.dp,
+                                        start = if (isUser) 0.dp else 4.dp,
+                                        end = if (isUser) 4.dp else 0.dp
+                                    ),
+                                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    var isCopied by remember { mutableStateOf(false) }
+
+                                    if (isUser) {
                                         IconButton(
                                             onClick = {
-                                                if (!isProcessing) {
-                                                    val msgIndex = chatHistory.indexOf(msg)
-                                                    val targetPrompt = (if (msgIndex > 0) {
-                                                        chatHistory.take(msgIndex).findLast { it.role == "user" }?.content
-                                                    } else null) ?: chatHistory.findLast { it.role == "user" }?.content
-
-                                                    if (!targetPrompt.isNullOrBlank()) {
-                                                        android.widget.Toast.makeText(context, "Retrying response...", android.widget.Toast.LENGTH_SHORT).show()
-                                                        viewModel.deleteChatMessage(msg.id, chatContextId)
-                                                        viewModel.startAiProcessing(
-                                                            context = context.applicationContext,
-                                                            chatContextId = chatContextId,
-                                                            prompt = targetPrompt,
-                                                            allQuestions = questions,
-                                                            mode = mode,
-                                                            currentContextInfo = currentContextInfo,
-                                                            pdfUri = attachedPdfUri,
-                                                            isRetry = true
-                                                        )
-                                                    } else {
-                                                        android.widget.Toast.makeText(context, "No prompt found to retry", android.widget.Toast.LENGTH_SHORT).show()
-                                                    }
+                                                clipboardManager.setText(AnnotatedString(msg.content))
+                                                isCopied = true
+                                                android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                                coroutineScope.launch {
+                                                    kotlinx.coroutines.delay(2000)
+                                                    isCopied = false
                                                 }
                                             },
-                                            enabled = !isProcessing,
                                             modifier = Modifier.size(30.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Refresh,
-                                                contentDescription = "Retry response",
-                                                modifier = Modifier.size(16.dp),
-                                                tint = if (isProcessing) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                                imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                                contentDescription = "Copy message",
+                                                modifier = Modifier.size(15.dp),
+                                                tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                                             )
+                                        }
+
+                                        if (msg == latestUserMessage && !isProcessing) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            IconButton(
+                                                onClick = {
+                                                    if (editingMessageId == msg.id) {
+                                                        editingMessageId = null
+                                                        viewModel.setAiPromptText(chatContextId, "")
+                                                    } else {
+                                                        editingMessageId = msg.id
+                                                        viewModel.setAiPromptText(chatContextId, msg.content)
+                                                        coroutineScope.launch {
+                                                            kotlinx.coroutines.delay(60)
+                                                            try {
+                                                                inputFocusRequester.requestFocus()
+                                                                keyboardController?.show()
+                                                            } catch (_: Exception) {}
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "Edit",
+                                                    modifier = Modifier.size(15.dp),
+                                                    tint = if (isBeingEdited) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = {
+                                                val cleanText = msg.content.replace(Regex("\\[IMG_URL:.*?\\]"), "").trim()
+                                                clipboardManager.setText(AnnotatedString(cleanText))
+                                                isCopied = true
+                                                android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                                coroutineScope.launch {
+                                                    kotlinx.coroutines.delay(2000)
+                                                    isCopied = false
+                                                }
+                                            },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                                                contentDescription = "Copy response",
+                                                modifier = Modifier.size(15.dp),
+                                                tint = if (isCopied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                            )
+                                        }
+
+                                        if (isLatestAi) {
+                                            Spacer(modifier = Modifier.width(2.dp))
+
+                                            IconButton(
+                                                onClick = {
+                                                    if (!isProcessing) {
+                                                        val msgIndex = chatHistory.indexOf(msg)
+                                                        val targetPrompt = (if (msgIndex > 0) {
+                                                            chatHistory.take(msgIndex).findLast { it.role == "user" }?.content
+                                                        } else null) ?: chatHistory.findLast { it.role == "user" }?.content
+
+                                                        if (!targetPrompt.isNullOrBlank()) {
+                                                            editingMessageId = null
+                                                            clearingMessageIds = clearingMessageIds + msg.id
+                                                            coroutineScope.launch {
+                                                                kotlinx.coroutines.delay(240)
+                                                                viewModel.deleteChatMessagesBatch(listOf(msg.id), chatContextId) {
+                                                                    clearingMessageIds = clearingMessageIds - msg.id
+                                                                    viewModel.startAiProcessing(
+                                                                        context = context.applicationContext,
+                                                                        chatContextId = chatContextId,
+                                                                        prompt = targetPrompt,
+                                                                        allQuestions = questions,
+                                                                        mode = mode,
+                                                                        currentContextInfo = currentContextInfo,
+                                                                        pdfUri = attachedPdfUri,
+                                                                        isRetry = true
+                                                                    )
+                                                                }
+                                                            }
+                                                        } else {
+                                                            android.widget.Toast.makeText(context, "No prompt found to retry", android.widget.Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                },
+                                                enabled = !isProcessing,
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Retry response",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = if (isProcessing) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -962,16 +1104,9 @@ fun AiAssistantBottomSheet(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
             )
 
-            // Suggestions
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp, bottom = 4.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val suggestions = if (mode == AiChatMode.READ_BOOK) {
+            // Suggestions: hidden during editing, or filtered live by typed text (and hidden when not matched)
+            val allSuggestions = remember(mode, visibleQuestionNumbers) {
+                if (mode == AiChatMode.READ_BOOK) {
                     if (visibleQuestionNumbers.isNotEmpty()) {
                         visibleQuestionNumbers.map { "Explain $it" }
                     } else {
@@ -980,13 +1115,46 @@ fun AiAssistantBottomSheet(
                 } else {
                     listOf("Add distractors to question 1", "Fix typos", "Make it harder", "Generate image for question")
                 }
-                items(suggestions) { suggestion ->
-                    SuggestionChip(
-                        onClick = { viewModel.setAiPromptText(chatContextId, suggestion) },
-                        label = { Text(suggestion) },
-                        modifier = Modifier.height(32.dp),
-                        shape = RoundedCornerShape(16.dp)
-                    )
+            }
+            val filteredSuggestions = remember(allSuggestions, prompt, editingMessageId) {
+                if (editingMessageId != null) {
+                    emptyList()
+                } else {
+                    val query = prompt.trim()
+                    if (query.isEmpty()) {
+                        allSuggestions
+                    } else {
+                        allSuggestions.filter { suggestion ->
+                            suggestion.contains(query, ignoreCase = true) &&
+                                !suggestion.equals(query, ignoreCase = true)
+                        }
+                    }
+                }
+            }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = filteredSuggestions.isNotEmpty(),
+                enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(180)) +
+                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)),
+                exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(180)) +
+                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150))
+            ) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, bottom = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    items(filteredSuggestions, key = { it }) { suggestion ->
+                        SuggestionChip(
+                            onClick = { viewModel.setAiPromptText(chatContextId, suggestion) },
+                            label = { Text(suggestion) },
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -996,7 +1164,7 @@ fun AiAssistantBottomSheet(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .padding(horizontal = 16.dp)
-                        .padding(bottom = 6.dp)
+                        .padding(top = 4.dp, bottom = 6.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1037,18 +1205,96 @@ fun AiAssistantBottomSheet(
                     }
                 }
             }
+
+            // Modern ChatGPT / Gemini "Edit" pill banner above the input field
+            val editingOriginalText = remember(chatHistory, editingMessageId) {
+                chatHistory.firstOrNull { it.id == editingMessageId }?.content.orEmpty()
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = editingMessageId != null,
+                enter = androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(200)) +
+                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)),
+                exit = androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(180)) +
+                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(150))
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Edit",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (editingOriginalText.isNotBlank()) {
+                                Text(
+                                    text = " • ${editingOriginalText.replace("\n", " ")}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+                                .clickable {
+                                    editingMessageId = null
+                                    viewModel.setAiPromptText(chatContextId, "")
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel Edit",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
             // Input Area (navigation bar inset is already applied once by CustomModalBottomSheet)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                    .padding(start = 16.dp, end = 8.dp)
                     .padding(top = 2.dp, bottom = 4.dp)
             ) {
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { viewModel.setAiPromptText(chatContextId, it) },
-                    placeholder = { Text("Ask Sparkle...") },
+                    placeholder = { Text(if (editingMessageId != null) "Edit your message..." else "Ask Sparkle...") },
                     leadingIcon = {
                         IconButton(
                             onClick = { pdfLauncher.launch("*/*") },
@@ -1058,7 +1304,9 @@ fun AiAssistantBottomSheet(
                             Icon(androidx.compose.material.icons.Icons.Default.Add, "Upload PDF")
                         }
                     },
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(inputFocusRequester),
                     enabled = !isProcessing,
                     maxLines = 10,
                     shape = RoundedCornerShape(24.dp),
@@ -1082,16 +1330,45 @@ fun AiAssistantBottomSheet(
                         onClick = {
                             if (prompt.isNotBlank()) {
                                 val currentPrompt = prompt
+                                val activeEditId = editingMessageId
+                                editingMessageId = null
                                 viewModel.setAiPromptText(chatContextId, "")
-                                viewModel.startAiProcessing(
-                                    context = context.applicationContext,
-                                    chatContextId = chatContextId,
-                                    prompt = currentPrompt,
-                                    allQuestions = questions,
-                                    mode = mode,
-                                    currentContextInfo = currentContextInfo,
-                                    pdfUri = attachedPdfUri
-                                )
+
+                                if (activeEditId != null) {
+                                    val idx = chatHistory.indexOfFirst { it.id == activeEditId }
+                                    val idsToRemove = if (idx != -1) {
+                                        chatHistory.drop(idx).map { it.id }
+                                    } else {
+                                        listOf(activeEditId)
+                                    }
+                                    // Trigger smooth ChatGPT / Gemini exit animation for the old user prompt & previous AI response
+                                    clearingMessageIds = clearingMessageIds + idsToRemove
+                                    coroutineScope.launch {
+                                        kotlinx.coroutines.delay(250)
+                                        viewModel.deleteChatMessagesBatch(idsToRemove, chatContextId) {
+                                            clearingMessageIds = clearingMessageIds - idsToRemove.toSet()
+                                            viewModel.startAiProcessing(
+                                                context = context.applicationContext,
+                                                chatContextId = chatContextId,
+                                                prompt = currentPrompt,
+                                                allQuestions = questions,
+                                                mode = mode,
+                                                currentContextInfo = currentContextInfo,
+                                                pdfUri = attachedPdfUri
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    viewModel.startAiProcessing(
+                                        context = context.applicationContext,
+                                        chatContextId = chatContextId,
+                                        prompt = currentPrompt,
+                                        allQuestions = questions,
+                                        mode = mode,
+                                        currentContextInfo = currentContextInfo,
+                                        pdfUri = attachedPdfUri
+                                    )
+                                }
                                 // We no longer clear the attachment automatically so it persists for subsequent queries!
                             }
                         },
@@ -1480,9 +1757,26 @@ internal fun parseAiCorrectOptionIds(
         forceExtra = true
     )
 
-    // Fallback to correctIndex if no IDs were resolved yet (or if correctIndex is an array)
-    if (resultIds.isEmpty() || obj["correctIndex"] is kotlinx.serialization.json.JsonArray) {
+    // Fallback to correctIndex if no IDs were resolved yet, OR if correctIndex is an array,
+    // OR if resultIds only contains "ext*" IDs and zero base "opt*" IDs (e.g., AI put the base
+    // correct option in "correctIndex": 0 and put extra correct options in "correctOptionIds": ["ext0", ...])
+    val hasBaseOptId = resultIds.any { it.startsWith("opt", ignoreCase = true) }
+    if (resultIds.isEmpty() || !hasBaseOptId || obj["correctIndex"] is kotlinx.serialization.json.JsonArray) {
+        val beforeSize = resultIds.size
         parseElementTokens(obj["correctIndex"], forceExtra = false)
+        if (!hasBaseOptId && resultIds.size > beforeSize) {
+            val basePart = resultIds.filter { it.startsWith("opt", ignoreCase = true) }
+            val extraPart = resultIds.filterNot { it.startsWith("opt", ignoreCase = true) }
+            resultIds.clear()
+            resultIds.addAll(basePart)
+            resultIds.addAll(extraPart)
+        }
+    }
+
+    // Guarantee at least one base option ("opt0".."optN") is present when optionCount > 0
+    if (optionCount > 0 && resultIds.none { it.startsWith("opt", ignoreCase = true) }) {
+        val defaultBaseOpt = fallbackIds.firstOrNull { it.startsWith("opt", ignoreCase = true) } ?: "opt0"
+        resultIds.add(0, defaultBaseOpt)
     }
 
     return resultIds.distinct().ifEmpty { fallbackIds.ifEmpty { listOf("opt0") } }
@@ -1788,9 +2082,10 @@ suspend fun processAiChatCommand(
             2. **Single-Correct & Multiple-Correct Questions (`correctOptionIds`, `multipleCorrect`, and `extraOptions`)**:
                - Base `options` have 0-based IDs: `"opt0"` (Option A), `"opt1"` (Option B), `"opt2"` (Option C), `"opt3"` (Option D).
                - Additional `extraOptions` (if present in the source or requested by the user) have 0-based IDs: `"ext0"` (1st extra option), `"ext1"` (2nd extra option), `"ext2"` (3rd extra option), etc.
-               - Always populate `"correctOptionIds"` as a JSON array of the exact correct option IDs:
+               - Always populate `"correctOptionIds"` as a JSON array of ALL correct option IDs (including BOTH the correct base option(s) `"opt0".."opt3"` AND any correct `"ext0".."extN"` options):
                  • For a single-correct question (e.g. Option B is correct): `"correctOptionIds": ["opt1"]`, `"correctIndex": 1`, `"multipleCorrect": false`.
-                 • For a multiple-correct question where multiple base options AND/OR `extraOptions` are correct (e.g. Option A, Option D, 1st extraOption, and 3rd extraOption are correct): `"correctOptionIds": ["opt0", "opt3", "ext0", "ext2"]`, `"correctIndex": 0`, `"multipleCorrect": true`.
+                 • For a multiple-correct question where 1 or more base options AND/OR `extraOptions` are correct (e.g. Option A `"opt0"` is correct in the 4 options AND `ext0`, `ext1`, `ext2` are correct in `extraOptions`): `"correctOptionIds": ["opt0", "ext0", "ext1", "ext2"]`, `"correctIndex": 0`, `"multipleCorrect": true`.
+               - **CRITICAL**: NEVER omit the correct base option ID (`"opt0"`, `"opt1"`, `"opt2"`, or `"opt3"`) from `"correctOptionIds"` when `extraOptions` (`"ext0".."extN"`) are also marked correct! `"correctOptionIds"` MUST always contain at least one `"opt*"` ID from the 4 base `options` in addition to any correct `"ext*"` IDs.
                - Yes! Both base `options` (`"opt0".."opt3"`) AND `extraOptions` (`"ext0".."extN"`) can be marked as correct inside `"correctOptionIds"` whenever a question has multiple correct answers or when the user/source specifies correct options inside `extraOptions`!
             3. If the user provided specific instructions for the `path`, follow them.
             4. **Table Format**: If the question or data involves a table (grid lines or simple listing), extract the table data and set 'format' to "table". Construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). DO NOT put the table data in the 'question' text; keep the 'question' text clean.
@@ -2007,39 +2302,11 @@ suspend fun processAiChatCommand(
 
     if (intent == "chat") {
         val recentHistory = chatHistory.takeLast(10).map { "${if (it.role == "user") "User" else "AI"}: ${it.content}" }.joinToString("\n")
-
-        val targetedForChat = if (requiresQuestions) {
-            resolveTargetQuestionsForAi(
-                allQuestions = allQuestions,
-                mode = mode,
-                command = command,
-                requiredLocalNumbers = requiredLocalNumbers,
-                parsedStartId = parsedStartId,
-                parsedEndId = parsedEndId,
-                currentContextInfo = currentContextInfo
-            )
+        
+        val contextContext = if (requiresQuestions) {
+            "All Book Questions (Filtered to Current Topic/Context): \n" + gson.toJson(allQuestions)
         } else {
-            emptyList()
-        }
-
-        val contextContext = when {
-            !requiresQuestions -> {
-                "Book Questions: (Not required for this general query)"
-            }
-            targetedForChat.isNotEmpty() -> {
-                val formattedTargets = targetedForChat.map { (localNum, q) ->
-                    formatQuestionForAiPrompt(localNum, q)
-                }
-                "Target Question(s) Requested by User (Exact Match — Explain/Use ONLY these question(s)):\n" +
-                    gson.toJson(formattedTargets)
-            }
-            else -> {
-                val allFormatted = allQuestions.mapIndexed { idx, q ->
-                    formatQuestionForAiPrompt(idx + 1, q)
-                }
-                "All Questions in Current Topic/Context (Each has 'localQuestionNumber' Q.1..Q.${allQuestions.size} and 'bookQuestionId'):\n" +
-                    gson.toJson(allFormatted)
-            }
+            "All Book Questions: (Not provided for this simple query to save tokens)"
         }
         val contextInfoString = if (currentContextInfo.isNotBlank()) "Current User Context:\n$currentContextInfo" else ""
         
@@ -2057,12 +2324,10 @@ suspend fun processAiChatCommand(
             User: $command
             
             GUIDELINES FOR BEAUTIFUL EXPLANATIONS:
-            - Speak directly to the user in second person ("you"). NEVER output robotic third-person meta-sentences like "The user is currently viewing question ID...".
-            - If 'Target Question(s) Requested by User' is provided above, explain that EXACT question (referring to it naturally as **Q.<localNumber>**, e.g. **Q.99**). Never substitute a different question!
             - When explaining a question, concept, or topic:
               1. Structure the explanation beautifully with clear sections:
                  • **Quick Answer / Core Concept**: A clear, concise statement of the correct option (e.g. Option B) and the core principle.
-                 • **Step-by-Step Breakdown**: Walk through the reasoning clearly. Explain why the correct option is right, and why the other options (Option A, C, D, etc.) are incorrect or distractors.
+                 • **Step-by-Step Breakdown**: Walk through the reasoning clearly and explain why the correct option is right. You are not strictly forced to explain every single distractor if they don't provide educational value—selectively focus on the core reasoning and only break down other options (Option A, C, D, etc.) when relevant (e.g., for vocabulary, definitions, or common misconceptions).
                  • **Key Takeaways & Memory Tips**: An intuitive summary, practical analogy, or mnemonic to help remember the concept.
               2. Always refer to options with letter designations (Option A, Option B, Option C, Option D).
               3. If a question in the book has an incorrect answer key or typo, clarify what the correct answer should be.
@@ -2198,22 +2463,19 @@ suspend fun processAiChatCommand(
 
         if (userExplicitlyAskedForVisual && !finalResponse.contains("[WEB_ILLUSTRATION:") && !finalResponse.contains("[IMG_URL:")) {
             var subjectCandidate = ""
-            val targetQ = targetedForChat.firstOrNull()?.second
-                ?: resolveTargetQuestionsForAi(
-                    allQuestions = allQuestions,
-                    mode = mode,
-                    command = command,
-                    requiredLocalNumbers = requiredLocalNumbers,
-                    parsedStartId = parsedStartId,
-                    parsedEndId = parsedEndId,
-                    currentContextInfo = currentContextInfo
-                ).firstOrNull()?.second
-            if (targetQ != null) {
-                val correctOpt = try {
-                    val arr = org.json.JSONArray(targetQ.options)
-                    if (targetQ.correctIndex in 0 until arr.length()) arr.getString(targetQ.correctIndex) else ""
-                } catch (e: Exception) { "" }
-                subjectCandidate = correctOpt.ifBlank { targetQ.question }
+            val qNumMatch = Regex("question\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
+                ?: Regex("q\\s*(\\d+)", RegexOption.IGNORE_CASE).find(command)
+            if (qNumMatch != null) {
+                val num = qNumMatch.groupValues[1].toIntOrNull()
+                val targetQ = allQuestions.find { it.id == num?.toLong() }
+                    ?: (if (num != null && num in 1..allQuestions.size) allQuestions[num - 1] else null)
+                if (targetQ != null) {
+                    val correctOpt = try {
+                        val arr = org.json.JSONArray(targetQ.options)
+                        if (targetQ.correctIndex in 0 until arr.length()) arr.getString(targetQ.correctIndex) else ""
+                    } catch (e: Exception) { "" }
+                    subjectCandidate = correctOpt.ifBlank { targetQ.question }
+                }
             }
             if (subjectCandidate.isBlank() && currentContextInfo.contains("viewing the topic/path: '")) {
                 subjectCandidate = currentContextInfo.substringAfter("viewing the topic/path: '").substringBefore("'")
@@ -2443,7 +2705,7 @@ suspend fun processAiChatCommand(
 
                 val gson = com.example.data.SharedGson.normal
                 val generatedOptions2 = parsedOptions.mapIndexed { idx, txt -> com.example.data.QBookOption(id = "opt$idx", text = txt) }
-                val fallbackCorrectIds = originalQ?.let { com.example.data.parseNormalizedCorrectOptionIds(it.advancedCorrectIds) } ?: listOf("opt0")
+                val fallbackCorrectIds = originalQ?.resolvedCorrectOptionIds() ?: listOf("opt0")
                 val correctOptionIds2 = parseAiCorrectOptionIds(
                     obj = obj,
                     optionCount = generatedOptions2.size,

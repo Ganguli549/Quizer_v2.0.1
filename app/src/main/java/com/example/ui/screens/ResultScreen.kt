@@ -16,12 +16,8 @@ import com.example.ui.MainViewModel
 @Composable
 fun ResultScreen(viewModel: MainViewModel, onHome: () -> Unit, onReview: () -> Unit, onPracticeWrong: () -> Unit) {
     val history by viewModel.history.collectAsState()
-    val lastResult = history.firstOrNull() // since we insert and order by DESC
-    
-    val isPracticeMistakes = lastResult?.status?.startsWith("practice_mistakes_for_") == true
-    val originalResultId = if (isPracticeMistakes) lastResult?.status?.removePrefix("practice_mistakes_for_")?.toLongOrNull() else lastResult?.historyId
-    val originalResult = if (isPracticeMistakes) history.find { it.historyId == originalResultId } else lastResult
-    val practiceMistakesResult = if (isPracticeMistakes) lastResult else history.find { it.status == "practice_mistakes_for_${lastResult?.historyId}" }
+    val lastCompleted by viewModel.lastCompletedQuizResult.collectAsState()
+    val lastResult = lastCompleted ?: history.firstOrNull()
 
     Scaffold(
         topBar = {
@@ -29,46 +25,50 @@ fun ResultScreen(viewModel: MainViewModel, onHome: () -> Unit, onReview: () -> U
         }
     ) { padding ->
         com.example.ui.components.ResponsiveContainer(modifier = Modifier.padding(padding)) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            if (originalResult != null) {
-                Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Text(originalResult.quizLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                    ResultCard(viewModel, originalResult)
-                    
-                    if (practiceMistakesResult != null) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("Practice Mistakes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-                        ResultCard(viewModel, practiceMistakesResult)
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                if (lastResult != null) {
+                    Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = lastResult.quizLabel,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        ResultCard(viewModel, lastResult)
                     }
+                } else {
+                    Text("Loading results...", modifier = Modifier.weight(1f))
                 }
-            } else {
-                Text("Loading results...", modifier = Modifier.weight(1f))
-            }
-                        
-            Spacer(modifier = Modifier.height(8.dp))
-                        
-            if (originalResult != null && practiceMistakesResult == null && (originalResult.wrong > 0 || originalResult.skipped > 0)) {
-                Button(onClick = {
-                    viewModel.practiceWrongQuiz(originalResult.historyId)
-                    onPracticeWrong()
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Practice Mistakes (${originalResult.wrong + originalResult.skipped})")
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (lastResult != null && (lastResult.wrong > 0 || lastResult.skipped > 0)) {
+                    Button(
+                        onClick = {
+                            viewModel.practiceWrongQuiz(lastResult.historyId)
+                            onPracticeWrong()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Practice Mistakes (${lastResult.wrong + lastResult.skipped})")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                Button(
+                    onClick = {
+                        viewModel.selectResultForReview(lastResult?.historyId)
+                        onReview()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Review Questions")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = onHome, modifier = Modifier.fillMaxWidth()) {
+                    Text("Return Home")
+                }
             }
-                        
-            Button(onClick = {
-                viewModel.selectResultForReview(lastResult?.historyId)
-                onReview()
-            }, modifier = Modifier.fillMaxWidth()) {
-                Text("Review Questions")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(onClick = onHome, modifier = Modifier.fillMaxWidth()) {
-                Text("Return Home")
-            }
-        }
-            
         }
     }
 }

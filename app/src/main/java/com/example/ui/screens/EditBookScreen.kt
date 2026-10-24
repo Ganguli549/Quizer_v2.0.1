@@ -747,8 +747,7 @@ fun EditQuestionDialog(
     var qOptions by remember { mutableStateOf(question.options) }
     var qExtraOptions by remember { mutableStateOf(question.extraOptions) }
     val initialCorrectIdsList = remember(question) {
-        val parsed = com.example.data.parseNormalizedCorrectOptionIds(question.advancedCorrectIds)
-        if (parsed.isNotEmpty()) parsed else listOf("opt${question.correctIndex.coerceAtLeast(0)}")
+        question.resolvedCorrectOptionIds()
     }
     var qCorrectOptionIdsText by remember(question.id) {
         mutableStateOf(initialCorrectIdsList.joinToString(", "))
@@ -929,7 +928,7 @@ fun EditQuestionDialog(
                             com.example.data.QBookOption(id = "opt$idx", text = txt)
                         }
 
-                        val normalizedCorrectIds: List<String> = qCorrectOptionIdsText
+                        val rawNormalizedCorrectIds: List<String> = qCorrectOptionIdsText
                             .split(",")
                             .mapNotNull { token ->
                                 val t = token.trim()
@@ -944,6 +943,12 @@ fun EditQuestionDialog(
                             }
                             .distinct()
                             .ifEmpty { listOf("opt0") }
+
+                        val normalizedCorrectIds: List<String> = if (rawNormalizedCorrectIds.none { it.startsWith("opt", ignoreCase = true) }) {
+                            listOf("opt${question.correctIndex.coerceAtLeast(0)}") + rawNormalizedCorrectIds
+                        } else {
+                            rawNormalizedCorrectIds
+                        }
 
                         val primaryCorrectIndex = normalizedCorrectIds.firstNotNullOfOrNull { cid ->
                             if (cid.startsWith("opt")) cid.removePrefix("opt").toIntOrNull()?.takeIf { it in advancedList.indices } else null

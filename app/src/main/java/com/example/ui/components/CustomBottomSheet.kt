@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -43,19 +44,50 @@ fun CustomModalBottomSheet(
     onDismissRequest: () -> Unit,
     enableDynamicHeight: Boolean = true,
     fillMaxSheetHeight: Boolean = false,
+    containerColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.surface,
+    contentColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
+    val hostView = androidx.compose.ui.platform.LocalView.current
+
+    val rootWindowInsets = androidx.core.view.ViewCompat.getRootWindowInsets(hostView)
+    val rootStatusBarPx = rootWindowInsets
+        ?.getInsetsIgnoringVisibility(
+            androidx.core.view.WindowInsetsCompat.Type.statusBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+        )?.top ?: 0
+    val rootNavBarPx = rootWindowInsets
+        ?.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        ?.bottom ?: 0
+    val rootImePx = rootWindowInsets
+        ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+        ?.bottom ?: 0
+
+    val composeStatusBarPx = WindowInsets.statusBars.getTop(density)
+    val composeNavBarPx = WindowInsets.navigationBars.getBottom(density)
+    val composeImePx = WindowInsets.ime.getBottom(density)
+
+    val statusBarHeightDp = maxOf(
+        with(density) { maxOf(rootStatusBarPx, composeStatusBarPx).toDp() },
+        28.dp
+    )
+    val navBarHeightDp = with(density) { maxOf(rootNavBarPx, composeNavBarPx).toDp() }
+    val imeHeightDp = with(density) { maxOf(rootImePx, composeImePx).toDp() }
+    val isImeVisible = imeHeightDp > navBarHeightDp + 24.dp
 
     val screenHeightDp = configuration.screenHeightDp.dp
-    val screenHeightPx = with(density) { screenHeightDp.toPx().coerceAtLeast(1f) }
+    val fullWindowHeightDp = with(density) {
+        hostView.rootView.height.takeIf { it > 0 }?.toDp()
+    } ?: (screenHeightDp + statusBarHeightDp + navBarHeightDp)
+    val screenHeightPx = with(density) { fullWindowHeightDp.toPx().coerceAtLeast(1f) }
 
     val defaultExpandedFraction = maxHeightFraction.coerceIn(0.55f, 0.94f)
     val fullExpandedFraction = maxOf(defaultExpandedFraction, 0.92f)
-    val halfExpandedFraction = 0.50f
+    val halfExpandedFraction = 0.55f
     val dismissThresholdFraction = 0.28f
 
     val sheetFractionAnim = remember(defaultExpandedFraction) {
@@ -67,12 +99,12 @@ fun CustomModalBottomSheet(
     var contentCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var measuredSheetHeightPx by remember { mutableIntStateOf(0) }
 
-    // When content shrinks to a compact state (e.g. after "Clear Chat"), reset max cap to defaultExpandedFraction
-    // so the sheet can smoothly extend upward again as new chat messages arrive.
-    LaunchedEffect(measuredSheetHeightPx, isDraggingHandle) {
-        if (!isDraggingHandle && measuredSheetHeightPx > 0 && !fillMaxSheetHeight) {
+    // When content shrinks back to the mid-screen base state (e.g. after "Clear Chat") while keyboard is closed,
+    // reset max cap to defaultExpandedFraction (90%) so the sheet smoothly expands from 55% up to 90% as new chat messages arrive.
+    LaunchedEffect(measuredSheetHeightPx, isDraggingHandle, isImeVisible) {
+        if (!isDraggingHandle && !isImeVisible && measuredSheetHeightPx > 0 && !fillMaxSheetHeight) {
             val visibleFrac = measuredSheetHeightPx.toFloat() / screenHeightPx
-            if (visibleFrac < 0.32f && sheetFractionAnim.value < defaultExpandedFraction) {
+            if (visibleFrac <= halfExpandedFraction + 0.03f && sheetFractionAnim.value < defaultExpandedFraction) {
                 sheetFractionAnim.snapTo(defaultExpandedFraction)
             }
         }
@@ -208,6 +240,8 @@ fun CustomModalBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
+        containerColor = containerColor,
+        contentColor = contentColor,
         // Disable ModalBottomSheet's internal body swipe so scrolling inner content never closes the sheet
         sheetGesturesEnabled = false,
         // CRITICAL: Exclude WindowInsetsSides.Top so ModalBottomSheet NEVER adds status-bar height above the drag pill!
@@ -321,7 +355,6 @@ fun CustomModalBottomSheet(
                 )
             }
         },
-        containerColor = MaterialTheme.colorScheme.surface,
         content = {
             val view = LocalView.current
             LaunchedEffect(view) {
@@ -336,7 +369,52 @@ fun CustomModalBottomSheet(
                 }
             }
 
-            val targetHeight = screenHeightDp * sheetFractionAnim.value
+            val dialogInsets = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+            val dialogStatusBarDp = with(density) {
+                (dialogInsets?.getInsetsIgnoringVisibility(
+                    androidx.core.view.WindowInsetsCompat.Type.statusBars() or
+                        androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+                )?.top ?: 0).toDp()
+            }
+            val dialogNavBarDp = with(density) {
+                (dialogInsets?.getInsetsIgnoringVisibility(
+                    androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+                )?.bottom ?: 0).toDp()
+            }
+            val dialogImeDp = with(density) {
+                (dialogInsets?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())?.bottom ?: 0).toDp()
+            }
+
+            val effectiveStatusBarDp = maxOf(statusBarHeightDp, dialogStatusBarDp, 28.dp)
+            val effectiveBottomInsetDp = maxOf(
+                navBarHeightDp,
+                imeHeightDp,
+                dialogNavBarDp,
+                dialogImeDp,
+                WindowInsets.ime.asPaddingValues().calculateBottomPadding(),
+                WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            )
+            val isKeyboardOpenNow = maxOf(imeHeightDp, dialogImeDp, WindowInsets.ime.asPaddingValues().calculateBottomPadding()) > 60.dp
+
+            // Always stop cleanly BEFORE the notification/status bar (statusBar + 18.dp gap below status bar,
+            // or the sheet's top margin (1f - sheetFractionAnim.value), whichever is larger).
+            val minTopClearanceFromScreenTopDp = maxOf(
+                effectiveStatusBarDp + 18.dp,
+                fullWindowHeightDp * (1f - fullExpandedFraction)
+            )
+            val dragHandleHeightDp = 16.dp
+
+            // Maximum height for the inner Column so that (Column + dragHandle + bottomInset) NEVER crosses
+            // into the status/notification bar even when the software keyboard is open!
+            val maxAllowedColumnHeightDp = (
+                fullWindowHeightDp - minTopClearanceFromScreenTopDp - effectiveBottomInsetDp - dragHandleHeightDp
+            ).coerceAtLeast(140.dp)
+
+            val desiredColumnHeightDp = (
+                (fullWindowHeightDp * sheetFractionAnim.value) - effectiveBottomInsetDp - dragHandleHeightDp
+            ).coerceAtLeast(140.dp)
+
+            val targetHeight = minOf(desiredColumnHeightDp, maxAllowedColumnHeightDp)
             val headerDragZonePx = with(density) { 44.dp.toPx() }
 
             Column(
@@ -346,9 +424,22 @@ fun CustomModalBottomSheet(
                         if (fillMaxSheetHeight) {
                             Modifier.height(targetHeight)
                         } else {
-                            // Allows the sheet to stay compact when there is no chat and extend upward
-                            // smoothly as chat messages arrive, up to targetHeight!
-                            Modifier.heightIn(max = targetHeight)
+                            // Starts at the child's minimum height (55% mid-screen when keyboard is closed) and
+                            // smoothly expands upward to targetHeight, always stopping before the notification bar!
+                            Modifier
+                                .heightIn(max = targetHeight)
+                                .then(
+                                    if (!isDraggingHandle && !isKeyboardOpenNow) {
+                                        Modifier.animateContentSize(
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                         }
                     )
                     .onGloballyPositioned { contentCoords = it }

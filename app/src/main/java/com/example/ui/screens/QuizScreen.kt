@@ -140,6 +140,11 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
         mutableStateOf(if (questionTimerTarget > 0 && lockedAnswers[currentIndex] != true) questionTimerTarget else 0L)
     }
 
+    val sessionSeed = remember(viewModel.activeQuizSessionId) { viewModel.activeQuizSessionId }
+    val optionsCache = remember(currentUseDistractors, currentShuffleOptions, sessionSeed) {
+        mutableMapOf<Long, List<Pair<Int, String>>>()
+    }
+
     val isSubmitted = remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler {
         showCancelDialog = true
@@ -147,8 +152,9 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
 
     DisposableEffect(Unit) {
         onDispose {
-            if (!isSubmitted.value && !viewModel.isLearnMode && viewModel.currentPracticeMistakesParentId == null) {
-                viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value)
+            if (!isSubmitted.value && viewModel.activeQuizSourceTag == "Quiz" && !viewModel.isLearnMode && viewModel.currentPracticeMistakesParentId == null) {
+                val displayedMap = optionsCache.mapValues { (_, pairs) -> pairs.map { it.first } }
+                viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value, displayedMap)
             }
         }
     }
@@ -167,69 +173,72 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
             } else {
                 viewModel.currentExamSettings?.customWrongMarks ?: viewModel.settingsManager.getWrongMark(bookId)
             }
-        var rawScore = 0f
-        var correct = 0
-        var wrong = 0
-        var skipped = 0
-        val displayedOptionsPerQuestion = mutableListOf<List<Int>>()
+            var rawScore = 0f
+            var correct = 0
+            var wrong = 0
+            var skipped = 0
+            val displayedOptionsPerQuestion = mutableListOf<List<Int>>()
 
-        questions.forEachIndexed { idx, q ->
-            val dispOpts = q.buildQuizDisplayOptions(
-                useDistractors = currentUseDistractors,
-                shuffleOptions = currentShuffleOptions,
-                sessionSeed = viewModel.activeQuizSessionId
-            )
-            val displayedOrigIndices = dispOpts.map { it.first }
-            displayedOptionsPerQuestion.add(displayedOrigIndices)
-
-            val allCorrectIndices = q.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
-            val expectedCorrect = allCorrectIndices.intersect(displayedOrigIndices.toSet()).ifEmpty {
-                q.resolveCorrectIndices(includeExtraOptions = false)
-            }
-
-            val ans = selectedAnswers[idx]
-            if (ans.isNullOrEmpty() || ans.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL)) {
-                skipped++
-            } else {
-                if (ans == expectedCorrect) {
-                    correct++
-                    rawScore += correctMark
-                } else {
-                    wrong++
-                    rawScore -= wrongMark
+            questions.forEachIndexed { idx, q ->
+                val dispOpts = optionsCache.getOrPut(q.id) {
+                    q.buildQuizDisplayOptions(
+                        useDistractors = currentUseDistractors,
+                        shuffleOptions = currentShuffleOptions,
+                        sessionSeed = sessionSeed,
+                        retainedOptionIndices = viewModel.activeRetainedOptionIndices[q.id]
+                    )
                 }
-            }
-        }
-        viewModel.saveQuizResult(
-            bookId = currentQuestion.bookId,
-            quizLabel = if (isPracticeMode) "Practice Mode" else "Exam Mode",
-            score = rawScore,
-            total = questions.size,
-            correct = correct,
-            wrong = wrong,
-            skipped = skipped,
-            timeUsed = {
-                val examMins = viewModel.currentExamSettings?.let {
-                    when (it.timerPreset) {
-                        "Off" -> 0
-                        "15m" -> 15
-                        "30m" -> 30
-                        "60m" -> 60
-                        "Custom" -> it.customTimerMinutes
-                        "Auto" -> if (viewModel.questionLimit.value == null || viewModel.questionLimit.value == 0) 0 else (viewModel.questionLimit.value!! * 36) / 60
-                        else -> 0
+                val displayedOrigIndices = dispOpts.map { it.first }
+                displayedOptionsPerQuestion.add(displayedOrigIndices)
+
+                val allCorrectIndices = q.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
+                val expectedCorrect = allCorrectIndices.intersect(displayedOrigIndices.toSet()).ifEmpty {
+                    q.resolveCorrectIndices(includeExtraOptions = false)
+                }
+
+                val ans = selectedAnswers[idx]
+                if (ans.isNullOrEmpty() || ans.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL)) {
+                    skipped++
+                } else {
+                    if (ans == expectedCorrect) {
+                        correct++
+                        rawScore += correctMark
+                    } else {
+                        wrong++
+                        rawScore -= wrongMark
                     }
                 }
-                val mins = examMins ?: viewModel.settingsManager.timerMinutes
-                if (!isPracticeMode && mins > 0) (mins * 60 * 1000L - timeRemainingMs) else timeRemainingMs
-            }(),
-            questionIds = questions.map { it.id },
-            userAnswers = questions.indices.map { selectedAnswers[it] },
-            questionTimes = questions.indices.map { qTimes.value[it] ?: 0L },
-            displayedOptionIndices = displayedOptionsPerQuestion
-        )
-        viewModel.clearActiveQuizState()
-        onFinish()
+            }
+            viewModel.saveQuizResult(
+                bookId = currentQuestion.bookId,
+                quizLabel = if (isPracticeMode) "Practice Mode" else "Exam Mode",
+                score = rawScore,
+                total = questions.size,
+                correct = correct,
+                wrong = wrong,
+                skipped = skipped,
+                timeUsed = {
+                    val examMins = viewModel.currentExamSettings?.let {
+                        when (it.timerPreset) {
+                            "Off" -> 0
+                            "15m" -> 15
+                            "30m" -> 30
+                            "60m" -> 60
+                            "Custom" -> it.customTimerMinutes
+                            "Auto" -> if (viewModel.questionLimit.value == null || viewModel.questionLimit.value == 0) 0 else (viewModel.questionLimit.value!! * 36) / 60
+                            else -> 0
+                        }
+                    }
+                    val mins = examMins ?: viewModel.settingsManager.timerMinutes
+                    if (!isPracticeMode && mins > 0) (mins * 60 * 1000L - timeRemainingMs) else timeRemainingMs
+                }(),
+                questionIds = questions.map { it.id },
+                userAnswers = questions.indices.map { selectedAnswers[it] },
+                questionTimes = questions.indices.map { qTimes.value[it] ?: 0L },
+                displayedOptionIndices = displayedOptionsPerQuestion
+            )
+            viewModel.clearActiveQuizState()
+            onFinish()
         }
     }
     
@@ -358,7 +367,6 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
         }
     }
 
-    val optionsCache = remember(currentUseDistractors, currentShuffleOptions) { mutableMapOf<Long, List<Pair<Int, String>>>() }
 
 
     val isBookmarked = bookmarks.any { it.bookmarkKey == "${currentQuestion.bookId}_${currentQuestion.id}" }
@@ -384,7 +392,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                 question.buildQuizDisplayOptions(
                                     useDistractors = currentUseDistractors,
                                     shuffleOptions = currentShuffleOptions,
-                                    sessionSeed = viewModel.activeQuizSessionId
+                                    sessionSeed = sessionSeed,
+                                    retainedOptionIndices = viewModel.activeRetainedOptionIndices[question.id]
                                 )
                             }
                             val allCorrect = question.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
@@ -584,7 +593,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         animatedQuestion.buildQuizDisplayOptions(
                             useDistractors = currentUseDistractors,
                             shuffleOptions = currentShuffleOptions,
-                            sessionSeed = viewModel.activeQuizSessionId
+                            sessionSeed = sessionSeed,
+                            retainedOptionIndices = viewModel.activeRetainedOptionIndices[animatedQuestion.id]
                         )
                     }
                 }
@@ -917,7 +927,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         currentQuestion.buildQuizDisplayOptions(
                             useDistractors = currentUseDistractors,
                             shuffleOptions = currentShuffleOptions,
-                            sessionSeed = viewModel.activeQuizSessionId
+                            sessionSeed = sessionSeed,
+                            retainedOptionIndices = viewModel.activeRetainedOptionIndices[currentQuestion.id]
                         )
                     }
                     val currentCorrectIndices = remember(currentQuestion.id, currentDispOptions, currentUseDistractors) {
@@ -1284,7 +1295,8 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                         val currentDisplayOptions = optionsCache[currentQuestion.id] ?: currentQuestion.buildQuizDisplayOptions(
                                             useDistractors = currentUseDistractors,
                                             shuffleOptions = currentShuffleOptions,
-                                            sessionSeed = viewModel.activeQuizSessionId
+                                            sessionSeed = sessionSeed,
+                                            retainedOptionIndices = viewModel.activeRetainedOptionIndices[currentQuestion.id]
                                         )
                                         val correctIndices = currentQuestion.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
 
@@ -1359,7 +1371,8 @@ Format the explanation nicely in Markdown. You can generate Markdown tables if n
                 TextButton(onClick = {
                     showCancelDialog = false
                     isSubmitted.value = true // Prevent onDispose from saving corrupted state
-                    viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value)
+                    val displayedMap = optionsCache.mapValues { (_, pairs) -> pairs.map { it.first } }
+                    viewModel.saveActiveQuizState(currentIndex, selectedAnswers, lockedAnswers, timeRemainingMs, qTimes.value, displayedMap)
                     onCancel()
                 }) {
                     Text("Save & Exit")
