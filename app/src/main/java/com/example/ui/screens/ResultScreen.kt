@@ -3,6 +3,8 @@ package com.example.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -14,14 +16,27 @@ import com.example.ui.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResultScreen(viewModel: MainViewModel, onHome: () -> Unit, onReview: () -> Unit, onPracticeWrong: () -> Unit) {
+fun ResultScreen(
+    viewModel: MainViewModel,
+    onHome: () -> Unit,
+    onBack: () -> Unit = onHome,
+    onReview: () -> Unit,
+    onPracticeWrong: () -> Unit
+) {
     val history by viewModel.history.collectAsState()
     val lastCompleted by viewModel.lastCompletedQuizResult.collectAsState()
     val lastResult = lastCompleted ?: history.firstOrNull()
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Quiz Result", fontWeight = FontWeight.Bold) })
+            TopAppBar(
+                title = { Text("Quiz Result", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
         }
     ) { padding ->
         com.example.ui.components.ResponsiveContainer(modifier = Modifier.padding(padding)) {

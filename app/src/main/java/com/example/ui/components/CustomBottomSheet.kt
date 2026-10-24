@@ -425,21 +425,8 @@ fun CustomModalBottomSheet(
                             Modifier.height(targetHeight)
                         } else {
                             // Starts at the child's minimum height (55% mid-screen when keyboard is closed) and
-                            // smoothly expands upward to targetHeight, always stopping before the notification bar!
-                            Modifier
-                                .heightIn(max = targetHeight)
-                                .then(
-                                    if (!isDraggingHandle && !isKeyboardOpenNow) {
-                                        Modifier.animateContentSize(
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
-                                        )
-                                    } else {
-                                        Modifier
-                                    }
-                                )
+                            // expands upward to targetHeight without fighting LazyColumn scroll frames!
+                            Modifier.heightIn(max = targetHeight)
                         }
                     )
                     .onGloballyPositioned { contentCoords = it }

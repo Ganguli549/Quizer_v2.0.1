@@ -900,7 +900,7 @@ fun EditQuestionDialog(
             floatingActionButton = {
                 if (!isReviewMode) {
                     FloatingActionButton(
-                        onClick = { viewModel.triggerOpenAiAssistant() },
+                        onClick = { showAiAssistant = true },
                         modifier = Modifier.padding(bottom = 32.dp, end = 16.dp),
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         contentColor = MaterialTheme.colorScheme.onTertiaryContainer
@@ -1280,8 +1280,16 @@ fun EditQuestionDialog(
                         currentBookId = bookId,
                         viewModel = viewModel,
                         onDismiss = { showAiAssistant = false },
-                        onNavigateToAiSettings = onNavigateToAiSettings,
-                onNavigateToUsage = onNavigateToUsage,
+                        onNavigateToAiSettings = {
+                            showAiAssistant = false
+                            onDismiss()
+                            onNavigateToAiSettings()
+                        },
+                        onNavigateToUsage = {
+                            showAiAssistant = false
+                            onDismiss()
+                            onNavigateToUsage()
+                        },
                         onQuestionsUpdated = { updatedQuestions ->
                             if (updatedQuestions.isNotEmpty()) {
                                 onSave(updatedQuestions.first(), null, null)

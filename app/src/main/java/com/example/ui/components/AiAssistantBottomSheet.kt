@@ -265,8 +265,15 @@ fun AiAssistantBottomSheet(
         if (editingMessageId == null) -1 else chatHistory.indexOfFirst { it.id == editingMessageId }
     }
     
-    val listState = rememberLazyListState()
-    
+    val listState = remember(chatContextId) {
+        androidx.compose.foundation.lazy.LazyListState(
+            firstVisibleItemIndex = (chatHistory.size - 1).coerceAtLeast(0),
+            firstVisibleItemScrollOffset = 0
+        )
+    }
+    var hasInitializedScroll by remember(chatContextId) { mutableStateOf(false) }
+    var previousChatSize by remember(chatContextId) { mutableIntStateOf(chatHistory.size) }
+
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -290,14 +297,25 @@ fun AiAssistantBottomSheet(
         }
     }
 
-    LaunchedEffect(currentBookId) {
-        viewModel.loadChatHistory(chatContextId)
+    LaunchedEffect(chatContextId) {
+        if (chatHistory.isEmpty()) {
+            viewModel.loadChatHistory(chatContextId)
+        }
     }
 
     LaunchedEffect(chatHistory.size) {
         if (chatHistory.isNotEmpty()) {
-            listState.animateScrollToItem(chatHistory.size - 1)
+            val targetIndex = chatHistory.size - 1
+            if (!hasInitializedScroll) {
+                // Instant position on open — prevents the fast scroll-from-top glitter!
+                listState.scrollToItem(targetIndex)
+                hasInitializedScroll = true
+            } else if (chatHistory.size > previousChatSize) {
+                // Only animate when a brand-new message is added while the sheet is already open
+                listState.animateScrollToItem(targetIndex)
+            }
         }
+        previousChatSize = chatHistory.size
     }
 
     var hasAutoSent by remember { mutableStateOf(!autoSend) }
@@ -627,13 +645,10 @@ fun AiAssistantBottomSheet(
                         RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp)
                     }
 
+                    val needsEditOrClearLayer = isClearing || isBeingEdited || isSupersededByEdit || clearingMessageIds.isNotEmpty()
                     val itemScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = when {
-                            isClearing -> 0.92f
-                            isBeingEdited -> 1.02f
-                            else -> 1f
-                        },
-                        animationSpec = androidx.compose.animation.core.tween(220),
+                        targetValue = if (isClearing) 0.94f else 1f,
+                        animationSpec = androidx.compose.animation.core.tween(200),
                         label = "chatItemScale"
                     )
                     val itemAlpha by androidx.compose.animation.core.animateFloatAsState(
@@ -642,33 +657,26 @@ fun AiAssistantBottomSheet(
                             isSupersededByEdit -> 0.45f
                             else -> 1f
                         },
-                        animationSpec = androidx.compose.animation.core.tween(220),
+                        animationSpec = androidx.compose.animation.core.tween(200),
                         label = "chatItemAlpha"
                     )
 
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = !isClearing,
-                        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) +
-                            androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(240)),
-                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(190)) +
-                            androidx.compose.animation.shrinkVertically(
-                                animationSpec = androidx.compose.animation.core.tween(
-                                    durationMillis = 250,
-                                    easing = androidx.compose.animation.core.FastOutSlowInEasing
-                                ),
-                                shrinkTowards = Alignment.Top
-                            ),
-                        modifier = Modifier.animateItem()
-                    ) {
+                    if (!isClearing) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
-                                .graphicsLayer {
-                                    scaleX = itemScale
-                                    scaleY = itemScale
-                                    alpha = itemAlpha
-                                },
+                                .then(
+                                    if (needsEditOrClearLayer) {
+                                        Modifier.graphicsLayer {
+                                            scaleX = itemScale
+                                            scaleY = itemScale
+                                            alpha = itemAlpha
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                ),
                             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
                         ) {
                             Column(
