@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.data.*
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -462,28 +463,37 @@ fun ReadBookScreen(
     DisposableEffect(Unit) {
         onDispose {
             val w = (view.context as? android.app.Activity)?.window
-            if (w != null) {
-                val insetsController = androidx.core.view.WindowCompat.getInsetsController(w, view)
-                insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            if (w != null && w.decorView.isAttachedToWindow) {
+                try {
+                    val insetsController = androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+                    insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
 
     LaunchedEffect(isBarsVisible, isDarkTheme) {
         if (window != null) {
-            val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, view)
-            if (!isBarsVisible) {
-                insetsController.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-                insetsController.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            } else {
-                insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            try {
+                val targetView = if (view.isAttachedToWindow) view else window.decorView
+                val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, targetView)
+                if (!isBarsVisible) {
+                    insetsController.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                    insetsController.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                } else {
+                    insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                insetsController.isAppearanceLightNavigationBars = !isDarkTheme
+                insetsController.isAppearanceLightStatusBars = !isDarkTheme
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                window.isNavigationBarContrastEnforced = false
-            }
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT
-            insetsController.isAppearanceLightNavigationBars = !isDarkTheme
-            insetsController.isAppearanceLightStatusBars = !isDarkTheme
         }
     }
 
@@ -872,9 +882,11 @@ fun ReadBookScreen(
                                     color = themeColors.primary.copy(alpha = 0.12f),
                                     contentColor = themeColors.primary,
                                     border = androidx.compose.foundation.BorderStroke(1.dp, themeColors.primary.copy(alpha = 0.25f)),
-                                    modifier = Modifier.clickable {
-                                        openEditBookWithQuestion(currentReadingQuestion)
-                                    }
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            openEditBookWithQuestion(currentReadingQuestion)
+                                        }
                                 ) {
                                     Text(
                                         text = "${if (bottomBarInfo.second > 0) bottomBarInfo.second else "-"}/${allQuestions.size}",
@@ -1115,6 +1127,37 @@ fun ReadBookScreen(
             if (isLoadingBookItems) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator()
+                }
+            } else if (bookItems.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = themeColors.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No questions in this book yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = themeColors.text
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap the Sparkle AI button at the bottom right to attach a document (PDF, image, or text) and extract questions into this QBook.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = themeColors.text.copy(alpha = 0.75f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 }
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
@@ -1362,6 +1405,7 @@ fun ReadBookScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
                                     .clickable {
                                         selectedThemeIndex = index
                                         com.example.data.SecurePrefs.get(context).edit().putInt("reading_theme", index).apply()
@@ -1618,17 +1662,24 @@ fun ReadBookScreen(
                                 onQuestionsUpdated = { updatedQuestions ->
                     coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         com.example.ui.screens.createRestorePoint(context, viewModel.repository, currentBookId, "Pre-AI Update")
-                        updatedQuestions.forEach { 
-                            viewModel.repository.updateQuestion(it)
+                        val normalized = updatedQuestions.map { q ->
+                            if (currentBookId.isNotBlank() && q.bookId != currentBookId) {
+                                q.copy(bookId = currentBookId)
+                            } else q
                         }
+                        viewModel.repository.insertQuestions(normalized)
+                        viewModel.repository.updateBookStats(currentBookId)
                         val newQuestions = viewModel.repository.getQuestionsForBookSync(currentBookId).resolveHeaders()
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            allQuestions = newQuestions
-                        }
+                        val updatedBookEntity = viewModel.repository.getBookSync(currentBookId)
                         // Save back to original file as well
                         val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
                         val targetFile = java.io.File(basePath, "Quizer/${currentBookId}.qbook")
                         com.example.ui.screens.exportQBook(context, viewModel.repository, currentBookId, targetFile)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            allQuestions = newQuestions
+                            currentBook = updatedBookEntity
+                            viewModel.selectBook(currentBookId, forceRefresh = true)
+                        }
                     }
                 },
                 currentContextInfo = contextInfo,
@@ -1740,17 +1791,11 @@ fun ReadBookQuestionItem(
         }
     }
     
-    val correctIndices = remember(question) {
-        val strType = object : TypeToken<List<String>>() {}.type
-        val correctIds = gson.fromJson<List<String>>(question.advancedCorrectIds ?: "[]", strType) ?: emptyList()
-        val type = object : TypeToken<List<com.example.data.QBookOption>>() {}.type
-        val advancedOpts = gson.fromJson<List<com.example.data.QBookOption>>(question.advancedOptions ?: "[]", type) ?: emptyList()
-        
-        if (correctIds.isNotEmpty() && advancedOpts.isNotEmpty()) {
-            correctIds.mapNotNull { id -> advancedOpts.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-        } else {
-            setOf(question.correctIndex)
-        }
+    val correctIndices: Set<Int> = remember(question) {
+        question.resolveCorrectIndices(includeExtraOptions = false)
+    }
+    val isMultiCorrect: Boolean = remember(question, correctIndices) {
+        question.isEffectivelyMultipleCorrect(includeExtraOptions = false)
     }
 
     val highlighterBgColor = when {
@@ -1917,19 +1962,41 @@ fun ReadBookQuestionItem(
         optionsList.forEachIndexed { displayIndex, (index, optionText) ->
             val isCorrect = correctIndices.contains(index)
             val isSelected = selectedOptionIndices.contains(index)
+            // In in-book quiz mode, an unselected option remains clickable until the question is fully revealed
+            val isThisOptionClickable = inBookQuizMode && !isRevealed && !isSelected
 
-            val textColor = if (isRevealed) {
-                if (isCorrect) Color(0xFF4CAF50)
-                else if (isSelected && !isCorrect) Color(0xFFE53935)
-                else themeColors.text
-            } else {
-                themeColors.text
+            val textColor = when {
+                isRevealed -> {
+                    // Full reveal: all correct options turn green; any wrong option the user clicked turns red
+                    if (isCorrect) Color(0xFF4CAF50)
+                    else if (isSelected) Color(0xFFE53935)
+                    else themeColors.text
+                }
+                isSelected && isCorrect -> {
+                    // Progressive multi-correct selection before full reveal:
+                    // selected correct option turns green immediately while unselected correct options remain hidden!
+                    Color(0xFF4CAF50)
+                }
+                isSelected && !isCorrect -> {
+                    Color(0xFFE53935)
+                }
+                else -> themeColors.text
             }
 
             val selectOptionAction = {
-                if (question.multipleCorrect) {
-                    selectedOptionIndices = selectedOptionIndices + index
-                    isRevealed = true
+                if (isMultiCorrect) {
+                    if (!isSelected && !isRevealed) {
+                        val updatedSelection = selectedOptionIndices + index
+                        selectedOptionIndices = updatedSelection
+                        val pickedWrong = !isCorrect
+                        val allCorrectPicked = correctIndices.isNotEmpty() && correctIndices.all { updatedSelection.contains(it) }
+                        // Reveal and expand explanation ONLY if:
+                        // - User picked a wrong option (Case 1 & Case 2), OR
+                        // - User has now selected ALL correct options without picking a wrong one (Case 3)
+                        if (pickedWrong || allCorrectPicked) {
+                            isRevealed = true
+                        }
+                    }
                 } else {
                     selectedOptionIndices = setOf(index)
                     isRevealed = true
@@ -1943,7 +2010,7 @@ fun ReadBookQuestionItem(
                     .padding(vertical = 2.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .then(
-                        if (isOptionClickable) {
+                        if (isThisOptionClickable) {
                             Modifier.clickable { selectOptionAction() }
                         } else {
                             Modifier
@@ -1969,13 +2036,13 @@ fun ReadBookQuestionItem(
                     searchQuery = searchQuery,
                     highlightColor = highlightColor,
                     customMenuItems = questionCustomMenuItems,
-                    isSelectable = !isOptionClickable,
-                    onClick = if (isOptionClickable) {
-                        { selectOptionAction() }
+                    isSelectable = !isThisOptionClickable,
+                    onClick = if (isThisOptionClickable) {
+                        null
                     } else {
                         onTextClick
                     },
-                    onClickWithCoords = if (isOptionClickable) {
+                    onClickWithCoords = if (isThisOptionClickable) {
                         null
                     } else {
                         onTextClickWithCoords

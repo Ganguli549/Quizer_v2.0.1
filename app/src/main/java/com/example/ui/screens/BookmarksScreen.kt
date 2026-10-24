@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.data.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.animation.animateContentSize
@@ -121,7 +122,13 @@ fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.exam
             Text(header, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
         }
         Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { expanded = !expanded }.animateContentSize()
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                .clickable { expanded = !expanded }
+                .animateContentSize()
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -238,12 +245,16 @@ fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.exam
                             com.example.data.SharedGson.normal.fromJson(q.options, Array<String>::class.java).toList()
                         } catch(e: Exception) { emptyList() }
                     }
+                    val correctIndices = androidx.compose.runtime.remember(q) {
+                        q.resolveCorrectIndices(includeExtraOptions = false)
+                    }
                     options.forEachIndexed { index, opt ->
+                        val isCorrect = correctIndices.contains(index)
                         Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             Icon(
-                                imageVector = if (index == q.correctIndex) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Close,
+                                imageVector = if (isCorrect) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Close,
                                 contentDescription = null,
-                                tint = if (index == q.correctIndex) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -313,7 +324,13 @@ fun BookmarkPassageGroupCard(qs: List<com.example.data.QuestionEntity>, header: 
 fun BookmarkQuestionCard(q: com.example.data.QuestionEntity, viewModel: com.example.ui.MainViewModel) {
     var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { expanded = !expanded }.animateContentSize()
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .clickable { expanded = !expanded }
+            .animateContentSize()
     ) {
         Column(Modifier.padding(16.dp)) {
             val header = q.questionHeader
@@ -337,7 +354,12 @@ fun BookmarkQuestionContent(q: com.example.data.QuestionEntity, viewModel: com.e
     val expanded = isExpanded ?: internalExpanded
     val toggle = onExpandedToggle ?: { internalExpanded = !internalExpanded }
     
-    Column(modifier = Modifier.fillMaxWidth().clickable { toggle() }) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .clickable { toggle() }
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 com.example.ui.components.SmartRichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, isSelectable = expanded, onClick = toggle)
@@ -452,12 +474,16 @@ fun BookmarkQuestionContent(q: com.example.data.QuestionEntity, viewModel: com.e
                     com.example.data.SharedGson.normal.fromJson(q.options, Array<String>::class.java).toList()
                 } catch(e: Exception) { emptyList() }
             }
+            val correctIndices = androidx.compose.runtime.remember(q) {
+                q.resolveCorrectIndices(includeExtraOptions = false)
+            }
             options.forEachIndexed { index, opt ->
+                val isCorrect = correctIndices.contains(index)
                 Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Icon(
-                        imageVector = if (index == q.correctIndex) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Close,
+                        imageVector = if (isCorrect) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Close,
                         contentDescription = null,
-                        tint = if (index == q.correctIndex) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))

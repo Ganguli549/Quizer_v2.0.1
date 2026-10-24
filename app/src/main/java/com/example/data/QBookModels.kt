@@ -59,6 +59,7 @@ data class QBookQuestion(
     val options: List<QBookOption>,
     val extraOptions: List<QBookOption>?,
     val correctOptionIds: List<String>,
+    val multipleCorrect: Boolean? = null,
     val explanation: QBookExplanation?,
     val metadata: QBookMetadata
 )

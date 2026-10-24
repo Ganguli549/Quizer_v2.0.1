@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.data.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.animation.animateContentSize
@@ -12,6 +13,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.example.ui.MainViewModel
 
@@ -190,7 +193,13 @@ fun SearchQuestionCard(q: com.example.data.QuestionEntity, query: String, isSele
     
     Column {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { expanded = !expanded }.animateContentSize(),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                .clickable { expanded = !expanded }
+                .animateContentSize(),
             colors = CardDefaults.cardColors(containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(Modifier.padding(16.dp)) {
@@ -238,7 +247,12 @@ fun SearchQuestionContent(q: com.example.data.QuestionEntity, query: String, isS
     val expanded = isExpanded ?: internalExpanded
     val toggle = onExpandedToggle ?: { internalExpanded = !internalExpanded }
     
-    Column(modifier = Modifier.fillMaxWidth().clickable { toggle() }) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .clickable { toggle() }
+    ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
                 com.example.ui.components.SmartRichText(text = q.question, color = MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)
@@ -289,8 +303,11 @@ fun SearchQuestionContent(q: com.example.data.QuestionEntity, query: String, isS
                 }
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
+            val correctIndices = androidx.compose.runtime.remember(q) {
+                q.resolveCorrectIndices(includeExtraOptions = false)
+            }
             options.forEachIndexed { idx, opt ->
-                val isCorrect = idx == q.correctIndex
+                val isCorrect = correctIndices.contains(idx)
                 Row(modifier = Modifier.padding(vertical = 4.dp)) {
                     Text("${idx + 1}. ", fontWeight = if (isCorrect) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal, color = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface)
                     com.example.ui.components.SmartRichText(text = opt, color = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface, searchQuery = query, isSelectable = expanded, onClick = toggle)

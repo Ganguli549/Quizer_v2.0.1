@@ -99,8 +99,24 @@ fun CustomModalBottomSheet(
         }
     }
 
+    val view = LocalView.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+
+    fun safeHideKeyboard() {
+        try {
+            if (view.windowToken != null) {
+                keyboardController?.hide()
+            }
+        } catch (_: Exception) {}
+        try {
+            focusManager.clearFocus()
+        } catch (_: Exception) {}
+    }
+
     fun dismissSheetSmoothly() {
         coroutineScope.launch {
+            safeHideKeyboard()
             try {
                 sheetState.hide()
             } catch (_: Exception) {
@@ -203,7 +219,7 @@ fun CustomModalBottomSheet(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 11.dp, bottom = 4.dp)
+                    .padding(top = 7.dp, bottom = 3.dp)
                     .onGloballyPositioned { handleCoords = it }
                     .pointerInput(enableDynamicHeight, defaultExpandedFraction, screenHeightPx) {
                         val touchSlopPx = viewConfiguration.touchSlop

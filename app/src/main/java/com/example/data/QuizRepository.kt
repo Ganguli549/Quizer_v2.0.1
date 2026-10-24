@@ -35,6 +35,7 @@ class QuizRepository(context: Context) {
     val books: Flow<List<BookEntity>> = dbVersion.flatMapLatest { db.bookDao().getAllBooks() }
     val allStats: Flow<List<QuestionStatEntity>> = dbVersion.flatMapLatest { db.statDao().getAllStats() }
     val history: Flow<List<QuizHistoryEntity>> = dbVersion.flatMapLatest { db.historyDao().getAllHistory() }
+    fun getHistoryForBook(bookId: String): Flow<List<QuizHistoryEntity>> = dbVersion.flatMapLatest { db.historyDao().getHistoryForBook(bookId) }
     val bookmarks: Flow<List<BookmarkEntity>> = dbVersion.flatMapLatest { db.bookmarkDao().getAllBookmarks() }
 
     fun getStatsForBook(bookId: String): Flow<List<QuestionStatEntity>> = dbVersion.flatMapLatest { db.statDao().getStatsForBook(bookId) }
@@ -102,7 +103,11 @@ class QuizRepository(context: Context) {
     }
 
     suspend fun insertQuestions(questions: List<QuestionEntity>) {
+        if (questions.isEmpty()) return
         db.questionDao().insertQuestions(questions)
+        questions.map { it.bookId }.distinct().filter { it.isNotBlank() }.forEach { bId ->
+            db.bookDao().updateBookStats(bId)
+        }
     }
 
     suspend fun updateBookStats(bookId: String) {
@@ -124,7 +129,23 @@ class QuizRepository(context: Context) {
     }
 
     suspend fun insertHistory(historyEntry: QuizHistoryEntity) {
+        // Automatically prune quiz history older than 30 days on every new history insert to save storage
+        val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24L * 60L * 60L * 1000L)
+        db.historyDao().deleteHistoryOlderThan(thirtyDaysAgo)
         db.historyDao().insertHistory(historyEntry)
+    }
+
+    suspend fun deleteHistoryEntry(historyId: Long) {
+        db.historyDao().deleteHistoryEntry(historyId, "practice_mistakes_for_$historyId")
+    }
+
+    suspend fun clearHistoryForBook(bookId: String) {
+        db.historyDao().deleteHistoryForBook(bookId)
+    }
+
+    suspend fun cleanupOldHistory(daysToKeep: Int = 30) {
+        val cutoff = System.currentTimeMillis() - (daysToKeep.coerceAtLeast(1).toLong() * 24L * 60L * 60L * 1000L)
+        db.historyDao().deleteHistoryOlderThan(cutoff)
     }
 
     suspend fun addBookmark(bookId: String, questionId: Long) {

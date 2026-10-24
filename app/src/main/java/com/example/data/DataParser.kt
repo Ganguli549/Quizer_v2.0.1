@@ -437,7 +437,7 @@ class DataParser {
                     }
                     
                     val rawFiles = quizerDir.listFiles() ?: return@withContext
-                    val files = rawFiles.filter { file -> file.isFile && file.name.endsWith(".qbook", ignoreCase = true) }
+                    val files = rawFiles.filter { file -> file.isFile && (file.name.endsWith(".qbook", ignoreCase = true) || file.name.endsWith(".zip", ignoreCase = true)) }
                     
                     val settingsManager = SettingsManager(context)
                     val updatedRemoved = settingsManager.removedBooks.toMutableSet()
@@ -492,8 +492,8 @@ class DataParser {
                         val fileVersionStr = fileToVersion[file] ?: "1.0"
                         val dbVersionStr = existingBook?.bookVersion ?: "1.0"
                         
-                        // Parse if not in DB, has 0 questions, or version changed
-                        if (existingBook == null || existingBook.totalQuestions == 0 || fileVersionStr != dbVersionStr) {
+                        // Parse if not in DB or if version changed on disk
+                        if (existingBook == null || fileVersionStr != dbVersionStr) {
                             parseAndInsertFromQBook(context, repository, file, allowAutoFix = true)
                         } else {
                             // Ensure image assets exist even if questions already parsed
@@ -904,12 +904,17 @@ class DataParser {
                                         val resolvedHeader = if (selfHeader != null) "{\"startId\": ${q.id}, \"endId\": ${q.id}, \"text\": \"${selfHeader.replace("\"", "\\\"").replace("\n", "\\n")}\"}" else if (resolvedHeaderRange != null) "{\"startId\": ${resolvedHeaderRange.startId}, \"endId\": ${resolvedHeaderRange.endId}, \"text\": \"${resolvedHeaderRange.headerText.replace("\"", "\\\"").replace("\n", "\\n")}\"}" else null
                                         headerRanges.removeAll { it.endId < q.id }
                                         
-                                        val correctIndexStr = if (q.correctOptionIds.isNotEmpty()) {
-                                            val firstCorrectId = q.correctOptionIds[0]
-                                            val idx = q.options.indexOfFirst { it.id == firstCorrectId }
-                                            if (idx != -1) idx else 0
+                                        val normalizedCorrectIds = normalizeCorrectOptionIdsList(q.correctOptionIds)
+                                        val correctIndexStr = if (normalizedCorrectIds.isNotEmpty()) {
+                                            val firstMatchingBaseIdx = normalizedCorrectIds.firstNotNullOfOrNull { cid ->
+                                                q.options.indexOfFirst { it.id.equals(cid, ignoreCase = true) }.takeIf { it != -1 }
+                                                    ?: cid.removePrefix("opt").toIntOrNull()?.takeIf { it in q.options.indices }
+                                            }
+                                            firstMatchingBaseIdx ?: 0
                                         } else 0
-                                        
+
+                                        val isMultiCorrect = (q.multipleCorrect == true) || (normalizedCorrectIds.size > 1)
+
                                         val existingGlobalId = existingQuestionsMap[q.id]?.globalId ?: UUID.randomUUID().toString()
                                         parsedQuestions.add(
                                             QuestionEntity(
@@ -931,10 +936,10 @@ class DataParser {
                                                 img = q.question.image?.trim()?.takeIf { !it.equals("null", ignoreCase = true) },
                                                 questionHeader = resolvedHeader,
                                                 advancedOptions = gson.toJson(q.options),
-                                                advancedCorrectIds = gson.toJson(q.correctOptionIds),
+                                                advancedCorrectIds = gson.toJson(normalizedCorrectIds),
                                                 detailedExplanation = q.explanation?.detailed?.trim()?.takeIf { !it.equals("null", ignoreCase = true) },
                                                 explanationImage = q.explanation?.image?.trim()?.takeIf { !it.equals("null", ignoreCase = true) },
-                                                multipleCorrect = q.correctOptionIds.size > 1,
+                                                multipleCorrect = isMultiCorrect,
                                                 format = q.question.format,
                                                 tableData = if (q.question.table != null) gson.toJson(q.question.table) else null,
                                                 bottomText = q.question.bottomText
@@ -957,11 +962,11 @@ class DataParser {
                         }
                     } // end zip
                     
-                    if (meta == null || totalQuestions == 0) {
+                    val isUpdate = meta?.type == "UPDATE" || meta?.type == "update"
+                    if (meta == null || (isUpdate && totalQuestions == 0)) {
                         return@withContext "Invalid .qbook format: Missing meta or questions."
                     }
                     
-                    val isUpdate = meta?.type == "UPDATE" || meta?.type == "update"
                     val existingBook = repository.getBookSync(bookIdStr)
 
                     if (isUpdate && existingBook == null) {
@@ -1018,15 +1023,15 @@ class DataParser {
                             id = bookIdStr,
                             name = if (!meta?.name.isNullOrBlank() && meta?.name != "Unknown Book") meta!!.name else file.nameWithoutExtension.replace("_", " "),
                             totalQuestions = totalQuestions,
-                            totalCategories = categorySet.size,
+                            totalCategories = categorySet.filter { it.isNotBlank() }.size,
                             dataVariable = "QBOOK",
-                            updateId = "QBOOK_INITIAL",
-                            bookVersion = meta?.version,
+                            updateId = meta?.updateId ?: "QBOOK_INITIAL",
+                            bookVersion = meta?.version ?: "Q1E0.0.0",
                             updateVersions = "[]",
-                            questionIdStart = qIdStart,
-                            questionIdEnd = qIdEnd,
+                            questionIdStart = if (qIdStart > 0) qIdStart else (meta?.questionIdStart ?: 0L),
+                            questionIdEnd = if (qIdEnd > 0) qIdEnd else (meta?.questionIdEnd ?: 0L),
                             hierarchyLabels = if (meta?.hierarchyLabels != null) gson.toJson(meta.hierarchyLabels) else "[]",
-                            roadmapLeafLevel = 3
+                            roadmapLeafLevel = (meta?.hierarchyLabels?.size ?: 3).coerceAtLeast(1)
                         )
 
                         AppDatabase.getDatabase(context).withTransaction {

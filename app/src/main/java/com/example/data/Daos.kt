@@ -23,7 +23,16 @@ interface BookDao {
     @Query("DELETE FROM books WHERE id = :id")
     suspend fun deleteBook(id: String)
 
-    @Query("UPDATE books SET totalQuestions = (SELECT COUNT(*) FROM questions WHERE bookId = :id), totalCategories = (SELECT COUNT(DISTINCT category) FROM questions WHERE bookId = :id) WHERE id = :id")
+    @Query(
+        """
+        UPDATE books SET 
+            totalQuestions = (SELECT COUNT(*) FROM questions WHERE bookId = :id),
+            totalCategories = (SELECT COUNT(DISTINCT category) FROM questions WHERE bookId = :id AND category != ''),
+            questionIdStart = COALESCE((SELECT MIN(id) FROM questions WHERE bookId = :id), 0),
+            questionIdEnd = COALESCE((SELECT MAX(id) FROM questions WHERE bookId = :id), 0)
+        WHERE id = :id
+        """
+    )
     suspend fun updateBookStats(id: String)
 }
 
@@ -80,11 +89,20 @@ interface HistoryDao {
     @Query("SELECT * FROM quiz_history ORDER BY historyId DESC LIMIT 500")
     fun getAllHistory(): Flow<List<QuizHistoryEntity>>
 
+    @Query("SELECT * FROM quiz_history WHERE bookId = :bookId ORDER BY historyId DESC LIMIT 500")
+    fun getHistoryForBook(bookId: String): Flow<List<QuizHistoryEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHistory(history: QuizHistoryEntity)
 
     @Query("DELETE FROM quiz_history WHERE bookId = :bookId")
     suspend fun deleteHistoryForBook(bookId: String)
+
+    @Query("DELETE FROM quiz_history WHERE historyId = :historyId OR status = :practiceMistakesStatus")
+    suspend fun deleteHistoryEntry(historyId: Long, practiceMistakesStatus: String = "practice_mistakes_for_$historyId")
+
+    @Query("DELETE FROM quiz_history WHERE historyId < :cutoffTimestamp")
+    suspend fun deleteHistoryOlderThan(cutoffTimestamp: Long)
 }
 
 @Dao

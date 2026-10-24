@@ -424,7 +424,8 @@ class MainViewModel(
                         val textBuilder = StringBuilder()
                         val availableImages = mutableListOf<String>()
                         var entry = zis.nextEntry
-                        val imagesDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$chatContextId/images")
+                        val resolvedFolderBookId = chatContextId.removeSuffix("_edit").removeSuffix("_read").ifBlank { _currentBookId.value }
+                        val imagesDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$resolvedFolderBookId/images")
                         if (!imagesDir.exists()) imagesDir.mkdirs()
 
                         while (entry != null) {
@@ -476,6 +477,11 @@ class MainViewModel(
                     }
                 }
                 
+                val resolvedBookId = chatContextId
+                    .removeSuffix("_edit")
+                    .removeSuffix("_read")
+                    .ifBlank { _currentBookId.value }
+
                 val (updates, responseText) = com.example.ui.components.processAiChatCommand(
                     context = context,
                     command = prompt,
@@ -486,6 +492,7 @@ class MainViewModel(
                     pdfBytes = pdfBytes,
                     extractedText = extractedTextFromFile,
                     attachments = attachments,
+                    targetBookId = resolvedBookId,
                     onStatusUpdate = { status, progress ->
                         activeAiTasks[chatContextId]?.status = status
                         setAiProcessingStatus(chatContextId, status, progress)
@@ -569,7 +576,8 @@ class MainViewModel(
                     val textBuilder = StringBuilder()
                     val availableImages = mutableListOf<String>()
                     var entry = zis.nextEntry
-                    val imagesDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$chatContextId/images")
+                    val resolvedFolderBookId = chatContextId.removeSuffix("_edit").removeSuffix("_read").ifBlank { _currentBookId.value }
+                    val imagesDir = java.io.File(android.os.Environment.getExternalStorageDirectory(), "Quizer/$resolvedFolderBookId/images")
                     if (!imagesDir.exists()) imagesDir.mkdirs()
 
                     while (entry != null) {
@@ -656,8 +664,11 @@ class MainViewModel(
                     [
                       {
                         "question": "question text",
-                        "options": ["A", "B", "C", "D"],
-                        "correctIndex": integer index of correct option,
+                        "options": ["Option A", "Option B", "Option C", "Option D"],
+                        "extraOptions": ["Extra Option 0", "Extra Option 1"] (if present or requested, else []),
+                        "correctIndex": 0,
+                        "correctOptionIds": ["opt0"] (or ["opt0", "opt3", "ext0", "ext2"] for multiple-correct / extraOptions),
+                        "multipleCorrect": false (true if >1 option/extraOption is correct),
                         "explanation": "brief explanation (empty string \"\" if none)",
                         "detailedExplanation": "detailed explanation if present, or generate one (empty string \"\" if none)",
                         "path": "Topic/Subtopic based on PDF/document headers (empty string \"\" if none)",
@@ -699,8 +710,9 @@ class MainViewModel(
                 
                 for (item in jsonArray) {
                     val obj = item.jsonObject
-                    val rawOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-                    val qOptions = rawOptions.map { com.example.ui.components.cleanExtractedMathText(it) }
+                    val parsedOpts = com.example.ui.components.parseAiQuestionOptionsFromJson(obj)
+                    val qOptions = parsedOpts.baseOptions
+                    val qExtraOptions = parsedOpts.extraOptions
                     val rawHeader = when (val el = obj["questionHeader"] ?: obj["section"] ?: obj["header"]) {
                         is kotlinx.serialization.json.JsonObject -> el.toString()
                         is kotlinx.serialization.json.JsonPrimitive -> {
@@ -725,15 +737,36 @@ class MainViewModel(
                     val section = if (shouldOmitHeaders) "" else (cleanedHeader ?: obj.optCleanString("section") ?: "")
                     val path = obj.optCleanString("path") ?: ""
 
+                    val generatedOptions = qOptions.mapIndexed { idx, txt ->
+                        com.example.data.QBookOption(id = "opt$idx", text = txt)
+                    }
+                    val correctOptionIds = com.example.ui.components.parseAiCorrectOptionIds(
+                        obj = obj,
+                        optionCount = generatedOptions.size,
+                        extraOptionCount = qExtraOptions.size,
+                        baseOptionsText = qOptions,
+                        extraOptionsText = qExtraOptions,
+                        inlineCorrectIds = parsedOpts.inlineCorrectIds
+                    )
+                    val primaryIdx = correctOptionIds.firstNotNullOfOrNull { cid ->
+                        if (cid.startsWith("opt")) cid.removePrefix("opt").toIntOrNull()?.takeIf { it in generatedOptions.indices } else null
+                    } ?: (obj["correctIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0)
+                    val isMulti = (obj["multipleCorrect"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true) == true) ||
+                        correctOptionIds.size > 1 ||
+                        correctOptionIds.any { it.startsWith("ext", ignoreCase = true) }
+
                     val updatedQ = com.example.data.QuestionEntity(
                         globalId = java.util.UUID.randomUUID().toString(),
                         id = maxPossibleId + 1 + updates.size.toLong(),
                         bookId = baseBookId,
-                        category = "AI Extracted",
+                        category = obj.optCleanString("category")?.takeIf { it.isNotBlank() } ?: "AI Extracted",
                         question = questionText,
                         options = gson.toJson(qOptions),
-                        extraOptions = "[]",
-                        correctIndex = obj["correctIndex"]?.jsonPrimitive?.int ?: 0,
+                        advancedOptions = gson.toJson(generatedOptions),
+                        advancedCorrectIds = gson.toJson(correctOptionIds),
+                        extraOptions = gson.toJson(qExtraOptions),
+                        correctIndex = primaryIdx,
+                        multipleCorrect = isMulti,
                         explanation = explanation,
                         detailedExplanation = detailedExplanation,
                         format = format,
@@ -948,6 +981,131 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             }
         }
     }
+
+    fun generateBlankBookId(bookName: String): String {
+        val cleanLetters = bookName
+            .trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .let { words ->
+                if (words.size >= 2) {
+                    words.take(4).joinToString("") { w ->
+                        w.filter { it.isLetterOrDigit() }.take(1).uppercase()
+                    }
+                } else {
+                    words.firstOrNull()?.filter { it.isLetterOrDigit() }?.take(4)?.uppercase() ?: ""
+                }
+            }
+            .ifBlank { "QB" }
+        val suffix = (10000..99999).random()
+        return "${cleanLetters}#$suffix"
+    }
+
+    fun generateBlankBookVersion(): String {
+        return "Q1E1.0.0"
+    }
+
+    fun createBlankQBook(
+        context: android.content.Context,
+        bookName: String,
+        bookId: String,
+        bookVersion: String,
+        hierarchyLabels: List<String>,
+        defaultCategory: String = "",
+        defaultExam: String = "",
+        onCreated: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cleanName = bookName.trim().ifBlank { "Untitled Book" }
+                val cleanId = bookId.trim()
+                    .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                    .ifBlank { generateBlankBookId(cleanName) }
+                val cleanVersion = bookVersion.trim().ifBlank { "Q1E1.0.0" }
+                val cleanHierarchy = hierarchyLabels.map { it.trim() }.filter { it.isNotBlank() }
+                    .ifEmpty { listOf("Book", "Chapter", "Topic") }
+
+                val gson = com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                val basePath = android.os.Environment.getExternalStorageDirectory().absolutePath
+                val quizerDir = java.io.File(basePath, "Quizer")
+                if (!quizerDir.exists()) quizerDir.mkdirs()
+
+                val bookDir = java.io.File(quizerDir, cleanId)
+                if (!bookDir.exists()) bookDir.mkdirs()
+                val imagesDir = java.io.File(bookDir, "images")
+                if (!imagesDir.exists()) imagesDir.mkdirs()
+                com.example.data.MediaScannerHelper.ensureNoMediaInDir(imagesDir)
+
+                // Remove from removedBooks blacklist if it was ever deleted previously
+                val updatedRemoved = settingsManager.removedBooks.toMutableSet()
+                if (updatedRemoved.remove(cleanId)) {
+                    settingsManager.removedBooks = updatedRemoved
+                }
+
+                // Write initial book_meta.json and empty backup_questions.json
+                val meta = com.example.data.QBookMeta(
+                    id = cleanId,
+                    name = cleanName,
+                    version = cleanVersion,
+                    hierarchyLabels = cleanHierarchy,
+                    updateVersion = emptyList(),
+                    questionIdStart = 0L,
+                    questionIdEnd = 0L
+                )
+                val metaJson = gson.toJson(meta)
+                java.io.File(bookDir, "book_meta.json").writeText(metaJson)
+                java.io.File(bookDir, "backup_questions.json").writeText("[]")
+
+                // Save default category/exam hints in SecurePrefs if provided so AI extraction can use them
+                if (defaultCategory.isNotBlank() || defaultExam.isNotBlank()) {
+                    val sp = com.example.data.SecurePrefs.get(context)
+                    sp.edit()
+                        .putString("blank_book_default_cat_$cleanId", defaultCategory.trim())
+                        .putString("blank_book_default_exam_$cleanId", defaultExam.trim())
+                        .apply()
+                }
+
+                // Insert the blank BookEntity into Room
+                val bookEntity = com.example.data.BookEntity(
+                    id = cleanId,
+                    name = cleanName,
+                    totalQuestions = 0,
+                    totalCategories = 0,
+                    isFavorite = false,
+                    addedAt = System.currentTimeMillis(),
+                    dataVariable = "QBOOK",
+                    updateId = "QBOOK_INITIAL",
+                    bookVersion = cleanVersion,
+                    updateVersions = "[]",
+                    questionIdStart = 0L,
+                    questionIdEnd = 0L,
+                    hierarchyLabels = com.example.data.SharedGson.normal.toJson(cleanHierarchy),
+                    roadmapLeafLevel = cleanHierarchy.size.coerceAtLeast(1)
+                )
+                repository.insertBook(bookEntity)
+
+                // Export valid blank .qbook archive to Quizer/<cleanId>.qbook
+                val targetQBookFile = java.io.File(quizerDir, "${cleanId}.qbook")
+                com.example.ui.screens.exportQBook(context, repository, cleanId, targetQBookFile)
+
+                // Select the newly created blank book
+                withContext(Dispatchers.Main) {
+                    selectBook(cleanId, forceRefresh = true)
+                    onCreated(cleanId)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Failed to create blank qbook: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
     fun renameBook(bookId: String, newName: String) {
         viewModelScope.launch {
             val dbBook = repository.getBookSync(bookId) ?: return@launch
@@ -1343,6 +1501,18 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             }
         }
         
+        val displayedOptionsFromHistory: List<List<Int>> = try {
+            val trimmed = entry.activeQuizData.trim()
+            if (trimmed.startsWith("{")) {
+                val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any?>>() {}.type
+                val map: Map<String, Any?> = gson.fromJson(trimmed, mapType)
+                val rawDisp = map["displayedOptions"] as? List<*>
+                rawDisp?.map { row ->
+                    (row as? List<*>)?.mapNotNull { (it as? Number)?.toInt() } ?: emptyList()
+                } ?: emptyList()
+            } else emptyList()
+        } catch (_: Exception) { emptyList() }
+
         quizGenJob?.cancel()
         quizGenJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             val allQs = repository.getQuestionsByBookAndIds(entry.bookId, qIdsRaw).resolveHeaders().associateBy { it.id }
@@ -1353,14 +1523,15 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 val ansSet = uAnsSets.getOrNull(i) ?: emptySet()
                 val q = allQs[qId]
                 if (q != null) {
-                    val correctIds = gson.fromJson<List<String>>(q.advancedCorrectIds ?: "[]", object : com.google.gson.reflect.TypeToken<List<String>>() {}.type) ?: emptyList()
-                    val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(q.advancedOptions ?: "[]", object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type) ?: emptyList()
-                    val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                        correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
+                    val allCorrect = q.resolveCorrectIndices(includeExtraOptions = true)
+                    val baseCorrect = q.resolveCorrectIndices(includeExtraOptions = false)
+                    val dispSet = displayedOptionsFromHistory.getOrNull(i)?.toSet()
+                    val expectedCorrect = if (!dispSet.isNullOrEmpty()) {
+                        allCorrect.intersect(dispSet).ifEmpty { baseCorrect }
                     } else {
-                        setOf(q.correctIndex)
+                        if (ansSet.any { it < 0 && it != com.example.data.TIMEOUT_SKIPPED_SENTINEL }) allCorrect else baseCorrect
                     }
-                    if (ansSet != correctIndices) {
+                    if (ansSet.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL) || ansSet != expectedCorrect) {
                         wrongQIds.add(qId)
                     }
                 }
@@ -1380,7 +1551,31 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     val allStats = _currentBookId.flatMapLatest { repository.getStatsForBook(it) }
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
         
-    val history = repository.history.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    val history = _currentBookId.flatMapLatest { bookId ->
+        repository.getHistoryForBook(bookId)
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun deleteHistoryEntry(historyId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteHistoryEntry(historyId)
+        }
+    }
+
+    fun clearHistoryForCurrentBook() {
+        val bookId = _currentBookId.value
+        if (bookId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.clearHistoryForBook(bookId)
+        }
+    }
+
+    fun cleanupExpiredHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.cleanupOldHistory(30)
+            } catch (_: Exception) {}
+        }
+    }
     
     val bookmarks = _currentBookId.flatMapLatest { repository.getBookmarksForBook(it) }
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -1711,6 +1906,13 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
     }
 
     init {
+        // Automatically delete quiz history entries older than 30 days to keep database storage lean
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.cleanupOldHistory(30)
+            } catch (_: Exception) {}
+        }
+
         // Load questions when book changes
         viewModelScope.launch {
             _currentBookId.flatMapLatest { repository.getQuestionSummariesForBook(it) }.collect { qList ->
@@ -1826,11 +2028,24 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
         timeUsed: Long,
         questionIds: List<Long>,
         userAnswers: List<Set<Int>?>,
-        questionTimes: List<Long> = emptyList()
+        questionTimes: List<Long> = emptyList(),
+        displayedOptionIndices: List<List<Int>> = emptyList()
     ) {
         val parentId = currentPracticeMistakesParentId
         currentPracticeMistakesParentId = null
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val gson = com.example.data.SharedGson.normal
+            val activeQuizMetadataJson = if (displayedOptionIndices.isNotEmpty()) {
+                gson.toJson(
+                    mapOf(
+                        "times" to questionTimes,
+                        "displayedOptions" to displayedOptionIndices
+                    )
+                )
+            } else {
+                gson.toJson(questionTimes)
+            }
+
             val historyEntry = QuizHistoryEntity(
                 historyId = System.currentTimeMillis(),
                 bookId = bookId,
@@ -1845,9 +2060,9 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                 rawScore = score,
                 finalScore = score,
                 timeUsed = timeUsed,
-                activeQuizData = com.example.data.SharedGson.normal.toJson(questionTimes),
-                questionIds = com.example.data.SharedGson.normal.toJson(questionIds),
-                userAnswers = com.example.data.SharedGson.normal.toJson(userAnswers)
+                activeQuizData = activeQuizMetadataJson,
+                questionIds = gson.toJson(questionIds),
+                userAnswers = gson.toJson(userAnswers)
             )
             repository.insertHistory(historyEntry)
 
@@ -1857,31 +2072,25 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
             val hourMs = 3_600_000L
             val dayMs = 86_400_000L
             val fullQuestions = repository.getQuestionsByBookAndIds(bookId, questionIds).resolveHeaders().associateBy { it.id }
-            val gson = com.example.data.SharedGson.normal
 
             questionIds.forEachIndexed { index, qId ->
                 val ans = userAnswers.getOrNull(index)
-                if (ans != null) {
+                if (ans != null && !ans.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL)) {
                     val key = "${bookId}_${qId}"
                     val existing = allStats.value.find { it.questionKey == key }
                         ?: QuestionStatEntity(questionKey = key, bookId = bookId, questionId = qId)
 
                     val currentQ = fullQuestions[qId]
                     val isCorrect = if (currentQ != null) {
-                        val correctIds = gson.fromJson<List<String>>(
-                            currentQ.advancedCorrectIds ?: "[]",
-                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
-                        ) ?: emptyList()
-                        val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(
-                            currentQ.advancedOptions ?: "[]",
-                            object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type
-                        ) ?: emptyList()
-                        val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                            correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
+                        val allCorrect = currentQ.resolveCorrectIndices(includeExtraOptions = true)
+                        val baseCorrect = currentQ.resolveCorrectIndices(includeExtraOptions = false)
+                        val dispForQ = displayedOptionIndices.getOrNull(index)?.toSet()
+                        val expectedCorrect = if (!dispForQ.isNullOrEmpty()) {
+                            allCorrect.intersect(dispForQ).ifEmpty { baseCorrect }
                         } else {
-                            setOf(currentQ.correctIndex)
+                            if (ans.any { it < 0 }) allCorrect else baseCorrect
                         }
-                        ans == correctIndices
+                        ans == expectedCorrect
                     } else false
 
                     val q = if (isCorrect) 4 else 1
@@ -2155,15 +2364,20 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
 
                         val gsonForExport = com.example.data.SharedGson.normal
                         val entities = questions.map { q ->
+                            val normalizedCorrectIds = com.example.data.normalizeCorrectOptionIdsList(q.correctOptionIds)
                             val advancedOptionsStr = gsonForExport.toJson(q.options)
-                            val advancedCorrectIdsStr = gsonForExport.toJson(q.correctOptionIds)
+                            val advancedCorrectIdsStr = gsonForExport.toJson(normalizedCorrectIds)
                             val legacyOptions = q.options.map { it.text }
                             val legacyOptionsStr = gsonForExport.toJson(legacyOptions)
                             val legacyExtraOptions = q.extraOptions?.map { it.text } ?: emptyList()
                             val legacyExtraOptionsStr = gsonForExport.toJson(legacyExtraOptions)
-                            val legacyCorrectIndex = if (q.correctOptionIds.isNotEmpty()) {
-                                q.options.indexOfFirst { it.id == q.correctOptionIds.first() }.coerceAtLeast(0)
+                            val legacyCorrectIndex = if (normalizedCorrectIds.isNotEmpty()) {
+                                val firstBase = normalizedCorrectIds.firstNotNullOfOrNull { cid ->
+                                    q.options.indexOfFirst { it.id.equals(cid, ignoreCase = true) }.takeIf { it != -1 }
+                                }
+                                firstBase ?: 0
                             } else 0
+                            val isMulti = (q.multipleCorrect == true) || (normalizedCorrectIds.size > 1)
                             
                             com.example.data.QuestionEntity(
                                 id = q.id,
@@ -2184,6 +2398,7 @@ fun setPendingUpdates(context: android.content.Context, chatContextId: String, u
                                 advancedCorrectIds = advancedCorrectIdsStr,
                                 detailedExplanation = q.explanation?.detailed,
                                 explanationImage = q.explanation?.image,
+                                multipleCorrect = isMulti,
                                 exams = q.metadata.exams?.let { gsonForExport.toJson(it) },
                                 explanationTable = q.explanation?.table?.let { gsonForExport.toJson(it) },
                                 format = q.question.format,

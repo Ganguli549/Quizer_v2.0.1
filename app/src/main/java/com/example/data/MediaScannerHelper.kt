@@ -221,20 +221,25 @@ object MediaScannerHelper {
      * while leaving all physical image files on disk untouched.
      * Also deletes any 0-byte orphan rows previously inserted into `Pictures/Quizer`.
      */
+    @Suppress("DEPRECATION")
     fun purgeIndexedQuizerImagesFromMediaStore(context: Context) {
         val resolver = context.contentResolver
         val filesUri = MediaStore.Files.getContentUri("external")
 
-        // 1. Delete rows in MediaStore.Images matching Quizer or Pictures/Quizer so gallery immediately forgets them
+        // 1. Delete 0-byte orphan rows that previous code inserted into Pictures/Quizer
         try {
-            resolver.delete(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                "${MediaStore.Images.Media.DATA} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
-                arrayOf("%/Quizer/%", "Quizer/%", "%Pictures/Quizer%")
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.delete(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? AND ${MediaStore.Images.Media.SIZE} = 0",
+                    arrayOf("%Pictures/Quizer%")
+                )
+            }
         } catch (_: Exception) {}
 
         // 2. Demote indexed /Quizer/ images in MediaStore.Files from MEDIA_TYPE_IMAGE to MEDIA_TYPE_NONE (0)
+        // Updating MEDIA_TYPE to MEDIA_TYPE_NONE removes them from MediaStore.Images (Gallery)
+        // without deleting the underlying files on disk!
         try {
             val values = ContentValues().apply {
                 put(MediaStore.Files.FileColumns.MEDIA_TYPE, MediaStore.Files.FileColumns.MEDIA_TYPE_NONE)

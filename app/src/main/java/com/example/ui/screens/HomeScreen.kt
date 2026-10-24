@@ -15,7 +15,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -267,6 +271,61 @@ fun HomeScreen(
         TrashDialog(onDismiss = { showTrashDialog = false })
     }
 
+    var showCreateBlankBookWarningDialog by remember { mutableStateOf(false) }
+    var showCreateBlankBookFormDialog by remember { mutableStateOf(false) }
+
+    if (showCreateBlankBookWarningDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateBlankBookWarningDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Warning",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = { Text("Create Blank QBook?") },
+            text = {
+                Text(
+                    "Do you want to create a blank .qbook to extract questions from a document (PDF, image, or text) via AI?\n\n" +
+                    "Once created, open Read Book or Edit Book and use Sparkle AI (+) to attach your document and extract questions into this book."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCreateBlankBookWarningDialog = false
+                        showBookDialog = false
+                        showCreateBlankBookFormDialog = true
+                    }
+                ) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateBlankBookWarningDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showCreateBlankBookFormDialog) {
+        CreateBlankQBookDialog(
+            viewModel = viewModel,
+            existingBookIds = books.map { it.id }.toSet(),
+            onDismiss = { showCreateBlankBookFormDialog = false },
+            onCreated = { createdId ->
+                showCreateBlankBookFormDialog = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Blank QBook '$createdId' created! Open Read Book -> Edit Book or Sparkle AI to extract questions.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
+
     LaunchedEffect(showBookDialog) {
         if (showBookDialog) {
             viewModel.syncBooks(context)
@@ -446,10 +505,40 @@ fun HomeScreen(
                     ) {
                         Text("Select Book", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                filePickerLauncher.launch(arrayOf("*/*"))
-                                showBookDialog = false
-                            }) {
+                            val haptic = LocalHapticFeedback.current
+                            val viewConfig = androidx.compose.ui.platform.LocalViewConfiguration.current
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .pointerInput(Unit) {
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            val longPressTimeout = viewConfig.longPressTimeoutMillis
+                                            var isLongPress = false
+                                            val up = try {
+                                                withTimeout(longPressTimeout) {
+                                                    waitForUpOrCancellation()
+                                                }
+                                            } catch (_: kotlinx.coroutines.CancellationException) {
+                                                isLongPress = true
+                                                null
+                                            }
+
+                                            if (isLongPress) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                showCreateBlankBookWarningDialog = true
+                                                try {
+                                                    waitForUpOrCancellation()
+                                                } catch (_: Exception) {}
+                                            } else if (up != null && !up.isConsumed) {
+                                                filePickerLauncher.launch(arrayOf("*/*"))
+                                                showBookDialog = false
+                                            }
+                                        }
+                                    },
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
                                 Icon(Icons.Default.Add, contentDescription = "Add Book")
                             }
                             IconButton(onClick = { showTrashDialog = true }) {
@@ -695,9 +784,11 @@ fun HomeScreen(
                                         }
                                     )
                                 },
-                                modifier = Modifier.clickable {
-                                    selectedPaths.forEach { p -> viewModel.togglePath(p) }
-                                }
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        selectedPaths.forEach { p -> viewModel.togglePath(p) }
+                                    }
                             )
                             HorizontalDivider()
                         }
@@ -712,6 +803,7 @@ fun HomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { viewModel.togglePath(item.node.path) }
                                     .padding(start = (item.level * 16).dp, top = 4.dp, bottom = 4.dp),
                                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
@@ -823,8 +915,13 @@ fun HomeScreen(
                 }
                 
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable { showBookDialog = true },
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { showBookDialog = true },
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(Modifier.padding(16.dp)) {
                         Text("Current Book", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -981,7 +1078,15 @@ fun HomeScreen(
                 var showOptions by remember { mutableStateOf(false) }
                 Card(modifier = Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(16.dp)) {
-                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().clickable { showOptions = !showOptions }) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showOptions = !showOptions }
+                                .padding(vertical = 4.dp, horizontal = 4.dp)
+                        ) {
                             Text("Advanced Quiz Options", style = MaterialTheme.typography.titleMedium)
                             Icon(if (showOptions) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = "Toggle")
                         }
@@ -1263,6 +1368,294 @@ fun TrashDialog(onDismiss: () -> Unit) {
                         ) {
                             Text("Clear Trash")
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateBlankQBookDialog(
+    viewModel: MainViewModel,
+    existingBookIds: Set<String>,
+    onDismiss: () -> Unit,
+    onCreated: (String) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var bookName by remember { mutableStateOf("") }
+    var randomDigits by remember { mutableIntStateOf((10000..99999).random()) }
+    var userEditedBookId by remember { mutableStateOf(false) }
+    var bookId by remember { mutableStateOf("QB#$randomDigits") }
+    var bookVersion by remember { mutableStateOf(viewModel.generateBlankBookVersion()) }
+    var hierarchyLevels by remember { mutableStateOf(listOf("Book", "Chapter", "Topic")) }
+    var defaultCategory by remember { mutableStateOf("") }
+    var defaultExam by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // Auto-update Book ID prefix as user types Book Name (unless user manually edited Book ID)
+    LaunchedEffect(bookName, randomDigits, userEditedBookId) {
+        if (!userEditedBookId) {
+            val prefix = bookName
+                .trim()
+                .split(Regex("\\s+"))
+                .filter { it.isNotBlank() }
+                .let { words ->
+                    if (words.size >= 2) {
+                        words.take(4).joinToString("") { w ->
+                            w.filter { it.isLetterOrDigit() }.take(1).uppercase()
+                        }
+                    } else {
+                        words.firstOrNull()?.filter { it.isLetterOrDigit() }?.take(4)?.uppercase() ?: ""
+                    }
+                }
+                .ifBlank { "QB" }
+            bookId = "$prefix#$randomDigits"
+        }
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 580.dp)
+                .padding(vertical = 12.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Create Blank QBook",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Configure metadata for your new blank .qbook for AI question extraction.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    OutlinedTextField(
+                        value = bookName,
+                        onValueChange = {
+                            bookName = it
+                            errorMessage = null
+                        },
+                        label = { Text("Book Name *") },
+                        placeholder = { Text("e.g. SSC Pinnacle GS") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = bookId,
+                            onValueChange = {
+                                userEditedBookId = true
+                                bookId = it
+                                errorMessage = null
+                            },
+                            label = { Text("Book ID (Auto / Custom) *") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = {
+                                userEditedBookId = false
+                                randomDigits = (10000..99999).random()
+                            }
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Regenerate Book ID")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = bookVersion,
+                            onValueChange = {
+                                bookVersion = it
+                                errorMessage = null
+                            },
+                            label = { Text("Version (Auto / Custom) *") },
+                            placeholder = { Text("e.g. Q1E1.0.0") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = {
+                                bookVersion = "Q1E1.0.${(0..9).random()}"
+                            }
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Regenerate Version")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Hierarchy Labels",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Used to organize extracted questions (e.g. Book > Chapter > Topic).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    hierarchyLevels.forEachIndexed { index, label ->
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = label,
+                                onValueChange = { updatedLabel ->
+                                    val mutable = hierarchyLevels.toMutableList()
+                                    mutable[index] = updatedLabel
+                                    hierarchyLevels = mutable
+                                },
+                                label = { Text("Level ${index + 1}") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (hierarchyLevels.size > 1) {
+                                IconButton(
+                                    onClick = {
+                                        val mutable = hierarchyLevels.toMutableList()
+                                        mutable.removeAt(index)
+                                        hierarchyLevels = mutable
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remove Level")
+                                }
+                            }
+                        }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            val nextNum = hierarchyLevels.size + 1
+                            val defaultNext = when (nextNum) {
+                                1 -> "Book"
+                                2 -> "Chapter"
+                                3 -> "Topic"
+                                4 -> "Subtopic"
+                                else -> "Level $nextNum"
+                            }
+                            hierarchyLevels = hierarchyLevels + defaultNext
+                        }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Hierarchy Level")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = defaultCategory,
+                        onValueChange = { defaultCategory = it },
+                        label = { Text("Default Category (Optional)") },
+                        placeholder = { Text("e.g. General Studies / Quant") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = defaultExam,
+                        onValueChange = { defaultExam = it },
+                        label = { Text("Default Exam Tag (Optional)") },
+                        placeholder = { Text("e.g. SSC CGL 2025") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (errorMessage != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val trimmedName = bookName.trim()
+                            val trimmedId = bookId.trim()
+                            val trimmedVersion = bookVersion.trim().ifBlank { "Q1E1.0.0" }
+                            val cleanedHierarchy = hierarchyLevels.map { it.trim() }.filter { it.isNotBlank() }
+
+                            when {
+                                trimmedName.isEmpty() -> {
+                                    errorMessage = "Please enter a Book Name."
+                                }
+                                trimmedId.isEmpty() -> {
+                                    errorMessage = "Please enter a valid Book ID."
+                                }
+                                existingBookIds.any { it.equals(trimmedId, ignoreCase = true) } -> {
+                                    errorMessage = "A book with ID '$trimmedId' already exists. Please modify or regenerate the ID."
+                                }
+                                cleanedHierarchy.isEmpty() -> {
+                                    errorMessage = "Please specify at least one Hierarchy Level."
+                                }
+                                else -> {
+                                    viewModel.createBlankQBook(
+                                        context = context,
+                                        bookName = trimmedName,
+                                        bookId = trimmedId,
+                                        bookVersion = trimmedVersion,
+                                        hierarchyLabels = cleanedHierarchy,
+                                        defaultCategory = defaultCategory,
+                                        defaultExam = defaultExam,
+                                        onCreated = onCreated
+                                    )
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Create Blank QBook")
                     }
                 }
             }

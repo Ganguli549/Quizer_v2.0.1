@@ -211,3 +211,186 @@ fun List<QuestionEntity>.resolveHeaders(): List<QuestionEntity> {
     }
     return resolved
 }
+
+const val TIMEOUT_SKIPPED_SENTINEL: Int = Int.MIN_VALUE
+
+/**
+ * Normalizes a list of option IDs from `correctOptionIds` (e.g. `["opt3", "ext0", "ext2", "opt0"]`),
+ * trimming whitespace and removing empty or duplicate entries.
+ */
+fun normalizeCorrectOptionIdsList(rawIds: List<String>?): List<String> {
+    if (rawIds.isNullOrEmpty()) return emptyList()
+    return rawIds
+        .flatMap { it.split(",") }
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
+        .distinct()
+}
+
+fun parseNormalizedCorrectOptionIds(rawCorrectIdsJson: String?): List<String> {
+    if (rawCorrectIdsJson.isNullOrBlank() || rawCorrectIdsJson == "[]") return emptyList()
+    return try {
+        val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+        val rawList = SharedGson.normal.fromJson<List<String>>(rawCorrectIdsJson, type) ?: emptyList()
+        normalizeCorrectOptionIdsList(rawList)
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+/**
+ * Resolves the option indices marked correct for this [QuestionEntity]:
+ * - Base options (`"opt0"`, `"opt1"`, ...) map to `0 until baseOptions.size`.
+ * - Extra options (`"ext0"`, `"ext1"`, ...) map to negative indices `-(extraIdx + 1)` (i.e. `-1, -2, ...`)
+ *   when [includeExtraOptions] is `true`.
+ */
+fun QuestionEntity.resolveCorrectIndices(includeExtraOptions: Boolean = false): Set<Int> {
+    val gson = SharedGson.normal
+    val normalizedIds = parseNormalizedCorrectOptionIds(this.advancedCorrectIds)
+    val advancedOpts: List<QBookOption> = try {
+        val type = object : com.google.gson.reflect.TypeToken<List<QBookOption>>() {}.type
+        gson.fromJson<List<QBookOption>>(this.advancedOptions ?: "[]", type) ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+    val baseOpts: List<String> = try {
+        val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+        gson.fromJson<List<String>>(this.options, type) ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+    val extraOpts: List<String> = if (includeExtraOptions && this.extraOptions.isNotBlank() && this.extraOptions != "[]") {
+        try {
+            val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+            gson.fromJson<List<String>>(this.extraOptions, type) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    } else {
+        emptyList()
+    }
+
+    val optionCount = if (advancedOpts.isNotEmpty()) advancedOpts.size else baseOpts.size
+    val resolved = LinkedHashSet<Int>()
+
+    for (rawId in normalizedIds) {
+        val id = rawId.trim()
+        // 1. Exact match in advancedOptions by id (e.g. "opt0", "opt3")
+        val advIdx = advancedOpts.indexOfFirst { it.id.equals(id, ignoreCase = true) }
+        if (advIdx != -1) {
+            resolved.add(advIdx)
+            continue
+        }
+        // 2. Match "opt0", "opt1", ...
+        if (id.startsWith("opt", ignoreCase = true)) {
+            val idx = id.substring(3).trim().toIntOrNull()
+            if (idx != null && idx in 0 until optionCount) {
+                resolved.add(idx)
+                continue
+            }
+        }
+        // 3. Match extraOptions IDs ("ext0", "ext1", ... or legacy "E0", "E1") when includeExtraOptions == true
+        if (includeExtraOptions && extraOpts.isNotEmpty()) {
+            val extIdx = when {
+                id.startsWith("ext", ignoreCase = true) -> id.substring(3).trim().toIntOrNull()
+                id.startsWith("E", ignoreCase = true) -> id.substring(1).trim().toIntOrNull()
+                else -> null
+            }
+            if (extIdx != null && extIdx in extraOpts.indices) {
+                resolved.add(-(extIdx + 1))
+                continue
+            }
+        }
+        // 4. Match single letter "A", "B", "C", "D" ...
+        if (id.length == 1 && id[0].uppercaseChar() in 'A'..'Z') {
+            val idx = id[0].uppercaseChar() - 'A'
+            if (idx in 0 until optionCount) {
+                resolved.add(idx)
+                continue
+            }
+        }
+        // 5. Match direct 0-based integer string "0", "1", ...
+        val numIdx = id.toIntOrNull()
+        if (numIdx != null && numIdx in 0 until optionCount) {
+            resolved.add(numIdx)
+            continue
+        }
+    }
+
+    if (resolved.isEmpty()) {
+        val fallback = if (optionCount > 0) this.correctIndex.coerceIn(0, optionCount - 1) else this.correctIndex.coerceAtLeast(0)
+        resolved.add(fallback)
+    }
+    return resolved
+}
+
+/**
+ * Returns true if the question is marked `multipleCorrect` OR has more than 1 resolved correct option.
+ */
+fun QuestionEntity.isEffectivelyMultipleCorrect(includeExtraOptions: Boolean = false): Boolean {
+    return this.multipleCorrect || this.resolveCorrectIndices(includeExtraOptions).size > 1
+}
+
+/**
+ * Builds the list of `(originalOptionIndex, optionText)` pairs to display in `QuizScreen`:
+ * 1. If `useDistractors` is ON and `shuffleOptions` is OFF (only dynamic distractors enabled):
+ *    shows ALL options (`baseOptions + extraOptions`) and shuffles them!
+ * 2. If `shuffleOptions` is ON (with or without `useDistractors`):
+ *    shuffles the candidate options, caps to 4 options, and guarantees AT LEAST ONE correct option
+ *    is included in those 4 options.
+ *    - If 1 correct option lands in those 4 options, `displayedCorrectIndices.size == 1` (normal single-correct quiz).
+ *    - If 2+ correct options land in those 4 options, `displayedCorrectIndices.size > 1` (multiple-correct quiz).
+ */
+fun QuestionEntity.buildQuizDisplayOptions(
+    useDistractors: Boolean,
+    shuffleOptions: Boolean,
+    sessionSeed: Long
+): List<Pair<Int, String>> {
+    val baseOptions = try {
+        SharedGson.normal.fromJson(this.options, Array<String>::class.java)?.toList() ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+    var finalOptions = baseOptions.mapIndexed { idx, text -> Pair(idx, text) }
+
+    val hasExtras = useDistractors && this.extraOptions.isNotBlank() && this.extraOptions != "[]"
+    if (hasExtras) {
+        try {
+            val extras = SharedGson.normal.fromJson(this.extraOptions, Array<String>::class.java)?.toList() ?: emptyList()
+            val extraPairs = extras.mapIndexed { idx, txt -> Pair(-(idx + 1), txt) }
+            finalOptions = finalOptions + extraPairs
+        } catch (_: Exception) {}
+    }
+
+    val stableSeed = sessionSeed + this.id
+    val rng = kotlin.random.Random(stableSeed)
+
+    if (shuffleOptions) {
+        val allCorrectIndices = this.resolveCorrectIndices(includeExtraOptions = useDistractors)
+        val correctOpts = finalOptions.filter { allCorrectIndices.contains(it.first) }
+        var mutableList = finalOptions.toMutableList()
+        mutableList.shuffle(rng)
+
+        if (mutableList.size > 4) {
+            val selected = mutableList.take(4).toMutableList()
+            val hasAtLeastOneCorrect = selected.any { allCorrectIndices.contains(it.first) }
+
+            if (!hasAtLeastOneCorrect && correctOpts.isNotEmpty()) {
+                // Guarantee at least 1 correct option is present in the 4 options
+                val pickedCorrect = correctOpts.random(kotlin.random.Random(stableSeed xor 0x5DEECE66DL))
+                selected[selected.lastIndex] = pickedCorrect
+                selected.shuffle(kotlin.random.Random(stableSeed + 31L))
+            }
+            mutableList = selected
+        }
+        finalOptions = mutableList
+    } else if (hasExtras) {
+        // Requirement 3: When ONLY dynamic distractors is enabled (shuffleOptions is disabled),
+        // show all options (base + distractors) and shuffle them!
+        val mutableList = finalOptions.toMutableList()
+        mutableList.shuffle(rng)
+        finalOptions = mutableList
+    }
+
+    return finalOptions
+}

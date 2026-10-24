@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -171,6 +172,7 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
                         .clickable { viewModel.playToggle(); viewModel.updateIsMatteMode(!isMatteMode) },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -203,10 +205,13 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
                 
                 Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                autoSaveEnabled = !autoSaveEnabled
-                                com.example.data.SecurePrefs.get(context).edit().putBoolean("auto_save_enabled", autoSaveEnabled).apply()
-                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                .clickable {
+                                    autoSaveEnabled = !autoSaveEnabled
+                                    com.example.data.SecurePrefs.get(context).edit().putBoolean("auto_save_enabled", autoSaveEnabled).apply()
+                                },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
@@ -457,10 +462,12 @@ fun SettingsScreen(viewModel: MainViewModel, onBack: () -> Unit, onNavigateToAiS
                 val context = androidx.compose.ui.platform.LocalContext.current
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { 
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/+GpXtyE2KkvI3MWQ1"))
-                        context.startActivity(intent)
-                    }
+                    modifier = Modifier
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                        .clickable { 
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/+GpXtyE2KkvI3MWQ1"))
+                            context.startActivity(intent)
+                        }
                 ) {
                     Text(
                         text = "Join: ",

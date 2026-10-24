@@ -39,24 +39,53 @@ suspend fun exportQBook(context: Context, repository: QuizRepository, bookId: St
             
             val qBookQuestions = questions.map { q ->
                 val typeOptionList = object : com.google.gson.reflect.TypeToken<List<QBookOption>>() {}.type
-                val typeStringList = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
                 val extraStrType = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
-                
+
                 var extraOpts: List<QBookOption>? = null
                 try {
                     val extras = gson.fromJson<List<String>>(q.extraOptions, extraStrType)
                     if (extras != null && extras.isNotEmpty()) {
-                        extraOpts = extras.mapIndexed { idx, txt -> QBookOption(id = "E\$idx", text = txt) }
+                        extraOpts = extras.mapIndexed { idx, txt -> QBookOption(id = "ext$idx", text = txt) }
                     }
-                } catch(e: Exception){}
-                
+                } catch (e: Exception) {}
+
+                val parsedAdvOptions = try {
+                    gson.fromJson<List<QBookOption>>(q.advancedOptions ?: "[]", typeOptionList)
+                } catch (_: Exception) { null }
+                val finalOptions = if (!parsedAdvOptions.isNullOrEmpty()) {
+                    parsedAdvOptions
+                } else {
+                    val legacyOpts = try {
+                        gson.fromJson<List<String>>(q.options, extraStrType) ?: emptyList()
+                    } catch (_: Exception) { emptyList() }
+                    legacyOpts.mapIndexed { idx, txt -> QBookOption(id = "opt$idx", text = txt) }
+                }
+
+                val normalizedCorrectIds = parseNormalizedCorrectOptionIds(q.advancedCorrectIds).ifEmpty {
+                    listOfNotNull(finalOptions.getOrNull(q.correctIndex)?.id)
+                }
+
                 QBookQuestion(
                     id = q.id,
-                    header = if (q.questionHeader != null) { val raw = q.questionHeader; if (raw.trim().startsWith("{")) { try { gson.fromJson(raw, QBookHeader::class.java) } catch(e: Exception) { QBookHeader(startId = q.id, endId = q.id, text = raw) } } else { QBookHeader(startId = q.id, endId = q.id, text = raw) } } else null,
-                    question = QBookQuestionDetails(text = q.question, image = q.img, format = q.format, table = if (q.tableData != null) gson.fromJson(q.tableData, object : com.google.gson.reflect.TypeToken<List<List<String>>>() {}.type) else null, bottomText = q.bottomText),
-                    options = gson.fromJson(q.advancedOptions ?: "[]", typeOptionList) ?: emptyList(),
+                    header = if (q.questionHeader != null) {
+                        val raw = q.questionHeader
+                        if (raw.trim().startsWith("{")) {
+                            try { gson.fromJson(raw, QBookHeader::class.java) } catch (e: Exception) { QBookHeader(startId = q.id, endId = q.id, text = raw) }
+                        } else {
+                            QBookHeader(startId = q.id, endId = q.id, text = raw)
+                        }
+                    } else null,
+                    question = QBookQuestionDetails(
+                        text = q.question,
+                        image = q.img,
+                        format = q.format,
+                        table = if (q.tableData != null) gson.fromJson(q.tableData, object : com.google.gson.reflect.TypeToken<List<List<String>>>() {}.type) else null,
+                        bottomText = q.bottomText
+                    ),
+                    options = finalOptions,
                     extraOptions = extraOpts,
-                    correctOptionIds = gson.fromJson(q.advancedCorrectIds ?: "[]", typeStringList) ?: emptyList(),
+                    correctOptionIds = normalizedCorrectIds,
+                    multipleCorrect = q.isEffectivelyMultipleCorrect(includeExtraOptions = true),
                     explanation = QBookExplanation(
                         brief = q.explanation,
                         detailed = q.detailedExplanation ?: "",

@@ -1,4 +1,5 @@
 package com.example.ui.screens
+import com.example.data.*
 import androidx.compose.material.icons.filled.Timer
 
 import androidx.compose.foundation.layout.*
@@ -75,9 +76,25 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
             }
             
 
-            val questionTimes = try {
-                gson.fromJson<List<Long>>(lastResult.activeQuizData, object : TypeToken<List<Long>>() {}.type) ?: emptyList()
-            } catch(e: Exception) { emptyList() }
+            val (questionTimes, displayedOptionsPerQuestion) = androidx.compose.runtime.remember(lastResult.activeQuizData) {
+                try {
+                    val trimmed = lastResult.activeQuizData.trim()
+                    if (trimmed.startsWith("{")) {
+                        val mapType = object : TypeToken<Map<String, Any?>>() {}.type
+                        val map: Map<String, Any?> = gson.fromJson(trimmed, mapType)
+                        val times = (map["times"] as? List<*>)?.mapNotNull { (it as? Number)?.toLong() } ?: emptyList()
+                        val disp = (map["displayedOptions"] as? List<*>)?.map { row ->
+                            (row as? List<*>)?.mapNotNull { (it as? Number)?.toInt() } ?: emptyList()
+                        } ?: emptyList()
+                        Pair(times, disp)
+                    } else {
+                        val times = gson.fromJson<List<Long>>(trimmed, object : TypeToken<List<Long>>() {}.type) ?: emptyList()
+                        Pair(times, emptyList<List<Int>>())
+                    }
+                } catch (e: Exception) {
+                    Pair(emptyList<Long>(), emptyList<List<Int>>())
+                }
+            }
             val filters = listOf("All", "Correct", "Wrong", "Skipped", "Bookmarked")
             ScrollableTabRow(
                 selectedTabIndex = filters.indexOf(filter).coerceAtLeast(0),
@@ -96,7 +113,7 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
             val bookmarks by viewModel.bookmarks.collectAsState()
             val bookmarkedIds = bookmarks.map { it.questionId }.toSet()
 
-            val reviewItems = androidx.compose.runtime.remember(questionIds, allQuestions, filter, userAnswers, bookmarkedIds, questionTimes) {
+            val reviewItems = androidx.compose.runtime.remember(questionIds, allQuestions, filter, userAnswers, bookmarkedIds, questionTimes, displayedOptionsPerQuestion) {
                 val list = mutableListOf<Any>()
                 var currentHeader: String? = null
                 
@@ -105,17 +122,16 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                     if (q != null) index to q else null
                 }.map { (index, q) ->
                     val userAnswerSet = userAnswers.getOrNull(index) ?: emptySet()
-                    val correctIndices = run {
-                        val correctIds = gson.fromJson<List<String>>(q.advancedCorrectIds ?: "[]", object : com.google.gson.reflect.TypeToken<List<String>>() {}.type) ?: emptyList()
-                        val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(q.advancedOptions ?: "[]", object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type) ?: emptyList()
-                        if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                            correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                        } else {
-                            setOf(q.correctIndex)
-                        }
+                    val dispIndicesForQ = displayedOptionsPerQuestion.getOrNull(index) ?: emptyList()
+                    val allCorrectIndices = q.resolveCorrectIndices(includeExtraOptions = true)
+                    val baseCorrectIndices = q.resolveCorrectIndices(includeExtraOptions = false)
+                    val correctIndices = if (dispIndicesForQ.isNotEmpty()) {
+                        allCorrectIndices.intersect(dispIndicesForQ.toSet()).ifEmpty { baseCorrectIndices }
+                    } else {
+                        if (userAnswerSet.any { it < 0 && it != com.example.data.TIMEOUT_SKIPPED_SENTINEL }) allCorrectIndices else baseCorrectIndices
                     }
-                    val isSkipped = userAnswerSet.isEmpty() || userAnswerSet.contains(-1)
-                    val isCorrect = userAnswerSet == correctIndices
+                    val isSkipped = userAnswerSet.isEmpty() || userAnswerSet.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL)
+                    val isCorrect = !isSkipped && userAnswerSet == correctIndices
                     val isWrong = !isSkipped && !isCorrect
                     val isBookmarked = bookmarkedIds.contains(q.id)
                     val show = when (filter) {
@@ -127,7 +143,21 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                         else -> true
                     }
                     val qTimeMs = questionTimes.getOrNull(index) ?: 0L
-                    Triple(index, q, mapOf("show" to show, "isCorrect" to isCorrect, "isSkipped" to isSkipped, "isWrong" to isWrong, "isBookmarked" to isBookmarked, "qTimeMs" to qTimeMs, "correctIndices" to correctIndices, "userAnswerSet" to userAnswerSet))
+                    Triple(
+                        index,
+                        q,
+                        mapOf(
+                            "show" to show,
+                            "isCorrect" to isCorrect,
+                            "isSkipped" to isSkipped,
+                            "isWrong" to isWrong,
+                            "isBookmarked" to isBookmarked,
+                            "qTimeMs" to qTimeMs,
+                            "correctIndices" to correctIndices,
+                            "userAnswerSet" to userAnswerSet,
+                            "dispIndices" to dispIndicesForQ
+                        )
+                    )
                 }
 
                 var i = 0
@@ -327,46 +357,68 @@ fun ReviewScreen(viewModel: MainViewModel, onHome: () -> Unit) {
                                 
                                 Spacer(modifier = Modifier.height(12.dp))
                                 
-                                val displayOptions = androidx.compose.runtime.remember(question.id) {
-                                    try {
-                                        com.example.data.SharedGson.normal.fromJson<List<String>>(question.options, object : com.google.gson.reflect.TypeToken<List<String>>() {}.type) ?: emptyList()
+                                @Suppress("UNCHECKED_CAST")
+                                val dispIndicesForQ = (data["dispIndices"] as? List<Int>).orEmpty()
+
+                                val displayOptions = androidx.compose.runtime.remember(question.id, dispIndicesForQ, userAnswerSet, correctIndices) {
+                                    val baseOpts = try {
+                                        com.example.data.SharedGson.normal.fromJson<List<String>>(
+                                            question.options,
+                                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                                        )?.mapIndexed { idx, txt -> Pair(idx, txt) } ?: emptyList()
                                     } catch (e: Exception) { emptyList() }
+
+                                    val extraOpts = try {
+                                        com.example.data.SharedGson.normal.fromJson<List<String>>(
+                                            question.extraOptions,
+                                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                                        )?.mapIndexed { idx, txt -> Pair(-(idx + 1), txt) } ?: emptyList()
+                                    } catch (e: Exception) { emptyList() }
+
+                                    val allMap = (baseOpts + extraOpts).toMap()
+                                    if (dispIndicesForQ.isNotEmpty()) {
+                                        dispIndicesForQ.mapNotNull { origIdx -> allMap[origIdx]?.let { Pair(origIdx, it) } }
+                                    } else {
+                                        val relevantExtras = extraOpts.filter { (negIdx, _) ->
+                                            userAnswerSet.contains(negIdx) || correctIndices.contains(negIdx)
+                                        }
+                                        baseOpts + relevantExtras
+                                    }
                                 }
-                                
-                                displayOptions.forEachIndexed { optIndex, opt ->
+
+                                displayOptions.forEachIndexed { displayIdx, (optIndex, opt) ->
                                     val isThisUserAnswer = userAnswerSet.contains(optIndex)
                                     val isThisCorrectAnswer = correctIndices.contains(optIndex)
-                                    
-                                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        val icon = if (isThisUserAnswer && isThisCorrectAnswer) {
-                                            Icons.Filled.CheckCircle
-                                        } else if (isThisUserAnswer && !isThisCorrectAnswer) {
-                                            Icons.Filled.Cancel
-                                        } else if (!isThisUserAnswer && isThisCorrectAnswer) {
-                                            Icons.Filled.CheckCircle
-                                        } else {
-                                            null
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val icon = when {
+                                            isThisUserAnswer && isThisCorrectAnswer -> Icons.Filled.CheckCircle
+                                            isThisUserAnswer && !isThisCorrectAnswer -> Icons.Filled.Cancel
+                                            !isThisUserAnswer && isThisCorrectAnswer -> Icons.Filled.CheckCircle
+                                            else -> null
                                         }
-                                        
-                                        val tint = if (isThisCorrectAnswer) Color(0xFF16A34A) else if (isThisUserAnswer) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurfaceVariant
-                                        
-                                        val iconDesc = if (isThisUserAnswer && isThisCorrectAnswer) {
-                                            "Correct Answer"
-                                        } else if (isThisUserAnswer && !isThisCorrectAnswer) {
-                                            "Your Wrong Answer"
-                                        } else if (!isThisUserAnswer && isThisCorrectAnswer) {
-                                            "Correct Answer"
-                                        } else {
-                                            null
+
+                                        val tint = when {
+                                            isThisCorrectAnswer -> Color(0xFF16A34A)
+                                            isThisUserAnswer -> Color(0xFFDC2626)
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
                                         }
+
                                         if (icon != null) {
-                                            Icon(imageVector = icon, contentDescription = iconDesc, tint = tint, modifier = Modifier.size(20.dp))
+                                            Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
                                         } else {
                                             Spacer(modifier = Modifier.width(28.dp))
                                         }
-                                        
-                                        Text("${(65 + optIndex).toChar()}. ", fontWeight = if (isThisCorrectAnswer || isThisUserAnswer) FontWeight.Bold else FontWeight.Normal, color = tint)
+
+                                        Text(
+                                            text = "${(65 + displayIdx).toChar()}. ",
+                                            fontWeight = if (isThisCorrectAnswer || isThisUserAnswer) FontWeight.Bold else FontWeight.Normal,
+                                            color = tint
+                                        )
                                         com.example.ui.components.SmartRichText(text = opt, color = tint)
                                     }
                                 }

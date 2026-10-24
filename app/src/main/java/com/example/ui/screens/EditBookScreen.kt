@@ -1,13 +1,16 @@
 package com.example.ui.screens
+import com.example.data.*
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.Send
 import com.example.ui.components.AiAssistantBottomSheet
+import androidx.compose.ui.text.font.FontWeight
 
 
 import android.net.Uri
@@ -172,8 +175,9 @@ fun EditBookScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         
         floatingActionButton = {
-            val pending = viewModel.pendingUpdates.collectAsState().value[currentBookId]
-            val isAiProcessing = viewModel.aiProcessingStatus.collectAsState().value[currentBookId] != null
+            val editChatContextId = "${currentBookId}_edit"
+            val pending = viewModel.pendingUpdates.collectAsState().value[editChatContextId]
+            val isAiProcessing = viewModel.aiProcessingStatus.collectAsState().value[editChatContextId] != null
             BadgedBox(
                 badge = {
                     if (isAiProcessing) {
@@ -295,17 +299,48 @@ fun EditBookScreen(
         com.example.ui.components.ResponsiveContainer(modifier = Modifier.padding(padding)) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val totalItems = questions.size
-            LazyColumn(
-                state = listState,
-                contentPadding = PaddingValues(vertical = 8.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(items = questions.sortedBy { it.id }, key = { it.globalId }) { question ->
-                    EditQuestionItem(
-                        question = question,
-                        isHighlighted = (question.id == highlightedQuestionId),
-                        onClick = { selectedQuestion = question }
-                    )
+            if (totalItems == 0) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "This QBook has no questions yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap the Sparkle AI button below, attach a PDF, image, or text document (+), and ask AI to extract questions into this book.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(items = questions.sortedBy { it.id }, key = { it.globalId }) { question ->
+                        EditQuestionItem(
+                            question = question,
+                            isHighlighted = (question.id == highlightedQuestionId),
+                            onClick = { selectedQuestion = question }
+                        )
+                    }
                 }
             }
             
@@ -366,7 +401,8 @@ fun EditBookScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .offset { IntOffset(16.dp.toPx().toInt(), thumbY.toInt()) }
+                            .align(androidx.compose.ui.Alignment.CenterEnd)
+                            .offset { IntOffset(0, thumbY.toInt()) }
                             .size(6.dp, thumbHeight)
                             .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp))
                     )
@@ -387,9 +423,18 @@ fun EditBookScreen(
                 onNavigateToUsage = onNavigateToUsage,
                 onQuestionsUpdated = { updatedQuestions ->
                     coroutineScope.launch(Dispatchers.IO) {
-                        viewModel.repository.insertQuestions(updatedQuestions)
+                        val normalized = updatedQuestions.map { q ->
+                            if (currentBookId.isNotBlank() && q.bookId != currentBookId) {
+                                q.copy(bookId = currentBookId)
+                            } else q
+                        }
+                        viewModel.repository.insertQuestions(normalized)
+                        viewModel.repository.updateBookStats(currentBookId)
                         loadQuestions()
-                        autoSaveBook("AI Updated ${updatedQuestions.size} questions")
+                        autoSaveBook("AI Updated ${normalized.size} questions")
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            viewModel.selectBook(currentBookId, forceRefresh = true)
+                        }
                     }
                 },
                 onQuestionsDeleted = { deletedQuestions ->
@@ -701,7 +746,16 @@ fun EditQuestionDialog(
     var qExplanationTable by remember { mutableStateOf(if (question.explanationTable?.trim()?.equals("null", ignoreCase = true) == true) "" else question.explanationTable ?: "") }
     var qOptions by remember { mutableStateOf(question.options) }
     var qExtraOptions by remember { mutableStateOf(question.extraOptions) }
-    var qCorrectIndex by remember { mutableStateOf(question.correctIndex.toString()) }
+    val initialCorrectIdsList = remember(question) {
+        val parsed = com.example.data.parseNormalizedCorrectOptionIds(question.advancedCorrectIds)
+        if (parsed.isNotEmpty()) parsed else listOf("opt${question.correctIndex.coerceAtLeast(0)}")
+    }
+    var qCorrectOptionIdsText by remember(question.id) {
+        mutableStateOf(initialCorrectIdsList.joinToString(", "))
+    }
+    var qMultipleCorrect by remember(question.id) {
+        mutableStateOf(question.isEffectivelyMultipleCorrect(includeExtraOptions = true))
+    }
     var qImg by remember { mutableStateOf(question.img ?: "") }
     var qExplanationImage by remember { mutableStateOf(question.explanationImage ?: "") }
     var showAiAssistant by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -819,11 +873,18 @@ fun EditQuestionDialog(
 
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val view = androidx.compose.ui.platform.LocalView.current
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = {
-            keyboardController?.hide()
-            focusManager.clearFocus()
+            try {
+                if (view.windowToken != null) {
+                    keyboardController?.hide()
+                }
+            } catch (_: Exception) {}
+            try {
+                focusManager.clearFocus()
+            } catch (_: Exception) {}
             onDismiss()
         },
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -861,16 +922,35 @@ fun EditQuestionDialog(
                         val legacyOptions = androidx.compose.runtime.remember(qOptions) {
                             val gson = com.example.data.SharedGson.normal
                             val strOptionsType = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
-                            try { gson.fromJson<List<String>>(qOptions, strOptionsType) ?: emptyList() } catch(e: Exception) { emptyList() }
+                            try { gson.fromJson<List<String>>(qOptions, strOptionsType) ?: emptyList() } catch (e: Exception) { emptyList() }
                         }
-                        
-                        val advancedList = legacyOptions.mapIndexed { idx, txt -> 
-                            com.example.data.QBookOption(id = ('A' + idx).toString(), text = txt)
+
+                        val advancedList = legacyOptions.mapIndexed { idx, txt ->
+                            com.example.data.QBookOption(id = "opt$idx", text = txt)
                         }
-                        
-                        val correctIndex = qCorrectIndex.toIntOrNull() ?: 0
-                        val correctIds = if (correctIndex in advancedList.indices) listOf(advancedList[correctIndex].id) else emptyList()
-                        
+
+                        val normalizedCorrectIds: List<String> = qCorrectOptionIdsText
+                            .split(",")
+                            .mapNotNull { token ->
+                                val t = token.trim()
+                                when {
+                                    t.isEmpty() -> null
+                                    t.startsWith("opt", ignoreCase = true) -> "opt${t.substring(3).trim()}"
+                                    t.startsWith("ext", ignoreCase = true) -> "ext${t.substring(3).trim()}"
+                                    t.length == 1 && t[0].uppercaseChar() in 'A'..'Z' -> "opt${t[0].uppercaseChar() - 'A'}"
+                                    t.toIntOrNull() != null -> "opt${t.toInt()}"
+                                    else -> t
+                                }
+                            }
+                            .distinct()
+                            .ifEmpty { listOf("opt0") }
+
+                        val primaryCorrectIndex = normalizedCorrectIds.firstNotNullOfOrNull { cid ->
+                            if (cid.startsWith("opt")) cid.removePrefix("opt").toIntOrNull()?.takeIf { it in advancedList.indices } else null
+                        } ?: 0
+
+                        val effectiveMultiCorrect = qMultipleCorrect || normalizedCorrectIds.size > 1
+
                         val updated = question.copy(
                             question = qText,
                             format = qFormat.takeIf { it.isNotBlank() },
@@ -878,14 +958,15 @@ fun EditQuestionDialog(
                             bottomText = qBottomText.takeIf { it.isNotBlank() },
                             options = qOptions,
                             extraOptions = qExtraOptions,
-                            correctIndex = correctIndex,
+                            correctIndex = primaryCorrectIndex,
+                            multipleCorrect = effectiveMultiCorrect,
                             explanation = qExplanation.trim().takeIf { !it.equals("null", ignoreCase = true) } ?: "",
                             detailedExplanation = qDetailedExplanation.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             questionHeader = qHeader.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             img = qImg.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             explanationImage = qExplanationImage.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             advancedOptions = com.example.data.SharedGson.normal.toJson(advancedList),
-                            advancedCorrectIds = com.example.data.SharedGson.normal.toJson(correctIds),
+                            advancedCorrectIds = com.example.data.SharedGson.normal.toJson(normalizedCorrectIds),
                             exams = qExams.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) && it != "[]" },
                             explanationTable = qExplanationTable.trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                             exam = qExam.trim().takeIf { !it.equals("null", ignoreCase = true) } ?: "",
@@ -986,11 +1067,126 @@ fun EditQuestionDialog(
                     label = "Extra Options (JSON string array)",
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                val currentOptionCount = androidx.compose.runtime.remember(qOptions) {
+                    try {
+                        val strOptionsType = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                        (com.example.data.SharedGson.normal.fromJson<List<String>>(qOptions, strOptionsType) ?: emptyList()).size
+                    } catch (_: Exception) { 4 }
+                }.coerceAtLeast(1)
+
+                val currentExtraOptionCount = androidx.compose.runtime.remember(qExtraOptions) {
+                    try {
+                        val strOptionsType = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                        (com.example.data.SharedGson.normal.fromJson<List<String>>(qExtraOptions, strOptionsType) ?: emptyList()).size
+                    } catch (_: Exception) { 0 }
+                }
+
+                val activeIdsList = androidx.compose.runtime.remember(qCorrectOptionIdsText) {
+                    qCorrectOptionIdsText.split(",")
+                        .mapNotNull { token ->
+                            val t = token.trim()
+                            when {
+                                t.isEmpty() -> null
+                                t.startsWith("opt", ignoreCase = true) -> "opt${t.substring(3).trim()}"
+                                t.startsWith("ext", ignoreCase = true) -> "ext${t.substring(3).trim()}"
+                                t.length == 1 && t[0].uppercaseChar() in 'A'..'Z' -> "opt${t[0].uppercaseChar() - 'A'}"
+                                t.toIntOrNull() != null -> "opt${t.toInt()}"
+                                else -> t
+                            }
+                        }
+                        .distinct()
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Multiple Correct Answers", style = MaterialTheme.typography.bodyMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                    Switch(
+                        checked = qMultipleCorrect || activeIdsList.size > 1,
+                        onCheckedChange = { enabled ->
+                            qMultipleCorrect = enabled
+                            if (!enabled && activeIdsList.size > 1) {
+                                val firstBase = activeIdsList.firstOrNull { it.startsWith("opt") } ?: "opt0"
+                                qCorrectOptionIdsText = firstBase
+                            }
+                        }
+                    )
+                }
+
+                Text(
+                    text = "Tap correct base option(s):",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (idx in 0 until currentOptionCount) {
+                        val optId = "opt$idx"
+                        val isSelected = activeIdsList.contains(optId)
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                val updated = if (qMultipleCorrect || activeIdsList.size > 1) {
+                                    if (isSelected && activeIdsList.size > 1) activeIdsList - optId else activeIdsList + optId
+                                } else {
+                                    listOf(optId)
+                                }
+                                qCorrectOptionIdsText = updated.joinToString(", ")
+                                if (updated.size > 1) qMultipleCorrect = true
+                            },
+                            label = { Text("${(65 + idx).toChar()} ($optId)") }
+                        )
+                    }
+                }
+
+                if (currentExtraOptionCount > 0) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tap correct extra option(s) (ext0..ext${currentExtraOptionCount - 1}):",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        for (extIdx in 0 until currentExtraOptionCount) {
+                            val extId = "ext$extIdx"
+                            val isSelected = activeIdsList.contains(extId)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    val updated = if (isSelected && activeIdsList.size > 1) {
+                                        activeIdsList - extId
+                                    } else {
+                                        activeIdsList + extId
+                                    }
+                                    qCorrectOptionIdsText = updated.joinToString(", ")
+                                    if (updated.size > 1) qMultipleCorrect = true
+                                },
+                                label = { Text(extId) }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
-                    value = qCorrectIndex,
-                    onValueChange = { qCorrectIndex = it },
-                    label = { Text("Correct Index (0-based)") },
+                    value = qCorrectOptionIdsText,
+                    onValueChange = {
+                        qCorrectOptionIdsText = it
+                        val count = it.split(",").mapNotNull { s -> s.trim().takeIf { c -> c.isNotEmpty() } }.size
+                        if (count > 1) qMultipleCorrect = true
+                    },
+                    label = { Text("Correct Option IDs (e.g. opt3, ext0, ext2, opt0 or 0, 3)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1345,7 +1541,7 @@ fun EditQuestionItem(question: QuestionEntity, isHighlighted: Boolean = false, o
                 } else Modifier
             ),
         colors = CardDefaults.cardColors(
-            containerColor = if (isHighlighted) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface
+            containerColor = if (isHighlighted) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f).compositeOver(MaterialTheme.colorScheme.surface) else MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isHighlighted) 4.dp else 2.dp)
     ) {
@@ -1454,13 +1650,25 @@ fun EditQuestionItem(question: QuestionEntity, isHighlighted: Boolean = false, o
                     }
                 }
             }
+            val correctIndices = remember(question) {
+                question.resolveCorrectIndices(includeExtraOptions = false)
+            }
             if (optionsList.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Column {
                     optionsList.forEachIndexed { idx, opt ->
-                        Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                            Text("${(65 + idx).toChar()}. ", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                            com.example.ui.components.SmartRichText(text = opt, color = MaterialTheme.colorScheme.onSurface)
+                        val isCorrect = correctIndices.contains(idx)
+                        val optColor = if (isCorrect) androidx.compose.ui.graphics.Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurface
+                        Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${(65 + idx).toChar()}. ",
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                color = optColor
+                            )
+                            com.example.ui.components.SmartRichText(
+                                text = opt,
+                                color = optColor
+                            )
                         }
                     }
                 }

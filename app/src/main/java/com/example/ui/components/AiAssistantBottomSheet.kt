@@ -1,4 +1,5 @@
 package com.example.ui.components
+import com.example.data.*
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -348,8 +349,20 @@ fun AiAssistantBottomSheet(
         }
     }
 
+    val currentView = androidx.compose.ui.platform.LocalView.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     val closeSheetAnim: () -> Unit = {
+        try {
+            if (currentView.windowToken != null) {
+                keyboardController?.hide()
+            }
+        } catch (_: Exception) {}
+        try {
+            focusManager.clearFocus()
+        } catch (_: Exception) {}
         coroutineScope.launch {
             try {
                 sheetState.hide()
@@ -526,8 +539,11 @@ fun AiAssistantBottomSheet(
             val latestAiMessage = remember(chatHistory) { chatHistory.findLast { it.role != "user" } }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp)
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp)),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp)
             ) {
                 if (chatHistory.isEmpty()) {
                     item {
@@ -544,6 +560,11 @@ fun AiAssistantBottomSheet(
                     val isLatestAi = !isUser && (msg == latestAiMessage)
                     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
                     val maxBubbleWidth = configuration.screenWidthDp.dp * 0.85f
+                    val bubbleShape = if (isUser) {
+                        RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp)
+                    } else {
+                        RoundedCornerShape(18.dp, 18.dp, 18.dp, 6.dp)
+                    }
 
                     Row(
                         modifier = Modifier
@@ -553,7 +574,11 @@ fun AiAssistantBottomSheet(
                     ) {
                         Column(
                             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-                            modifier = if (isUser) Modifier.widthIn(max = maxBubbleWidth).wrapContentWidth() else Modifier.fillMaxWidth().padding(end = 8.dp)
+                            modifier = if (isUser) {
+                                Modifier.widthIn(max = maxBubbleWidth).wrapContentWidth()
+                            } else {
+                                Modifier.fillMaxWidth()
+                            }
                         ) {
                             val sheetBg = MaterialTheme.colorScheme.surface
                             val onSurf = MaterialTheme.colorScheme.onSurface
@@ -568,29 +593,29 @@ fun AiAssistantBottomSheet(
                             }
 
                             val aiBorderColor = run {
-                                val outlineVariant = MaterialTheme.colorScheme.outlineVariant
                                 val outline = MaterialTheme.colorScheme.outline
                                 if (isDark) {
-                                    outline.copy(alpha = 0.25f)
+                                    outline.copy(alpha = 0.22f)
                                 } else {
-                                    outline.copy(alpha = 0.15f)
+                                    outline.copy(alpha = 0.14f)
                                 }
                             }
 
                             Box(
                                 modifier = Modifier
+                                    .clip(bubbleShape)
                                     .then(
                                         if (!isUser) {
                                             Modifier.border(
                                                 width = 1.dp,
                                                 color = aiBorderColor,
-                                                shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
+                                                shape = bubbleShape
                                             )
                                         } else Modifier
                                     )
                                     .background(
                                         color = if (isUser) MaterialTheme.colorScheme.primary else aiBubbleColor,
-                                        shape = if (isUser) RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
+                                        shape = bubbleShape
                                     )
                                     .padding(horizontal = 16.dp, vertical = 12.dp)
                             ) {
@@ -793,6 +818,20 @@ fun AiAssistantBottomSheet(
                                                     }
                                                 }
                                                 Text("Q${pending.updatedQuestion.id}: ${pending.updatedQuestion.question.take(60)}...", fontWeight = FontWeight.Bold)
+                                                val correctIdsPreview = remember(pending.updatedQuestion.advancedCorrectIds, pending.updatedQuestion.correctIndex) {
+                                                    com.example.data.parseNormalizedCorrectOptionIds(pending.updatedQuestion.advancedCorrectIds)
+                                                        .ifEmpty { listOf("opt${pending.updatedQuestion.correctIndex}") }
+                                                }
+                                                Text(
+                                                    text = buildString {
+                                                        append("Correct: ${correctIdsPreview.joinToString(", ")}")
+                                                        if (pending.updatedQuestion.multipleCorrect || correctIdsPreview.size > 1) {
+                                                            append(" • Multi-Correct")
+                                                        }
+                                                    },
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
                                             }
                                             TextButton(onClick = { editingPendingQuestion = pending }) {
                                                 Text("Review")
@@ -878,7 +917,11 @@ fun AiAssistantBottomSheet(
                                         if (pending.isDelete) {
                                             deleteList.add(pending.updatedQuestion)
                                         } else {
-                                            var updated = pending.updatedQuestion
+                                            var updated = if (currentBookId.isNotBlank() && pending.updatedQuestion.bookId != currentBookId) {
+                                                pending.updatedQuestion.copy(bookId = currentBookId)
+                                            } else {
+                                                pending.updatedQuestion
+                                            }
                                             if (updated.explanationImage?.startsWith("http") == true) {
                                                 val downloaded = com.example.data.ImageDownloader.downloadImage(context, currentBookId, updated.explanationImage!!)
                                                 if (downloaded != null) {
@@ -1063,15 +1106,26 @@ fun AiAssistantBottomSheet(
     }
 
     if (editingPendingQuestion != null) {
-        com.example.ui.screens.EditQuestionDialog(viewModel = viewModel, bookId = currentBookId, isReviewMode = true,
+        com.example.ui.screens.EditQuestionDialog(
+            viewModel = viewModel,
+            bookId = currentBookId,
+            isReviewMode = true,
             question = editingPendingQuestion!!.updatedQuestion,
             onDismiss = { editingPendingQuestion = null },
-            onSave = { savedQ, _, _ ->
+            onSave = { savedQ, startId, endId ->
+                val finalSavedQ = if (!savedQ.questionHeader.isNullOrBlank() && !savedQ.questionHeader.trim().startsWith("{") && startId != null && endId != null) {
+                    val escaped = savedQ.questionHeader.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+                    savedQ.copy(questionHeader = "{\"startId\": $startId, \"endId\": $endId, \"text\": \"$escaped\"}")
+                } else {
+                    savedQ
+                }
                 pendingUpdates?.let { currentList ->
                     val updatedList = currentList.toMutableList()
-                    val idx = updatedList.indexOfFirst { it.updatedQuestion.id == savedQ.id }
+                    val idx = updatedList.indexOfFirst {
+                        it.updatedQuestion.globalId == finalSavedQ.globalId || it.updatedQuestion.id == finalSavedQ.id
+                    }
                     if (idx != -1) {
-                        updatedList[idx] = updatedList[idx].copy(updatedQuestion = savedQ)
+                        updatedList[idx] = updatedList[idx].copy(updatedQuestion = finalSavedQ)
                         viewModel.setPendingUpdates(context, chatContextId, updatedList)
                     }
                 }
@@ -1185,6 +1239,255 @@ private fun resolveTargetQuestionsForAi(
     return emptyList()
 }
 
+internal data class ParsedAiQuestionOptions(
+    val baseOptions: List<String>,
+    val extraOptions: List<String>,
+    val inlineCorrectIds: List<String>
+)
+
+/**
+ * Safely parses `options` and `extraOptions` from an AI or .qbook JSON object whether each item is:
+ * - a JSON primitive string: `"Geology"`
+ * - a JSON object: `{"id": "opt0", "text": "Geology", "isCorrect": true}`
+ */
+internal fun parseAiQuestionOptionsFromJson(obj: kotlinx.serialization.json.JsonObject): ParsedAiQuestionOptions {
+    val baseOpts = mutableListOf<String>()
+    val extraOpts = mutableListOf<String>()
+    val inlineCorrect = mutableListOf<String>()
+
+    fun parseOptionArray(
+        el: kotlinx.serialization.json.JsonElement?,
+        isExtra: Boolean
+    ) {
+        if (el == null || el is kotlinx.serialization.json.JsonNull) return
+        val arr: kotlinx.serialization.json.JsonArray = when (el) {
+            is kotlinx.serialization.json.JsonArray -> el
+            is kotlinx.serialization.json.JsonPrimitive -> {
+                val raw = el.content.trim()
+                if (raw.startsWith("[") && raw.endsWith("]")) {
+                    try {
+                        kotlinx.serialization.json.Json.parseToJsonElement(
+                            com.example.data.DataParser.autoFixJson(raw)
+                        ).jsonArray
+                    } catch (_: Exception) {
+                        if (raw.isNotBlank() && !raw.equals("null", ignoreCase = true)) {
+                            if (isExtra) extraOpts.add(cleanExtractedMathText(raw))
+                            else baseOpts.add(cleanExtractedMathText(raw))
+                        }
+                        return
+                    }
+                } else {
+                    if (raw.isNotBlank() && !raw.equals("null", ignoreCase = true)) {
+                        if (isExtra) extraOpts.add(cleanExtractedMathText(raw))
+                        else baseOpts.add(cleanExtractedMathText(raw))
+                    }
+                    return
+                }
+            }
+            else -> return
+        }
+
+        arr.forEachIndexed { idx, itemEl ->
+            when (itemEl) {
+                is kotlinx.serialization.json.JsonPrimitive -> {
+                    val txt = cleanExtractedMathText(itemEl.content)
+                    if (isExtra) extraOpts.add(txt) else baseOpts.add(txt)
+                }
+                is kotlinx.serialization.json.JsonObject -> {
+                    val rawText = itemEl.optCleanString("text")
+                        ?: itemEl.optCleanString("option")
+                        ?: itemEl.optCleanString("value")
+                        ?: itemEl.optCleanString("label")
+                        ?: ""
+                    val txt = cleanExtractedMathText(rawText)
+                    val canonicalId = if (isExtra) "ext${extraOpts.size}" else "opt${baseOpts.size}"
+                    if (isExtra) extraOpts.add(txt) else baseOpts.add(txt)
+
+                    val markedCorrect = itemEl["isCorrect"]?.jsonPrimitive?.booleanOrNull == true ||
+                        itemEl["correct"]?.jsonPrimitive?.booleanOrNull == true
+                    if (markedCorrect) {
+                        inlineCorrect.add(canonicalId)
+                    }
+                }
+                else -> {}
+            }
+        }
+    }
+
+    parseOptionArray(obj["options"], isExtra = false)
+    parseOptionArray(obj["extraOptions"] ?: obj["distractors"], isExtra = true)
+
+    return ParsedAiQuestionOptions(
+        baseOptions = baseOpts,
+        extraOptions = extraOpts,
+        inlineCorrectIds = inlineCorrect
+    )
+}
+
+internal fun parseAiCorrectOptionIds(
+    obj: kotlinx.serialization.json.JsonObject,
+    optionCount: Int,
+    extraOptionCount: Int = 0,
+    fallbackIds: List<String> = listOf("opt0"),
+    baseOptionsText: List<String> = emptyList(),
+    extraOptionsText: List<String> = emptyList(),
+    inlineCorrectIds: List<String> = emptyList()
+): List<String> {
+    val maxOptIdx = (optionCount - 1).coerceAtLeast(0)
+    val resultIds = mutableListOf<String>()
+    resultIds.addAll(inlineCorrectIds)
+
+    fun addToken(rawToken: String, forceExtra: Boolean = false) {
+        val t = rawToken.trim().removeSurrounding("\"").removeSurrounding("'")
+        if (t.isEmpty() || t.equals("null", ignoreCase = true)) return
+
+        if (forceExtra) {
+            val extIdx = when {
+                t.startsWith("ext", ignoreCase = true) -> t.substring(3).trim().removePrefix("_").removePrefix("-").toIntOrNull()
+                t.startsWith("extra", ignoreCase = true) -> t.substring(5).trim().removePrefix("_").removePrefix("-").toIntOrNull()
+                t.startsWith("E", ignoreCase = true) && t.length > 1 -> t.substring(1).trim().toIntOrNull()
+                t.length == 1 && t[0].uppercaseChar() in 'A'..'Z' -> {
+                    val letterIdx = t[0].uppercaseChar() - 'A'
+                    if (letterIdx >= optionCount) letterIdx - optionCount else letterIdx
+                }
+                else -> t.toIntOrNull()
+            }
+            if (extIdx != null && (extraOptionCount == 0 || extIdx in 0 until extraOptionCount)) {
+                resultIds.add("ext$extIdx")
+                return
+            }
+            val matchedExtraTextIdx = extraOptionsText.indexOfFirst { it.trim().equals(t, ignoreCase = true) }
+            if (matchedExtraTextIdx != -1) {
+                resultIds.add("ext$matchedExtraTextIdx")
+                return
+            }
+        }
+
+        when {
+            // 1. Canonical "opt0", "opt1", "option0", "option_1"
+            t.startsWith("opt", ignoreCase = true) -> {
+                val numPart = t.replace(Regex("^(?i)options?[_\\-\\s]*"), "").trim()
+                val idx = numPart.toIntOrNull()
+                if (idx != null) {
+                    if (idx in 0..maxOptIdx) {
+                        resultIds.add("opt$idx")
+                    } else if (extraOptionCount > 0 && (idx - optionCount) in 0 until extraOptionCount) {
+                        resultIds.add("ext${idx - optionCount}")
+                    }
+                } else if (numPart.length == 1 && numPart[0].uppercaseChar() in 'A'..'Z') {
+                    val letterIdx = numPart[0].uppercaseChar() - 'A'
+                    if (letterIdx in 0..maxOptIdx) {
+                        resultIds.add("opt$letterIdx")
+                    } else if (extraOptionCount > 0 && (letterIdx - optionCount) in 0 until extraOptionCount) {
+                        resultIds.add("ext${letterIdx - optionCount}")
+                    }
+                }
+            }
+            // 2. Canonical "ext0", "ext1", "extra0", "extra_0", "distractor0"
+            t.startsWith("ext", ignoreCase = true) || t.startsWith("distractor", ignoreCase = true) -> {
+                val numPart = t.replace(Regex("^(?i)(?:extra(?:options?)?|ext|distractors?)[_\\-\\s]*"), "").trim()
+                val idx = numPart.toIntOrNull()
+                if (idx != null && idx >= 0 && (extraOptionCount == 0 || idx in 0 until extraOptionCount)) {
+                    resultIds.add("ext$idx")
+                }
+            }
+            // 3. Legacy "E0", "E1", "E2"
+            (t.startsWith("E") || t.startsWith("e")) && t.length > 1 && t.substring(1).trim().toIntOrNull() != null -> {
+                val idx = t.substring(1).trim().toIntOrNull()!!
+                if (idx >= 0 && (extraOptionCount == 0 || idx in 0 until extraOptionCount)) {
+                    resultIds.add("ext$idx")
+                }
+            }
+            // 4. Single letter "A", "B", "C", "D" (base options) or "E", "F", "G", "H" (extraOptions when optionCount == 4!)
+            t.length == 1 && t[0].uppercaseChar() in 'A'..'Z' -> {
+                val idx = t[0].uppercaseChar() - 'A'
+                if (idx in 0..maxOptIdx) {
+                    resultIds.add("opt$idx")
+                } else if (extraOptionCount > 0 && (idx - optionCount) in 0 until extraOptionCount) {
+                    resultIds.add("ext${idx - optionCount}")
+                }
+            }
+            // 5. Numeric index: 0..maxOptIdx -> "opt0".."opt3", or optionCount..(optionCount + extraOptionCount - 1) -> "ext0".."extN", or negative -1..-N -> "ext0".."extN"
+            t.toIntOrNull() != null -> {
+                val idx = t.toInt()
+                when {
+                    idx in 0..maxOptIdx -> resultIds.add("opt$idx")
+                    idx >= optionCount && extraOptionCount > 0 && (idx - optionCount) in 0 until extraOptionCount -> {
+                        resultIds.add("ext${idx - optionCount}")
+                    }
+                    idx < 0 && extraOptionCount > 0 && (-idx - 1) in 0 until extraOptionCount -> {
+                        resultIds.add("ext${-idx - 1}")
+                    }
+                }
+            }
+            // 6. Exact text match against baseOptionsText or extraOptionsText
+            else -> {
+                val baseMatchIdx = baseOptionsText.indexOfFirst { it.trim().equals(t, ignoreCase = true) }
+                if (baseMatchIdx != -1) {
+                    resultIds.add("opt$baseMatchIdx")
+                } else {
+                    val extraMatchIdx = extraOptionsText.indexOfFirst { it.trim().equals(t, ignoreCase = true) }
+                    if (extraMatchIdx != -1) {
+                        resultIds.add("ext$extraMatchIdx")
+                    }
+                }
+            }
+        }
+    }
+
+    fun parseElementTokens(el: kotlinx.serialization.json.JsonElement?, forceExtra: Boolean = false) {
+        when (el) {
+            is kotlinx.serialization.json.JsonArray -> {
+                el.forEach { item ->
+                    when (item) {
+                        is kotlinx.serialization.json.JsonPrimitive -> {
+                            item.content.split(",").forEach { addToken(it, forceExtra) }
+                        }
+                        is kotlinx.serialization.json.JsonObject -> {
+                            val idStr = item.optCleanString("id") ?: item.optCleanString("optionId")
+                            if (idStr != null) addToken(idStr, forceExtra)
+                        }
+                        else -> {}
+                    }
+                }
+            }
+            is kotlinx.serialization.json.JsonPrimitive -> {
+                if (el !is kotlinx.serialization.json.JsonNull) {
+                    val content = el.content.trim()
+                    if (content.startsWith("[") && content.endsWith("]")) {
+                        try {
+                            val parsedArr = kotlinx.serialization.json.Json.parseToJsonElement(content).jsonArray
+                            parseElementTokens(parsedArr, forceExtra)
+                            return
+                        } catch (_: Exception) {}
+                    }
+                    content.split(",").forEach { addToken(it, forceExtra) }
+                }
+            }
+            else -> {}
+        }
+    }
+
+    // Parse primary correctOptionIds / correctIndices / correctAnswers / correctOptions
+    parseElementTokens(
+        obj["correctOptionIds"] ?: obj["correctIndices"] ?: obj["correctOptions"] ?: obj["correctAnswers"],
+        forceExtra = false
+    )
+
+    // Also parse explicit extra-option correct fields if AI provided them separately
+    parseElementTokens(
+        obj["correctExtraOptionIds"] ?: obj["correctExtraIndices"] ?: obj["correctExtraOptions"],
+        forceExtra = true
+    )
+
+    // Fallback to correctIndex if no IDs were resolved yet (or if correctIndex is an array)
+    if (resultIds.isEmpty() || obj["correctIndex"] is kotlinx.serialization.json.JsonArray) {
+        parseElementTokens(obj["correctIndex"], forceExtra = false)
+    }
+
+    return resultIds.distinct().ifEmpty { fallbackIds.ifEmpty { listOf("opt0") } }
+}
+
 /**
  * Formats a QuestionEntity into a clean map with explicit 1-based local number (`Q.99`),
  * global Book ID (`2569`), lettered options (`Option A`..`Option D`), and correct answer key.
@@ -1200,11 +1503,14 @@ private fun formatQuestionForAiPrompt(localNum: Int, q: QuestionEntity): Map<Str
     val letteredOptions = rawOpts.mapIndexed { idx, text ->
         "Option ${(65 + idx).toChar()}: $text"
     }
-    val correctLetter = if (q.correctIndex in rawOpts.indices) {
-        "Option ${(65 + q.correctIndex).toChar()} (${rawOpts[q.correctIndex]})"
-    } else {
-        "Option ${(65 + q.correctIndex.coerceAtLeast(0)).toChar()}"
-    }
+    val correctIndices = q.resolveCorrectIndices(includeExtraOptions = false).sorted()
+    val correctLetters = correctIndices.map { idx: Int ->
+        if (idx in rawOpts.indices) {
+            "Option ${(65 + idx).toChar()} (${rawOpts[idx]})"
+        } else {
+            "Option ${(65 + idx.coerceAtLeast(0)).toChar()}"
+        }
+    }.joinToString(", ")
 
     val map = LinkedHashMap<String, Any?>()
     map["localQuestionNumber"] = "Q.$localNum"
@@ -1219,7 +1525,8 @@ private fun formatQuestionForAiPrompt(localNum: Int, q: QuestionEntity): Map<Str
         map["tableData"] = q.tableData
     }
     map["options"] = letteredOptions
-    map["correctAnswerInBook"] = correctLetter
+    map["multipleCorrect"] = q.isEffectivelyMultipleCorrect(includeExtraOptions = false)
+    map["correctAnswerInBook"] = correctLetters
     if (q.explanation.isNotBlank() && !q.explanation.equals("null", ignoreCase = true)) {
         map["bookExplanation"] = q.explanation
     }
@@ -1235,6 +1542,21 @@ private fun formatQuestionForAiPrompt(localNum: Int, q: QuestionEntity): Map<Str
     return map
 }
 
+private fun rememberBookHierarchyFormatHint(book: com.example.data.BookEntity?): String {
+    if (book == null) return ""
+    val labels: List<String> = try {
+        val type = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+        com.example.data.SharedGson.normal.fromJson<List<String>>(book.hierarchyLabels, type) ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+    return if (labels.isNotEmpty()) {
+        "The target book '${book.name}' (ID: ${book.id}) uses a ${labels.size}-level topic path hierarchy delimited by ' > ': ${labels.joinToString(" > ")} (for example: '${labels.joinToString(" > ") { "Sample $it" }}'). Format the 'path' field of each extracted question using ' > ' to match this hierarchy!"
+    } else {
+        "The target book is '${book.name}' (ID: ${book.id})."
+    }
+}
+
 suspend fun processAiChatCommand(
     context: android.content.Context,
     command: String, 
@@ -1245,10 +1567,19 @@ suspend fun processAiChatCommand(
     pdfBytes: ByteArray? = null,
     extractedText: String? = null,
     attachments: List<com.example.data.AiFileAttachment> = emptyList(),
+    targetBookId: String = "",
     onStatusUpdate: (String, Float) -> Unit = {_,_ ->},
     onDevLog: (String) -> Unit = {}
 ): Pair<List<PendingQuestionUpdate>, String> {
     val gson = com.example.data.SharedGson.normal
+
+    val resolvedBookId = targetBookId.ifBlank { allQuestions.firstOrNull()?.bookId ?: "" }
+    val dbBookMeta = if (resolvedBookId.isNotBlank()) {
+        try {
+            com.example.data.AppDatabase.getDatabase(context).bookDao().getBookSync(resolvedBookId)
+        } catch (_: Exception) { null }
+    } else null
+    val bookHierarchyHint = rememberBookHierarchyFormatHint(dbBookMeta)
     
     val hasAttachedFile = pdfBytes != null || extractedText != null || attachments.isNotEmpty()
     
@@ -1446,17 +1777,24 @@ suspend fun processAiChatCommand(
         val prompt = """
             You are extracting questions from the $sourceText based on the user's instructions.
             User's Instructions: "$command"
+            $bookHierarchyHint
             
             Rules for Extraction:
             0. **CRITICAL MANDATE - USER COMMAND OVERRIDES DEFAULT RULES (HIGHEST PRIORITY)**:
                - The user's explicit instructions above in 'User's Instructions: "$command"' STRICTLY OVERRIDE ANY built-in rule below!
                ${if (shouldOmitHeaders) "- MANDATORY: USER COMMANDED NO HEADERS / SET HEADERS TO NULL. Set \"questionHeader\": \"\" and \"section\": \"\" for ALL questions. DO NOT analyze or extract headers from the document." else ""}
-               - If the user instructs to omit explanations, format differently, or customize any field, follow the user's instructions completely.
-            1. By default, extract ONLY: questions (including text, tables, images if present), options, answers, path, question header, exams, and explanation from the source itself.
-            2. DO NOT generate AI explanations or extraOptions UNLESS the user explicitly asked for them in their instructions.
-            3. If the user provided specific instructions for the path, follow them.
+               - If the user instructs to omit explanations, format differently, generate/mark `extraOptions` as correct, or customize any field, follow the user's instructions completely.
+            1. By default, extract: questions (including text, tables, images if present), options, extraOptions (if present in source or requested), correctOptionIds, multipleCorrect, path, question header, exams, and explanation from the source itself.
+            2. **Single-Correct & Multiple-Correct Questions (`correctOptionIds`, `multipleCorrect`, and `extraOptions`)**:
+               - Base `options` have 0-based IDs: `"opt0"` (Option A), `"opt1"` (Option B), `"opt2"` (Option C), `"opt3"` (Option D).
+               - Additional `extraOptions` (if present in the source or requested by the user) have 0-based IDs: `"ext0"` (1st extra option), `"ext1"` (2nd extra option), `"ext2"` (3rd extra option), etc.
+               - Always populate `"correctOptionIds"` as a JSON array of the exact correct option IDs:
+                 • For a single-correct question (e.g. Option B is correct): `"correctOptionIds": ["opt1"]`, `"correctIndex": 1`, `"multipleCorrect": false`.
+                 • For a multiple-correct question where multiple base options AND/OR `extraOptions` are correct (e.g. Option A, Option D, 1st extraOption, and 3rd extraOption are correct): `"correctOptionIds": ["opt0", "opt3", "ext0", "ext2"]`, `"correctIndex": 0`, `"multipleCorrect": true`.
+               - Yes! Both base `options` (`"opt0".."opt3"`) AND `extraOptions` (`"ext0".."extN"`) can be marked as correct inside `"correctOptionIds"` whenever a question has multiple correct answers or when the user/source specifies correct options inside `extraOptions`!
+            3. If the user provided specific instructions for the `path`, follow them.
             4. **Table Format**: If the question or data involves a table (grid lines or simple listing), extract the table data and set 'format' to "table". Construct 'tableData' as a JSON string representation of a 2D array of strings (e.g. '[["Col1", "Col2"], ["Val1", "Val2"]]'). DO NOT put the table data in the 'question' text; keep the 'question' text clean.
-            5. **Images from Source**: If the user provides a ZIP file with images, or explicitly references extracting existing images, map the image filenames provided in the System Note to the appropriate fields (e.g. 'img', 'explanationImageOptions'). Follow the user's exact instructions for how to map them.
+            5. **Images from Source**: If the user provides a ZIP file with images, or explicitly references extracting existing images, map the image filenames provided in the System Note to the appropriate fields (e.g. 'img', 'explanationImage', 'explanationImageOptions'). Follow the user's exact instructions for how to map them.
             6. **AI/Web Images**: If the user explicitly asks for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             7. **Math & Style (STRICT MANDATE)**: Wrap mathematical expressions, equations, formulas, and math variables in single dollar signs `${"$"}` (e.g., `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`), and block equations in double dollar signs `${"$$"}`. NEVER output bare LaTeX like `\frac{1}{2}` without dollar signs. **CRITICAL: NEVER wrap plain text words, vocabulary words, sentences, HTML tags (like `<strong>word</strong>`), or line breaks (`\n`) inside dollar signs `${"$"}`!** Use standard `\n` (single backslash) for line breaks in JSON strings, and double-escape only LaTeX command backslashes (e.g. `\\frac{1}{2}`, `\\times`, `\\theta`).
             **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. output `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`). In valid JSON source, two backslashes represent one literal LaTeX backslash. DO NOT output quad backslashes.
@@ -1466,14 +1804,20 @@ suspend fun processAiChatCommand(
             [
               {
                 "question": "question text",
-                "options": ["A", "B", "C", "D"],
-                "extraOptions": ["E", "F"] (ONLY IF REQUESTED),
-                "correctIndex": integer index of correct option,
+                "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
+                "extraOptions": ["Extra Option 0 text", "Extra Option 1 text"] (include if present in source or requested by user, else []),
+                "correctIndex": 0,
+                "correctOptionIds": ["opt0"] (or ["opt0", "opt3", "ext0", "ext2"] when multiple options and/or extraOptions are correct),
+                "multipleCorrect": false (set to true when more than 1 option/extraOption is correct),
                 "explanation": "Brief or ai generated explanation (empty string \"\" if none/not requested)",
                 "detailedExplanation": "Explanation explicitly extracted from the book (empty string \"\" if none)",
                 "path": "Topic/Subtopic based on PDF headers or user instructions (empty string \"\" if none)",
+                "category": "Category name (empty string \"\" if none)",
                 "format": "text or table",
                 "tableData": "JSON string of 2D array (empty string \"\" if not table)",
+                "bottomText": "Text appearing below a table/image in the question if any, else \"\"",
+                "img": "question image filename/path if present, else \"\"",
+                "explanationImage": "explanation image filename/path if present, else \"\"",
                 "explanationImagePrompts": ["prompt1", "prompt2"] (ONLY IF REQUESTED),
                 "explanationImageOptions": ["url1", "url2"] (ONLY IF REQUESTED),
                 "questionHeader": ${if (shouldOmitHeaders) "\"\" (User commanded to omit headers - MUST be empty string \"\")" else "\"Instruction / header / passage applying to this question or group. Wrap reading passages in <p>...</p> tags. Empty string \\\"\\\" if none.\""},
@@ -1509,15 +1853,18 @@ suspend fun processAiChatCommand(
             val cleanResult = com.example.data.DataParser.autoFixJson(result)
             val jsonArray = kotlinx.serialization.json.Json.parseToJsonElement(cleanResult).jsonArray
             val gson = com.example.data.SharedGson.normal
-            val baseBookId = allQuestions.firstOrNull()?.bookId ?: "ExtractedBook"
+            val baseBookId = resolvedBookId.ifBlank { allQuestions.firstOrNull()?.bookId ?: "ExtractedBook" }
             val maxPossibleId = allQuestions.maxOfOrNull { it.id } ?: 0L
+
+            val sp = com.example.data.SecurePrefs.get(context)
+            val defaultBlankCategory = sp.getString("blank_book_default_cat_$baseBookId", "")?.trim().orEmpty()
+            val defaultBlankExam = sp.getString("blank_book_default_exam_$baseBookId", "")?.trim().orEmpty()
             
             for (item in jsonArray) {
                 val obj = item.jsonObject
-                val rawOptions = obj["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-                val qOptions = rawOptions.map { cleanExtractedMathText(it) }
-                val rawExtraOptions = obj["extraOptions"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-                val qExtraOptions = rawExtraOptions.map { cleanExtractedMathText(it) }
+                val parsedOpts = parseAiQuestionOptionsFromJson(obj)
+                val qOptions = parsedOpts.baseOptions
+                val qExtraOptions = parsedOpts.extraOptions
                 
                 val imgOptions = mutableListOf<String>()
                 val imgOptionsElement = obj["explanationImageOptions"]
@@ -1530,7 +1877,7 @@ suspend fun processAiChatCommand(
                                 try {
                                     imgOptions.addAll(kotlinx.serialization.json.Json.parseToJsonElement(str).jsonArray.map { it.jsonPrimitive.content })
                                 } catch(e: Exception) { imgOptions.add(str) }
-                            } else imgOptions.add(str)
+                            } else if (str.isNotBlank() && !str.equals("null", ignoreCase = true)) imgOptions.add(str)
                         }
                     }
                 }
@@ -1546,13 +1893,28 @@ suspend fun processAiChatCommand(
                                 try {
                                     imgPrompts.addAll(kotlinx.serialization.json.Json.parseToJsonElement(str).jsonArray.map { it.jsonPrimitive.content })
                                 } catch(e: Exception) { imgPrompts.add(str) }
-                            } else imgPrompts.add(str)
+                            } else if (str.isNotBlank() && !str.equals("null", ignoreCase = true)) imgPrompts.add(str)
                         }
                     }
                 }
                 
-                val generatedOptions1 = qOptions.map { com.example.data.QBookOption(id = java.util.UUID.randomUUID().toString(), text = it) }
-                val cIndex1 = obj["correctIndex"]?.jsonPrimitive?.int ?: 0
+                val generatedOptions1 = qOptions.mapIndexed { idx, txt -> com.example.data.QBookOption(id = "opt$idx", text = txt) }
+                val correctOptionIds1 = parseAiCorrectOptionIds(
+                    obj = obj,
+                    optionCount = generatedOptions1.size,
+                    extraOptionCount = qExtraOptions.size,
+                    baseOptionsText = qOptions,
+                    extraOptionsText = qExtraOptions,
+                    inlineCorrectIds = parsedOpts.inlineCorrectIds
+                )
+                val primaryIdx1 = correctOptionIds1.firstNotNullOfOrNull { cid ->
+                    if (cid.startsWith("opt")) cid.removePrefix("opt").toIntOrNull()?.takeIf { it in generatedOptions1.indices } else null
+                } ?: (obj["correctIndex"]?.jsonPrimitive?.intOrNull?.coerceIn(0, (generatedOptions1.size - 1).coerceAtLeast(0)) ?: 0)
+                val isMulti1 = (obj["multipleCorrect"]?.jsonPrimitive?.booleanOrNull == true) ||
+                    (obj["multipleCorrect"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true) == true) ||
+                    correctOptionIds1.size > 1 ||
+                    correctOptionIds1.any { it.startsWith("ext", ignoreCase = true) }
+
                 val rawHeader = when (val el = obj["questionHeader"] ?: obj["section"] ?: obj["header"]) {
                     is kotlinx.serialization.json.JsonObject -> el.toString()
                     is kotlinx.serialization.json.JsonPrimitive -> {
@@ -1571,28 +1933,40 @@ suspend fun processAiChatCommand(
                 val detailedExplanation = rawDetailed?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val shouldOmit = shouldOmitHeaders || isHeaderOmissionRequested(command)
                 val cleanedHeader = if (shouldOmit) null else rawHeader?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                val exam = obj.optCleanString("exam") ?: ""
+                val exam = obj.optCleanString("exam")?.takeIf { it.isNotBlank() } ?: defaultBlankExam
                 val year = obj.optCleanString("year") ?: ""
                 val format = obj.optCleanString("format")?.takeIf { it.equals("table", ignoreCase = true) } ?: "text"
                 val tableData = obj.optCleanString("tableData")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val explanationTable = obj.optCleanString("explanationTable")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val bottomText = obj.optCleanString("bottomText")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val qImg = (obj.optCleanString("img") ?: obj.optCleanString("image"))?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                val explImg = obj.optCleanString("explanationImage")?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                 val exams = obj.optCleanString("exams")?.takeIf { it.isNotBlank() && it != "[]" && !it.equals("null", ignoreCase = true) }
                 val section = if (shouldOmit) "" else (cleanedHeader ?: obj.optCleanString("section") ?: "")
-                val path = obj.optCleanString("path") ?: ""
+                val rawPath = obj.optCleanString("path") ?: ""
+                val path = rawPath.ifBlank { dbBookMeta?.name ?: "" }
+                val extractedCategory = obj.optCleanString("category")?.takeIf { it.isNotBlank() }
+                    ?: defaultBlankCategory.ifBlank {
+                        path.split(">", "/").map { it.trim() }.firstOrNull { it.isNotBlank() } ?: "AI Extracted"
+                    }
 
                 val updatedQ = com.example.data.QuestionEntity(
                     globalId = java.util.UUID.randomUUID().toString(),
                     id = maxPossibleId + 1 + updates.size.toLong(),
                     bookId = baseBookId,
-                    category = "AI Extracted",
+                    category = extractedCategory,
                     question = questionText,
                     options = gson.toJson(qOptions),
                     advancedOptions = gson.toJson(generatedOptions1),
-                    advancedCorrectIds = gson.toJson(listOfNotNull(generatedOptions1.getOrNull(cIndex1)?.id)),
+                    advancedCorrectIds = gson.toJson(correctOptionIds1),
                     extraOptions = gson.toJson(qExtraOptions),
-                    correctIndex = cIndex1,
+                    correctIndex = primaryIdx1,
+                    multipleCorrect = isMulti1,
                     explanation = explanation,
                     detailedExplanation = detailedExplanation,
+                    explanationTable = explanationTable,
+                    img = qImg,
+                    explanationImage = explImg,
                     format = format,
                     tableData = tableData,
                     bottomText = bottomText,
@@ -1921,18 +2295,21 @@ suspend fun processAiChatCommand(
             "Editing question ${chunk.first().id} from ${targetQuestions.first().id} to ${targetQuestions.last().id}..."
         }
         onStatusUpdate(msg, progress)
-        val qData = chunk.map {
+        val qData = chunk.map { q ->
             mapOf(
-                "id" to it.id,
-                "question" to it.question,
-                "options" to it.options,
-                "extraOptions" to it.extraOptions,
-                "explanation" to it.explanation,
-                "detailedExplanation" to (it.detailedExplanation ?: ""),
-                "format" to (it.format ?: ""),
-                "tableData" to (it.tableData ?: ""),
-                "questionHeader" to (it.questionHeader ?: ""),
-                "path" to (it.path ?: "")
+                "id" to q.id,
+                "question" to q.question,
+                "options" to q.options,
+                "extraOptions" to q.extraOptions,
+                "correctIndex" to q.correctIndex,
+                "correctOptionIds" to com.example.data.parseNormalizedCorrectOptionIds(q.advancedCorrectIds).ifEmpty { listOf("opt${q.correctIndex}") },
+                "multipleCorrect" to q.isEffectivelyMultipleCorrect(includeExtraOptions = true),
+                "explanation" to q.explanation,
+                "detailedExplanation" to (q.detailedExplanation ?: ""),
+                "format" to (q.format ?: ""),
+                "tableData" to (q.tableData ?: ""),
+                "questionHeader" to (q.questionHeader ?: ""),
+                "path" to (q.path ?: "")
             )
         }
         
@@ -1942,8 +2319,13 @@ suspend fun processAiChatCommand(
             You are an educational AI Co-Pilot. You must process the input questions based on the command.
             
             Guidelines:
-            1. **Distractors (extraOptions)**: If asked for distractors or extraOptions, generate highly plausible but incorrect options (at least 3-4). Format them as a JSON string array like '["Distractor 1", "Distractor 2"]'.
-            2. **Explanations & MATH**: If asked for detailed explanations, use HTML or Markdown. When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1. Wrap mathematical expressions, formula, and variable in single dollar signs `${"$"}`. Examples: `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`. Block equations must use double dollar signs `${"$$"}`. NEVER write math in plain text like `\int` or `x=1` or `a^2+b^2=c^2` without the `${"$"}` wrapper! Do NOT use `\(` or `\[`. NEVER wrap math expressions in backticks (e.g. NEVER use backticks around the dollar signs).  Use ONLY dollar signs.
+            1. **Options, ExtraOptions (`ext0..extN`), & Multiple-Correct (`correctOptionIds` / `multipleCorrect`)**:
+               - Base `options` have IDs `"opt0"` (A), `"opt1"` (B), `"opt2"` (C), `"opt3"` (D).
+               - `extraOptions` have IDs `"ext0"` (1st extra option), `"ext1"` (2nd extra option), `"ext2"` (3rd extra option), etc.
+               - If asked to add distractors or `extraOptions`, generate plausible options in `"extraOptions": ["Extra 1", "Extra 2", ...]`.
+               - If the user asks to mark multiple options or any `extraOptions` as correct (or if the question is multiple-correct), include ALL correct base option IDs (`"opt0".."opt3"`) AND any correct extra option IDs (`"ext0".."extN"`) in `"correctOptionIds"` (for example: `"correctOptionIds": ["opt0", "opt3", "ext0", "ext2"]`) and set `"multipleCorrect": true`!
+               - Otherwise, preserve the existing `"correctOptionIds"` and `"multipleCorrect"` values from the input question.
+            2. **Explanations & MATH**: If asked for detailed explanations, use HTML or Markdown. When explaining a question or referring to options, ALWAYS use their letter designations (e.g. Option A, Option B) corresponding to their order (index 0 = A, index 1 = B, etc.). DO NOT use index numbers like Option 0 or Option 1. Wrap mathematical expressions, formula, and variable in single dollar signs `${"$"}`. Examples: `${"$"}E = mc^2${"$"}` or `${"$"}x=1${"$"}`. Block equations must use double dollar signs `${"$$"}`. NEVER write math in plain text like `\int` or `x=1` or `a^2+b^2=c^2` without the `${"$"}` wrapper! Do NOT use `\(` or `\[`. NEVER wrap math expressions in backticks. Use ONLY dollar signs.
             **CRITICAL JSON ESCAPING RULE**: You are generating a JSON string. You MUST properly double-escape all backslashes in LaTeX formulas so they do not break JSON parsing (e.g. output `\\frac{1}{2}`, `\\times`, `\\theta`, `\\beta`, `\\neq`). In valid JSON source, two backslashes represent one literal LaTeX backslash. DO NOT output quad backslashes.
             3. **Images**: If asked for "AI generated explanation image", generate 3 different highly detailed image generation prompts based on the context. Return the prompts as a JSON string array in a field called 'explanationImagePrompts'. If asked for "embedding img from web" or "web image", return 3 relevant image URLs using this format: "https://loremflickr.com/800/600/keyword" (replace 'keyword' with a specific single word describing the context) in a field called 'explanationImageOptions'.
             4. **Expansion (Single to Multiple)**: If asked to expand a question into multiple questions, you should return the original question PLUS the newly generated questions. For new questions, assign them "id": -1.
@@ -1955,7 +2337,7 @@ suspend fun processAiChatCommand(
             ${gson.toJson(qData)}
             
             Return a JSON array containing the modified/new questions. 
-            Ensure all original keys are preserved: 'id', 'question', 'options', 'extraOptions', 'explanation', 'detailedExplanation', 'format', 'tableData', 'questionHeader'. Add 'explanationImagePrompts' if AI images requested, or 'explanationImageOptions' if web images requested. For new questions, also provide 'correctIndex' (integer 0-based).
+            Ensure all original keys are preserved: 'id', 'question', 'options', 'extraOptions', 'correctIndex', 'correctOptionIds', 'multipleCorrect', 'explanation', 'detailedExplanation', 'format', 'tableData', 'questionHeader', 'path'. Add 'explanationImagePrompts' if AI images requested, or 'explanationImageOptions' if web images requested.
             IMPORTANT: Return ONLY the raw JSON array. Do not use markdown backticks like ```json.
         """.trimIndent()
         
@@ -2036,51 +2418,61 @@ suspend fun processAiChatCommand(
                     }
                 }
 
-                val optionsElement = obj["options"]
-                val parsedOptions = when {
-                    optionsElement is kotlinx.serialization.json.JsonArray -> optionsElement.map { it.jsonPrimitive.content }
-                    optionsElement is kotlinx.serialization.json.JsonPrimitive -> {
-                        val str = optionsElement.content
-                        if (str.startsWith("[") && str.endsWith("]")) {
-                            try {
-                                Json.parseToJsonElement(str).jsonArray.map { it.jsonPrimitive.content }
-                            } catch(e: Exception) { listOf(str) }
-                        } else listOf(str)
-                    }
-                    else -> emptyList()
+                val originalQ = allQuestions.find { it.id.toInt() == id }
+                val parsedEditOpts = parseAiQuestionOptionsFromJson(obj)
+                val parsedOptions = if (parsedEditOpts.baseOptions.isNotEmpty()) {
+                    parsedEditOpts.baseOptions
+                } else {
+                    try {
+                        com.example.data.SharedGson.normal.fromJson<List<String>>(
+                            originalQ?.options ?: "[]",
+                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                        ) ?: emptyList()
+                    } catch (_: Exception) { emptyList() }
+                }
+                val parsedExtraOptions = if (obj.containsKey("extraOptions") || obj.containsKey("distractors")) {
+                    parsedEditOpts.extraOptions
+                } else {
+                    try {
+                        com.example.data.SharedGson.normal.fromJson<List<String>>(
+                            originalQ?.extraOptions ?: "[]",
+                            object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
+                        ) ?: emptyList()
+                    } catch (_: Exception) { emptyList() }
                 }
 
-                val extraOptionsElement = obj["extraOptions"]
-                val parsedExtraOptions = when {
-                    extraOptionsElement is kotlinx.serialization.json.JsonArray -> extraOptionsElement.map { it.jsonPrimitive.content }
-                    extraOptionsElement is kotlinx.serialization.json.JsonPrimitive -> {
-                        val str = extraOptionsElement.content
-                        if (str.startsWith("[") && str.endsWith("]")) {
-                            try {
-                                Json.parseToJsonElement(str).jsonArray.map { it.jsonPrimitive.content }
-                            } catch(e: Exception) { listOf(str) }
-                        } else listOf(str)
-                    }
-                    else -> emptyList()
-                }
-                
-                // Find matching original question to preserve data not modified by AI
-                val originalQ = allQuestions.find { it.id.toInt() == id }
-                
                 val gson = com.example.data.SharedGson.normal
-                val generatedOptions2 = parsedOptions.map { com.example.data.QBookOption(id = java.util.UUID.randomUUID().toString(), text = it) }
-                val cIndex2 = obj["correctIndex"]?.jsonPrimitive?.int ?: originalQ?.correctIndex ?: 0
+                val generatedOptions2 = parsedOptions.mapIndexed { idx, txt -> com.example.data.QBookOption(id = "opt$idx", text = txt) }
+                val fallbackCorrectIds = originalQ?.let { com.example.data.parseNormalizedCorrectOptionIds(it.advancedCorrectIds) } ?: listOf("opt0")
+                val correctOptionIds2 = parseAiCorrectOptionIds(
+                    obj = obj,
+                    optionCount = generatedOptions2.size,
+                    extraOptionCount = parsedExtraOptions.size,
+                    fallbackIds = fallbackCorrectIds,
+                    baseOptionsText = parsedOptions,
+                    extraOptionsText = parsedExtraOptions,
+                    inlineCorrectIds = parsedEditOpts.inlineCorrectIds
+                )
+                val primaryIdx2 = correctOptionIds2.firstNotNullOfOrNull { cid ->
+                    if (cid.startsWith("opt")) cid.removePrefix("opt").toIntOrNull()?.takeIf { it in generatedOptions2.indices } else null
+                } ?: (obj["correctIndex"]?.jsonPrimitive?.intOrNull ?: originalQ?.correctIndex ?: 0)
+                val isMulti2 = (obj["multipleCorrect"]?.jsonPrimitive?.booleanOrNull == true) ||
+                    (obj["multipleCorrect"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true) == true) ||
+                    correctOptionIds2.size > 1 ||
+                    correctOptionIds2.any { it.startsWith("ext", ignoreCase = true) }
+
                 val updatedQ = QuestionEntity(
                     globalId = originalQ?.globalId ?: java.util.UUID.randomUUID().toString(),
                     id = if (id == -1) System.currentTimeMillis() else id.toLong(),
-                    bookId = originalQ?.bookId ?: allQuestions.firstOrNull()?.bookId ?: "",
+                    bookId = originalQ?.bookId ?: resolvedBookId.ifBlank { allQuestions.firstOrNull()?.bookId ?: "" },
                     category = originalQ?.category ?: "AI Generated",
                     question = obj.optCleanString("question")?.let { cleanExtractedMathText(it) } ?: originalQ?.question ?: "",
                     options = gson.toJson(parsedOptions),
                     advancedOptions = gson.toJson(generatedOptions2),
-                    advancedCorrectIds = gson.toJson(listOfNotNull(generatedOptions2.getOrNull(cIndex2)?.id)),
+                    advancedCorrectIds = gson.toJson(correctOptionIds2),
                     extraOptions = gson.toJson(parsedExtraOptions),
-                    correctIndex = cIndex2,
+                    correctIndex = primaryIdx2,
+                    multipleCorrect = isMulti2,
                     explanation = obj.optCleanString("explanation")?.let { cleanExtractedMathText(it) } ?: originalQ?.explanation?.takeIf { !it.equals("null", ignoreCase = true) } ?: "",
                     detailedExplanation = obj.optCleanString("detailedExplanation")?.let { cleanExtractedMathText(it) }?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) } ?: originalQ?.detailedExplanation?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
                     img = originalQ?.img,

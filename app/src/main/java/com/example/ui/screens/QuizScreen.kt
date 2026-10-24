@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import com.example.data.*
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -170,25 +171,33 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
         var correct = 0
         var wrong = 0
         var skipped = 0
-        val gson = com.example.data.SharedGson.normal
-        val typeOptionList = object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type
-        val typeStringList = object : com.google.gson.reflect.TypeToken<List<String>>() {}.type
-        
-        questions.forEachIndexed { idx, q ->
-            val ans = selectedAnswers[idx]
-            if (ans.isNullOrEmpty() || ans.contains(-1)) skipped++
-            else {
-                val correctIds = gson.fromJson<List<String>>(q.advancedCorrectIds ?: "[]", typeStringList) ?: emptyList()
-                val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(q.advancedOptions ?: "[]", typeOptionList) ?: emptyList()
-                
-                val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                    correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                } else {
-                    setOf(q.correctIndex)
-                }
+        val displayedOptionsPerQuestion = mutableListOf<List<Int>>()
 
-                if (ans == correctIndices) { correct++; rawScore += correctMark }
-                else { wrong++; rawScore -= wrongMark }
+        questions.forEachIndexed { idx, q ->
+            val dispOpts = q.buildQuizDisplayOptions(
+                useDistractors = currentUseDistractors,
+                shuffleOptions = currentShuffleOptions,
+                sessionSeed = viewModel.activeQuizSessionId
+            )
+            val displayedOrigIndices = dispOpts.map { it.first }
+            displayedOptionsPerQuestion.add(displayedOrigIndices)
+
+            val allCorrectIndices = q.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
+            val expectedCorrect = allCorrectIndices.intersect(displayedOrigIndices.toSet()).ifEmpty {
+                q.resolveCorrectIndices(includeExtraOptions = false)
+            }
+
+            val ans = selectedAnswers[idx]
+            if (ans.isNullOrEmpty() || ans.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL)) {
+                skipped++
+            } else {
+                if (ans == expectedCorrect) {
+                    correct++
+                    rawScore += correctMark
+                } else {
+                    wrong++
+                    rawScore -= wrongMark
+                }
             }
         }
         viewModel.saveQuizResult(
@@ -200,23 +209,24 @@ fun QuizScreen(viewModel: MainViewModel, onFinish: () -> Unit, onCancel: () -> U
             wrong = wrong,
             skipped = skipped,
             timeUsed = {
-            val examMins = viewModel.currentExamSettings?.let {
-                when (it.timerPreset) {
-                    "Off" -> 0
-                    "15m" -> 15
-                    "30m" -> 30
-                    "60m" -> 60
-                    "Custom" -> it.customTimerMinutes
-                    "Auto" -> if (viewModel.questionLimit.value == null || viewModel.questionLimit.value == 0) 0 else (viewModel.questionLimit.value!! * 36) / 60
-                    else -> 0
+                val examMins = viewModel.currentExamSettings?.let {
+                    when (it.timerPreset) {
+                        "Off" -> 0
+                        "15m" -> 15
+                        "30m" -> 30
+                        "60m" -> 60
+                        "Custom" -> it.customTimerMinutes
+                        "Auto" -> if (viewModel.questionLimit.value == null || viewModel.questionLimit.value == 0) 0 else (viewModel.questionLimit.value!! * 36) / 60
+                        else -> 0
+                    }
                 }
-            }
-            val mins = examMins ?: viewModel.settingsManager.timerMinutes
-            if (!isPracticeMode && mins > 0) (mins * 60 * 1000L - timeRemainingMs) else timeRemainingMs
-        }(),
+                val mins = examMins ?: viewModel.settingsManager.timerMinutes
+                if (!isPracticeMode && mins > 0) (mins * 60 * 1000L - timeRemainingMs) else timeRemainingMs
+            }(),
             questionIds = questions.map { it.id },
             userAnswers = questions.indices.map { selectedAnswers[it] },
-            questionTimes = questions.indices.map { qTimes.value[it] ?: 0L }
+            questionTimes = questions.indices.map { qTimes.value[it] ?: 0L },
+            displayedOptionIndices = displayedOptionsPerQuestion
         )
         viewModel.clearActiveQuizState()
         onFinish()
@@ -312,7 +322,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                     // Lock the question and move forward
                     if (!selectedAnswers.containsKey(currentIndex)) {
                          val emptyMap = selectedAnswers.toMutableMap()
-                         emptyMap[currentIndex] = setOf(-1)
+                         emptyMap[currentIndex] = setOf(com.example.data.TIMEOUT_SKIPPED_SENTINEL)
                          selectedAnswers = emptyMap
                     }
                     val newLocks = lockedAnswers.toMutableMap()
@@ -329,7 +339,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                     if (!selectedAnswers.containsKey(currentIndex)) {
                          // Empty selection means answered wrongly
                          val emptyMap = selectedAnswers.toMutableMap()
-                         emptyMap[currentIndex] = setOf(-1)
+                         emptyMap[currentIndex] = setOf(com.example.data.TIMEOUT_SKIPPED_SENTINEL)
                          selectedAnswers = emptyMap
                     }
                     val newLocks = lockedAnswers.toMutableMap()
@@ -365,21 +375,24 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 ) {
                     itemsIndexed(items = questions, key = { _, question -> question.globalId }) { index, question ->
                         val ans = selectedAnswers[index]
-                        val isAnswered = ans != null && !(ans.contains(-1)) && ans.isNotEmpty()
+                        val isAnswered = ans != null && !ans.contains(com.example.data.TIMEOUT_SKIPPED_SENTINEL) && ans.isNotEmpty()
                         val isCurrent = index == currentIndex
                         val isPracticing = isPracticeMode
-                        
-                        val correctIndices = androidx.compose.runtime.remember(question.id) {
-                            val gson = com.example.data.SharedGson.normal
-                            val correctIds = gson.fromJson<List<String>>(question.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                            val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(question.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                            if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                                correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                            } else {
-                                setOf(question.correctIndex)
+
+                        val correctIndices = androidx.compose.runtime.remember(question.id, currentUseDistractors, currentShuffleOptions) {
+                            val disp = optionsCache.getOrPut(question.id) {
+                                question.buildQuizDisplayOptions(
+                                    useDistractors = currentUseDistractors,
+                                    shuffleOptions = currentShuffleOptions,
+                                    sessionSeed = viewModel.activeQuizSessionId
+                                )
+                            }
+                            val allCorrect = question.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
+                            allCorrect.intersect(disp.map { it.first }.toSet()).ifEmpty {
+                                question.resolveCorrectIndices(includeExtraOptions = false)
                             }
                         }
-                        
+
                         val isWrong = isAnswered && ans != correctIndices && isPracticing && lockedAnswers[index] == true
                         
                         val bgColor: androidx.compose.ui.graphics.Color
@@ -406,9 +419,10 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                             contentAlignment = androidx.compose.ui.Alignment.Center,
                             modifier = Modifier
                                 .size(48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(bgColor, RoundedCornerShape(8.dp))
                                 .clickable(enabled = !currentQuestionFlow || index >= currentIndex) {
                                     if (currentQuestionFlow && index > currentIndex) {
-                                        // Also need to mark skipped questions as wrong/skipped
                                         for (i in currentIndex until index) {
                                             val newLocks = lockedAnswers.toMutableMap()
                                             newLocks[i] = true
@@ -419,7 +433,6 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     showGridDialog = false
                                 }
                         ) {
-                            Surface(color = bgColor, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxSize()) {}
                             Text("${index + 1}", color = textColor, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -568,50 +581,11 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 val animatedQuestion = questions[animatedIndex]
                 val displayOptions = remember(animatedQuestion.id, optionsCache) {
                     optionsCache.getOrPut(animatedQuestion.id) {
-                        val baseOptions = try { com.example.data.SharedGson.normal.fromJson(animatedQuestion.options, Array<String>::class.java)?.toList() ?: emptyList() } catch(e: Exception) { emptyList() }
-                        var finalOptions = baseOptions.mapIndexed { idx, text -> Pair(idx, text) }
-                        
-                        if (currentUseDistractors && animatedQuestion.extraOptions.isNotBlank() && animatedQuestion.extraOptions != "[]") {
-                            try {
-                                val extras = com.example.data.SharedGson.normal.fromJson(animatedQuestion.extraOptions, Array<String>::class.java).toList()
-                                val extraPairs = extras.mapIndexed { idx, it -> Pair(-(idx + 1), it) } // negative means distractor
-                                finalOptions = finalOptions + extraPairs
-                            } catch(e: Exception){}
-                        }
-                        
-                        if (currentShuffleOptions) {
-                            val gson = com.example.data.SharedGson.normal
-                            val correctIds = gson.fromJson<List<String>>(animatedQuestion.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                            val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(animatedQuestion.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                            val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                                correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                            } else {
-                                setOf(animatedQuestion.correctIndex)
-                            }
-                            
-                            val correctOpts = finalOptions.filter { correctIndices.contains(it.first) }
-                            var mutableList = finalOptions.toMutableList()
-                            val stableSeed = viewModel.activeQuizSessionId + animatedQuestion.id
-                            mutableList.shuffle(kotlin.random.Random(stableSeed)) // Random shuffle that stays stable for this session
-                            
-                            // Limit to 4 options while ensuring ALL correct options are included
-                            if (mutableList.size > 4) {
-                                val selected = mutableList.take(4).toMutableList()
-                                val missingCorrectOpts = correctOpts.filter { !selected.contains(it) }
-                                
-                                if (missingCorrectOpts.isNotEmpty()) {
-                                    val fallbackList = selected.filter { !correctOpts.contains(it) }.dropLast(missingCorrectOpts.size).toMutableList()
-                                    fallbackList.addAll(correctOpts.filter { selected.contains(it) })
-                                    fallbackList.addAll(missingCorrectOpts)
-                                    fallbackList.shuffle(kotlin.random.Random(stableSeed))
-                                    mutableList = fallbackList
-                                } else {
-                                    mutableList = selected
-                                }
-                            }
-                            finalOptions = mutableList
-                        }
-                        finalOptions
+                        animatedQuestion.buildQuizDisplayOptions(
+                            useDistractors = currentUseDistractors,
+                            shuffleOptions = currentShuffleOptions,
+                            sessionSeed = viewModel.activeQuizSessionId
+                        )
                     }
                 }
 
@@ -754,14 +728,21 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                val correctIndices = remember(animatedQuestion.id) {
-                    val gson = com.example.data.SharedGson.normal
-                    val correctIds = gson.fromJson<List<String>>(animatedQuestion.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                    val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(animatedQuestion.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                    if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                        correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
+                val correctIndices = remember(animatedQuestion.id, displayOptions, currentUseDistractors) {
+                    val allCorrect = animatedQuestion.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
+                    val displayedSet = displayOptions.map { it.first }.toSet()
+                    allCorrect.intersect(displayedSet).ifEmpty {
+                        animatedQuestion.resolveCorrectIndices(includeExtraOptions = false)
+                    }
+                }
+                // Requirement 2: If only 1 correct option is present among the displayed options,
+                // behave as a normal single-correct question; if >1 correct options are present,
+                // behave as a multiple-correct question!
+                val isDisplayedMultipleCorrect = remember(animatedQuestion.id, correctIndices, currentUseDistractors, currentShuffleOptions) {
+                    if (currentShuffleOptions && currentUseDistractors) {
+                        correctIndices.size > 1
                     } else {
-                        setOf(animatedQuestion.correctIndex)
+                        correctIndices.size > 1 || (animatedQuestion.multipleCorrect && correctIndices.size > 1)
                     }
                 }
 
@@ -801,21 +782,21 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                 }
                                 val newAnswers = selectedAnswers.toMutableMap()
                                 val currentSet = newAnswers[animatedIndex]?.toMutableSet() ?: mutableSetOf()
-                                if (animatedQuestion.multipleCorrect) {
+                                if (isDisplayedMultipleCorrect) {
                                     if (currentSet.contains(originalIndex)) currentSet.remove(originalIndex) else currentSet.add(originalIndex)
                                 } else {
                                     currentSet.clear()
                                     currentSet.add(originalIndex)
                                 }
-                                newAnswers[animatedIndex] = currentSet
+                                if (currentSet.isEmpty()) newAnswers.remove(animatedIndex) else newAnswers[animatedIndex] = currentSet
                                 selectedAnswers = newAnswers
                                 
-                                if (isPracticeMode && !animatedQuestion.multipleCorrect) {
+                                if (isPracticeMode && !isDisplayedMultipleCorrect) {
                                     val newLocked = lockedAnswers.toMutableMap()
                                     newLocked[animatedIndex] = true
                                     lockedAnswers = newLocked
                                     
-                                    if (originalIndex == animatedQuestion.correctIndex) {
+                                    if (correctIndices.contains(originalIndex)) {
                                         if (clickSoundEnabled) viewModel.soundHapticManager.playCorrect()
                                         if (hapticEnabled) viewModel.soundHapticManager.hapticCorrect()
                                     } else {
@@ -830,6 +811,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable(enabled = !isLocked) { onOptionClick() },
                         colors = CardDefaults.cardColors(containerColor = containerColor),
                         shape = RoundedCornerShape(12.dp)
@@ -838,7 +820,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (animatedQuestion.multipleCorrect) {
+                            if (isDisplayedMultipleCorrect) {
                                 androidx.compose.material3.Checkbox(
                                     checked = isSelected,
                                     onCheckedChange = null,
@@ -862,7 +844,7 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                 fontSize = 16.sp,
                                 color = textColor,
                                 isSelectable = false,
-                                onClick = onOptionClick
+                                onClick = null
                             )
                         }
                     }
@@ -931,23 +913,33 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    if (isPracticeMode && currentQuestion.multipleCorrect && lockedAnswers[currentIndex] != true) {
+                    val currentDispOptions = optionsCache.getOrPut(currentQuestion.id) {
+                        currentQuestion.buildQuizDisplayOptions(
+                            useDistractors = currentUseDistractors,
+                            shuffleOptions = currentShuffleOptions,
+                            sessionSeed = viewModel.activeQuizSessionId
+                        )
+                    }
+                    val currentCorrectIndices = remember(currentQuestion.id, currentDispOptions, currentUseDistractors) {
+                        val allCorrect = currentQuestion.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
+                        allCorrect.intersect(currentDispOptions.map { it.first }.toSet()).ifEmpty {
+                            currentQuestion.resolveCorrectIndices(includeExtraOptions = false)
+                        }
+                    }
+                    val isCurrentDisplayedMultiCorrect = if (currentShuffleOptions && currentUseDistractors) {
+                        currentCorrectIndices.size > 1
+                    } else {
+                        currentCorrectIndices.size > 1 || (currentQuestion.multipleCorrect && currentCorrectIndices.size > 1)
+                    }
+
+                    if (isPracticeMode && isCurrentDisplayedMultiCorrect && lockedAnswers[currentIndex] != true) {
                         Button(onClick = {
                             viewModel.playButtonPress()
                             val newLocked = lockedAnswers.toMutableMap()
                             newLocked[currentIndex] = true
                             lockedAnswers = newLocked
                             
-                            val gson = com.example.data.SharedGson.normal
-                            val correctIds = gson.fromJson<List<String>>(currentQuestion.advancedCorrectIds ?: "[]", object : com.google.gson.reflect.TypeToken<List<String>>() {}.type) ?: emptyList()
-                            val optionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQuestion.advancedOptions ?: "[]", object : com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>() {}.type) ?: emptyList()
-                            val correctIndices = if (correctIds.isNotEmpty() && optionsList.isNotEmpty()) {
-                                correctIds.mapNotNull { id -> optionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                            } else {
-                                setOf(currentQuestion.correctIndex)
-                            }
-                            
-                            val isCorrect = selectedAnswers[currentIndex] == correctIndices
+                            val isCorrect = selectedAnswers[currentIndex] == currentCorrectIndices
                             if (isCorrect) {
                                 if (clickSoundEnabled) viewModel.soundHapticManager.playCorrect()
                                 if (hapticEnabled) viewModel.soundHapticManager.hapticCorrect()
@@ -1289,45 +1281,41 @@ if (timerSoundEnabled && (timeRemainingMs > 1000L || isPracticeMode || secsSound
                                     
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                         val currentQuestion = questions[currentIndex]
-                                        val gson = com.example.data.SharedGson.normal
-                                        val correctIds = gson.fromJson<List<String>>(currentQuestion.advancedCorrectIds ?: "[]", object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
-                                        val rawOptionsList = gson.fromJson<List<com.example.data.QBookOption>>(currentQuestion.advancedOptions ?: "[]", object: com.google.gson.reflect.TypeToken<List<com.example.data.QBookOption>>(){}.type) ?: emptyList()
-                                        val legacyOptions = gson.fromJson<List<String>>(currentQuestion.options, object: com.google.gson.reflect.TypeToken<List<String>>(){}.type) ?: emptyList()
+                                        val currentDisplayOptions = optionsCache[currentQuestion.id] ?: currentQuestion.buildQuizDisplayOptions(
+                                            useDistractors = currentUseDistractors,
+                                            shuffleOptions = currentShuffleOptions,
+                                            sessionSeed = viewModel.activeQuizSessionId
+                                        )
+                                        val correctIndices = currentQuestion.resolveCorrectIndices(includeExtraOptions = currentUseDistractors)
 
-                                        val currentDisplayOptions = optionsCache[currentQuestion.id] ?: emptyList()
-                                        
-                                        val correctIndices = if (correctIds.isNotEmpty() && rawOptionsList.isNotEmpty()) {
-                                            correctIds.mapNotNull { id -> rawOptionsList.indexOfFirst { it.id == id }.takeIf { it != -1 } }.toSet()
-                                        } else {
-                                            setOf(currentQuestion.correctIndex)
-                                        }
-                                        
                                         val displayedCorrectIndices = currentDisplayOptions.mapIndexedNotNull { displayIdx, pair ->
                                             if (correctIndices.contains(pair.first)) displayIdx else null
                                         }
-                                        
-                                        val correctTexts = displayedCorrectIndices.map { i -> 
+
+                                        val correctTexts = displayedCorrectIndices.map { i ->
                                             val opt = currentDisplayOptions[i].second
-                                            "Option ${(65 + i).toChar()}: $opt" 
+                                            "Option ${(65 + i).toChar()}: $opt"
                                         }
-                                        
+
                                         val userSelectedSet = selectedAnswers[currentIndex] ?: emptySet()
-                                        
                                         val displayedUserSelectedIndices = currentDisplayOptions.mapIndexedNotNull { displayIdx, pair ->
                                             if (userSelectedSet.contains(pair.first)) displayIdx else null
                                         }
-                                        
-                                        val userSelectedTexts = displayedUserSelectedIndices.map { i -> 
+                                        val userSelectedTexts = displayedUserSelectedIndices.map { i ->
                                             val opt = currentDisplayOptions[i].second
-                                            "Option ${(65 + i).toChar()}: $opt" 
+                                            "Option ${(65 + i).toChar()}: $opt"
                                         }
+
+                                        val multiCorrectNote = if (displayedCorrectIndices.size > 1) {
+                                            "\nQuestion Type: MULTIPLE CORRECT ANSWERS (${displayedCorrectIndices.size} correct options shown). Explain why EACH correct option is right and why each remaining option is wrong."
+                                        } else ""
 
                                         val tableDataString = if (currentQuestion.format == "table" && currentQuestion.tableData != null) {
                                             "\nTable Data (2D Array JSON): ${currentQuestion.tableData}"
                                         } else ""
                                         val aiPrompt = """
 You are an expert tutor. Please explain the following question and its answer.
-Question: ${currentQuestion.question}$tableDataString
+Question: ${currentQuestion.question}$tableDataString$multiCorrectNote
 Options:
 ${currentDisplayOptions.mapIndexed { i, opt -> "${(65 + i).toChar()}: ${opt.second}" }.joinToString("\n")}
 
